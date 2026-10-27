@@ -276,22 +276,22 @@ public struct Importer: Sendable {
         try fm.createDirectory(at: stagedFiles, withIntermediateDirectories: true)
         let crateFiles = crate.appending(path: "files", directoryHint: .isDirectory)
         let crateMedia = crate.appending(path: "media", directoryHint: .isDirectory)
-        let bothManaged = existing.game.source == .managed
+        // Old-only files (saves) come from the crate's copy, or from the folder a referenced game used;
+        // that folder itself is left as it is.
+        let oldFiles: URL? = existing.game.source == .managed
+            ? crateFiles : (try? io.referencedFolderURL(for: existing)) ?? nil
+        let carrySource = oldFiles.flatMap { fm.fileExists(atPath: $0.path) ? $0 : nil }
 
         var stagedMedia: URL?
         switch p.kind {
         case .folder, .zip:
             let newRoot = p.stagingRoot ?? p.source
             try Self.copyTree(from: newRoot, to: stagedFiles)
-            if bothManaged, fm.fileExists(atPath: crateFiles.path) {
-                try Self.carryOver(from: crateFiles, to: stagedFiles)
-            }
+            if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles) }
             game.media = []
             game.launch = Self.updatedLaunch(game.launch, newRoot: newRoot, candidates: p.candidates)
         case .discImage, .floppyImage:
-            if bothManaged, fm.fileExists(atPath: crateFiles.path) {
-                try Self.carryOver(from: crateFiles, to: stagedFiles)
-            }
+            if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles) }
             let mediaDir = work.appending(path: "media", directoryHint: .isDirectory)
             try fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
             game.media = try Self.stageMedia(for: p, into: mediaDir)

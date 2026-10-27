@@ -291,11 +291,13 @@ final class ImportQueue {
                 failures.append("\(entry.url.lastPathComponent): \(importErrorMessage(error))")
             }
             batchIndex += 1
+            // A batch enqueued during this final reload is picked up by the loop instead of being dropped.
+            if batchIndex == batchEntries.count, dirtyCount > 0 {
+                await model.store.reload()
+                dirtyCount = 0
+            }
         }
 
-        if dirtyCount > 0 {
-            await model.store.reload()
-        }
         batchEntries.removeAll()
         batchTask = nil
         progress = nil

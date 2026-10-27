@@ -613,6 +613,29 @@ struct ImporterTests {
         #expect(!exists(folder1.appending(path: "GAME.SAV")))
     }
 
+    @Test func replaceReferencedGameWithCopyCarriesOverItsSaves() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        let old = tmp.appending(path: "keen_old", directoryHint: .isDirectory)
+        try touch(old, "KEEN1.EXE")
+        try Data("old-save".utf8).write(to: old.appending(path: "SAVE.GAM"))
+        let p1 = try await importer.prepare(old)
+        let rec = try await importer.commit(p1, mode: .reference, title: "Keen", executable: "KEEN1.EXE", into: lib)
+
+        let new = tmp.appending(path: "keen_new", directoryHint: .isDirectory)
+        try touch(new, "KEEN1.EXE")
+        let p2 = try await importer.prepare(new)
+        let replaced = try await importer.replace(rec, with: p2, mode: .copy)
+
+        #expect(replaced.game.source == .managed)
+        #expect(try String(contentsOf: replaced.crateURL.appending(path: "files/SAVE.GAM"), encoding: .utf8) == "old-save")
+        // The old folder is left as it was.
+        #expect(try String(contentsOf: old.appending(path: "SAVE.GAM"), encoding: .utf8) == "old-save")
+        #expect(!exists(new.appending(path: "SAVE.GAM")))
+    }
+
     @Test func replaceRebasesSoleCandidateOntoKeptCRoot() async throws {
         let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
         let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)

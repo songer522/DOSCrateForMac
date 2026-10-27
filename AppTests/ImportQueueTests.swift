@@ -389,6 +389,33 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         #expect(model.store.records.count == 4)
     }
 
+    @Test func batchEnqueuedDuringFinalReloadIsImported() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .copy)
+
+        var urls: [URL] = []
+        for i in 1...3 {
+            let dir = root.appending(path: "game\(i)", directoryHint: .isDirectory)
+            try touchFile(dir, "G\(i).EXE")
+            urls.append(dir)
+        }
+
+        let queue = model.imports
+        let lateURL = urls[2]
+        var enqueuedLate = false
+        model.store.onReload = {
+            // The first reload is the batch's final one; a new batch arrives while it runs.
+            guard !enqueuedLate else { return }
+            enqueuedLate = true
+            queue.enqueue([.init(url: lateURL, mode: .copy)], model: model)
+        }
+        await queue.add(Array(urls[0...1]), model: model)?.value
+
+        #expect(enqueuedLate)
+        #expect(model.store.records.map(\.game.title).sorted() == ["Game1", "Game2", "Game3"])
+        #expect(queue.progress == nil)
+    }
+
     @Test func multipleAskBatchesQueuePromptsAndPreserveOthersOnConfirmOrCancel() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let model = try await makeModel(importLocation: .ask)

@@ -24,6 +24,11 @@ From the final review, deferred as non-blocking:
 - The DMG has an Applications symlink now, but only the DMG is stapled, and the Staging source tarball is verified by checksum while the LGPL tarballs are not.
 - iCloud "Optimize Storage" can evict files from the default `~/Documents/DOSCrate Library`. iCloud is out of scope (spec §9); worth a release-notes caveat.
 
+From the PR #4 review (duplicate handling), deferred:
+
+- A game can be launched while a batch is replacing it. The "already running" check happens before the copy starts, so Play during a long copy lets `Importer.replace` swap the files under the running game. Fix: track the IDs being replaced in `ImportQueue` and refuse Play for them until the replace finishes.
+- Replacing a kept-in-place game with another kept-in-place folder doesn't carry its saves into the new folder, because DOSCrate never writes into a kept-in-place folder. The old folder still has them.
+
 ## Deviations from the spec
 
 - Broken `game.json` files are renamed `game.json.<timestamp>.broken`, not `game.json.broken`, so an earlier one is never overwritten. A `game.json` with `schemaVersion > 1`, or with values this version can't decode, is opened read-only and never renamed or rewritten.
