@@ -100,6 +100,29 @@ struct LibraryStoreTests {
         #expect(store.records.count == 2)
     }
 
+    @Test func changesIgnoredWhileSuppressedReloadOnceResumed() async throws {
+        let (lib, _) = try makeLibrary(titles: ["A"])
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        store.startWatching()
+        defer { store.stopWatching() }
+        try await Task.sleep(for: .milliseconds(500))
+
+        store.suppressWatcher()
+        let crate = try io.makeCrate(title: "B", in: lib)
+        try io.save(Game(title: "B", source: .managed), extra: [:], to: crate)
+        try await Task.sleep(for: .milliseconds(1000))
+        #expect(store.records.count == 1)
+
+        // The change was ignored, so resuming reloads without waiting for another event.
+        store.resumeWatcher()
+        for _ in 0..<50 where store.records.count < 2 {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(store.records.count == 2)
+    }
+
     @Test func saveRefusesReadOnlyRecords() async throws {
         let (lib, crates) = try makeLibrary(titles: ["Future"])
         defer { try? FileManager.default.removeItem(at: lib) }
@@ -144,6 +167,67 @@ struct LibraryStoreTests {
         try store.remove(try #require(store.records.first).id, trashFiles: true)
         #expect(!FileManager.default.fileExists(atPath: crate.path))
         #expect(!FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test func removeSeveralKeepsReferencedFoldersUnlessAskedAndReportsFailures() async throws {
+        let (lib, _) = try makeLibrary(titles: ["Keen", "Doom"])
+        let (refCrate, source) = try makeReferenced(in: lib)
+        let (refCrate2, source2) = try makeReferenced(in: lib)
+        defer {
+            for url in [lib, source, source2] { try? FileManager.default.removeItem(at: url) }
+        }
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        let keen = try #require(store.records.first { $0.game.title == "Keen" })
+        let refs = store.records.filter { if case .referenced = $0.game.source { true } else { false } }
+        #expect(refs.count == 2)
+        let ref1 = try #require(refs.first { $0.crateURL.standardizedFileURL == refCrate.standardizedFileURL })
+        let ref2 = try #require(refs.first { $0.crateURL.standardizedFileURL == refCrate2.standardizedFileURL })
+
+        // Without trashFiles: crates go, the referenced folder stays; an unknown id is ignored.
+        var steps: [String] = []
+        let failures = await store.remove([keen.id, ref1.id, UUID()], trashFiles: false) { done, total in
+            steps.append("\(done)/\(total)")
+        }
+        #expect(failures.isEmpty)
+        #expect(steps == ["2/2"])
+        #expect(!store.isWatcherSuppressed)
+        #expect(store.records.map(\.game.title).sorted() == ["Doom", "Ref"])
+        #expect(!FileManager.default.fileExists(atPath: refCrate.path))
+        #expect(FileManager.default.fileExists(atPath: source.appending(path: "GAME.EXE").path))
+
+        // With trashFiles the referenced folder goes too.
+        let more = await store.remove([ref2.id], trashFiles: true)
+        #expect(more.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: source2.path))
+        #expect(store.records.map(\.game.title) == ["Doom"])
+    }
+
+    @Test func overlappingSuppressionsKeepTheWatcherOffUntilTheLastEnds() async throws {
+        let (lib, _) = try makeLibrary(titles: ["Keen", "Doom"])
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        let keen = try #require(store.records.first { $0.game.title == "Keen" })
+
+        // A batch import is running when a removal starts, and ends before the removal does.
+        store.suppressWatcher()
+        var importEnded = false
+        let failures = await store.remove([keen.id], trashFiles: false) { _, _ in
+            store.resumeWatcher()
+            importEnded = true
+            #expect(store.isWatcherSuppressed)
+        }
+        #expect(failures.isEmpty)
+        #expect(importEnded)
+        #expect(!store.isWatcherSuppressed)
+
+        // An unmatched resume can't drive the count below zero.
+        store.resumeWatcher()
+        store.suppressWatcher()
+        #expect(store.isWatcherSuppressed)
+        store.resumeWatcher()
+        #expect(!store.isWatcherSuppressed)
     }
 
     @Test func scanStartedBeforeASaveCannotOverwriteIt() async throws {

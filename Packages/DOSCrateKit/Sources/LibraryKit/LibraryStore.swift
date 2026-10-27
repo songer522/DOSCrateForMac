@@ -8,15 +8,11 @@ public final class LibraryStore {
     public var library: URL
     /// Test hook called at the start of every `reload()`.
     @ObservationIgnored public var onReload: (@MainActor () -> Void)?
-    /// While true, file-watcher events are ignored so a running batch import controls reload timing.
-    @ObservationIgnored public var isWatcherSuppressed = false {
-        didSet {
-            if isWatcherSuppressed {
-                debounce?.cancel()
-                debounce = nil
-            }
-        }
-    }
+    /// While true, file-watcher events are ignored so a running batch import or removal controls reload timing.
+    public var isWatcherSuppressed: Bool { watcherSuppressions > 0 }
+    @ObservationIgnored private var watcherSuppressions = 0
+    /// Set when a watcher event arrives (or a pending reload is dropped) while suppressed.
+    @ObservationIgnored private var missedWatcherEvent = false
 
     @ObservationIgnored private let io: CrateIO
     @ObservationIgnored private let scan: @Sendable (URL) async -> [GameRecord]
@@ -77,6 +73,49 @@ public final class LibraryStore {
         records.removeAll { $0.id == id }
     }
 
+    /// Removes several games, trashing off the main actor in small chunks so the library shrinks as it goes.
+    /// `onProgress` gets (done, total) after each chunk. Returns a "Title: reason" line for each failure;
+    /// a game whose folder can't be trashed keeps its crate.
+    public func remove(
+        _ ids: [UUID], trashFiles: Bool, onProgress: (@MainActor (Int, Int) -> Void)? = nil
+    ) async -> [String] {
+        let targets = ids.compactMap(record)
+        guard !targets.isEmpty else { return [] }
+        // Each trashed crate would otherwise trigger a full rescan of the library.
+        suppressWatcher()
+        defer { resumeWatcher() }
+        let io = self.io
+        var failures: [String] = []
+        var done = 0
+        for start in stride(from: 0, to: targets.count, by: 20) {
+            let chunk = Array(targets[start..<min(start + 20, targets.count)])
+            generation += 1
+            let (removed, chunkFailures) = await Task.detached { () -> (Set<UUID>, [String]) in
+                let fm = FileManager.default
+                var removed = Set<UUID>()
+                var failures: [String] = []
+                for record in chunk {
+                    do {
+                        if trashFiles, let folder = try? io.referencedFolderURL(for: record) {
+                            try fm.trashItem(at: folder, resultingItemURL: nil)
+                        }
+                        try fm.trashItem(at: record.crateURL, resultingItemURL: nil)
+                        removed.insert(record.id)
+                    } catch {
+                        failures.append("\(record.game.title): \(error.localizedDescription)")
+                    }
+                }
+                return (removed, failures)
+            }.value
+            generation += 1
+            records.removeAll { removed.contains($0.id) }
+            failures += chunkFailures
+            done += chunk.count
+            onProgress?(done, targets.count)
+        }
+        return failures
+    }
+
     public func startWatching() {
         stopWatching()
         let library = self.library
@@ -111,8 +150,30 @@ public final class LibraryStore {
         return true
     }
 
+    /// Ignores watcher events until a matching `resumeWatcher()`. Calls nest, so overlapping
+    /// operations (an import and a removal) each keep the watcher off until the last one ends.
+    public func suppressWatcher() {
+        watcherSuppressions += 1
+        if debounce != nil { missedWatcherEvent = true }
+        debounce?.cancel()
+        debounce = nil
+    }
+
+    /// Ends one `suppressWatcher()`. When the last one ends, a reload is scheduled if any change
+    /// was ignored meanwhile, so Finder edits made during a batch still show up.
+    public func resumeWatcher() {
+        watcherSuppressions = max(0, watcherSuppressions - 1)
+        if watcherSuppressions == 0, missedWatcherEvent {
+            missedWatcherEvent = false
+            scheduleReload()
+        }
+    }
+
     private func scheduleReload() {
-        guard !isWatcherSuppressed else { return }
+        guard !isWatcherSuppressed else {
+            missedWatcherEvent = true
+            return
+        }
         debounce?.cancel()
         debounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(300))

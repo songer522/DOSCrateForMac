@@ -5,9 +5,10 @@ struct GameListView: View {
     @Bindable var model: AppModel
     let records: [GameRecord]
     let menu: (GameRecord) -> GameContextMenu
+    let onRemove: (Set<UUID>) -> Void
 
     var body: some View {
-        Table(records, selection: $model.selection) {
+        Table(records, selection: $model.selectedIDs) {
             TableColumn("Title") { record in
                 HStack {
                     Text(record.game.title)
@@ -38,7 +39,11 @@ struct GameListView: View {
             }
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
-            if ids.count == 1, let id = ids.first, let record = model.store.record(id) { menu(record) }
+            if ids.count == 1, let id = ids.first, let record = model.store.record(id) {
+                menu(record)
+            } else if ids.count > 1 {
+                Button("Remove \(ids.count) Games…", role: .destructive) { onRemove(ids) }
+            }
         } primaryAction: { ids in
             if let id = ids.first { model.play(id) }
         }

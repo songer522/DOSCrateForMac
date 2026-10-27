@@ -45,7 +45,17 @@ struct ChooseProgramRequest: Identifiable, Equatable {
 @MainActor @Observable
 final class AppModel {
     var query = LibraryQuery()
-    var selection: UUID?
+    /// Selected games. The inspector and single-game actions use `selection`, set when exactly one is selected.
+    var selectedIDs: Set<UUID> = []
+    var selection: UUID? {
+        get { selectedIDs.count == 1 ? selectedIDs.first : nil }
+        set { selectedIDs = newValue.map { [$0] } ?? [] }
+    }
+    /// (done, total) while `removeGames` is trashing.
+    private(set) var removalProgress: (done: Int, total: Int)?
+    var isRemoving: Bool { removalProgress != nil }
+    /// Games `removeGames` hasn't finished with; they can't be launched until it ends.
+    private(set) var pendingRemovalIDs: Set<UUID> = []
     var alert: AppAlert?
     var lastResult: [UUID: SessionResult] = [:]
     var pendingFix: PendingFix?
@@ -181,6 +191,45 @@ final class AppModel {
         return entries
     }
 
+    /// Moves the games' crates to the Trash, and with `trashFolders` the folders kept-in-place games point at.
+    /// Running games are skipped; one alert lists what was skipped or failed.
+    func removeGames(_ ids: Set<UUID>, trashFolders: Bool) async {
+        let running = ids.filter { sessions.running.contains($0) }
+        let targets = Array(ids.subtracting(running))
+        pendingRemovalIDs.formUnion(targets)
+        defer { pendingRemovalIDs.subtract(targets) }
+        removalProgress = (0, targets.count)
+        let failures = await store.remove(targets, trashFiles: trashFolders) { [weak self] done, total in
+            self?.removalProgress = (done, total)
+        }
+        removalProgress = nil
+        selectedIDs = selectedIDs.filter { store.record($0) != nil }
+        let skipped = running.compactMap { store.record($0)?.game.title }.sorted()
+            .map { "\($0): stop the game before removing it." }
+        let problems = skipped + failures
+        if !problems.isEmpty {
+            alert = AppAlert(
+                title: problems.count == 1 ? "Couldn't remove 1 game" : "Couldn't remove \(problems.count) games",
+                message: problems.joined(separator: "\n")
+            )
+        }
+    }
+
+    /// Removes one game; see `LibraryStore.remove(_:trashFiles:)`. A running game shows an alert instead.
+    func removeGame(_ id: UUID, trashFiles: Bool) {
+        guard let record = store.record(id) else { return }
+        guard !sessions.running.contains(id) else {
+            alert = AppAlert(title: "Can't remove \(record.game.title)", message: "Stop the game before removing it.")
+            return
+        }
+        do {
+            try store.remove(id, trashFiles: trashFiles)
+            selectedIDs.remove(id)
+        } catch {
+            alert = AppAlert(title: "Can't remove \(record.game.title)", message: error.localizedDescription)
+        }
+    }
+
     // MARK: Launching
 
     /// Registers (or with nil clears) a write that must finish before `id` launches. Each owner
@@ -193,7 +242,7 @@ final class AppModel {
     func play(_ id: UUID) {
         let writes = pendingWrites.removeValue(forKey: id) ?? [:]
         for write in writes.values { write() }
-        guard let record = store.record(id) else { return }
+        guard !pendingRemovalIDs.contains(id), let record = store.record(id) else { return }
         do {
             try verifyDosbox(dosbox)
             let cDrive = try Preflight.check(record, io: io, dosbox: dosbox)
