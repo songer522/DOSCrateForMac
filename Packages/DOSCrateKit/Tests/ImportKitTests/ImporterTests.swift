@@ -222,6 +222,42 @@ struct ImporterTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: lib.path).isEmpty)
     }
 
+    private func cueImport(_ cue: Data, bins: [String], in tmp: URL) async throws -> (GameRecord, String) {
+        let src = tmp.appending(path: "disc", directoryHint: .isDirectory)
+        for b in bins { try touch(src, b) }
+        try cue.write(to: src.appending(path: "g.cue"))
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+        let p = try await importer.prepare(src.appending(path: "g.cue"))
+        let rec = try await importer.commit(p, mode: .copy, title: "G", executable: nil, into: lib)
+        let text = String(decoding: try Data(contentsOf: rec.crateURL.appending(path: "media/g.cue")), as: UTF8.self)
+        return (rec, text)
+    }
+
+    @Test func duplicateCueEntryForSameBinIsNotACollision() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let cue = Data("FILE \"a.bin\" BINARY\nFILE \"./a.bin\" BINARY\n".utf8)
+        let (rec, text) = try await cueImport(cue, bins: ["a.bin"], in: tmp)
+        #expect(exists(rec.crateURL.appending(path: "media/a.bin")))
+        #expect(text == "FILE \"a.bin\" BINARY\nFILE \"a.bin\" BINARY\n")
+    }
+
+    @Test func unquotedTypelessFileLineOnCRLFCue() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let (rec, text) = try await cueImport(Data("FILE sub/a.bin\r\n".utf8), bins: ["sub/a.bin"], in: tmp)
+        #expect(exists(rec.crateURL.appending(path: "media/a.bin")))
+        #expect(text == "FILE a.bin\r\n")
+    }
+
+    @Test func utf8BOMIsToleratedAndPreserved() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let cue = Data([0xEF, 0xBB, 0xBF]) + Data("FILE \"sub/a.bin\" BINARY\n".utf8)
+        let (rec, _) = try await cueImport(cue, bins: ["sub/a.bin"], in: tmp)
+        #expect(exists(rec.crateURL.appending(path: "media/a.bin")))
+        let written = try Data(contentsOf: rec.crateURL.appending(path: "media/g.cue"))
+        #expect(written == Data([0xEF, 0xBB, 0xBF]) + Data("FILE \"a.bin\" BINARY\n".utf8))
+    }
+
     @Test func latin1CueIsReadable() async throws {
         let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
         let src = tmp.appending(path: "disc", directoryHint: .isDirectory)

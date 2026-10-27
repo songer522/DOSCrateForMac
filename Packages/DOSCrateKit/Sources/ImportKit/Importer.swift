@@ -117,11 +117,16 @@ public struct Importer: Sendable {
             try fm.createDirectory(at: media, withIntermediateDirectories: true)
             if p.source.pathExtension.lowercased() == "cue" {
                 let sheet = try CueSheet(p.source)
-                var seen: Set<String> = [p.source.lastPathComponent.lowercased()]
+                var seen: [String: String] = [p.source.lastPathComponent.lowercased(): p.source.standardizedFileURL.path]
                 for file in sheet.files {
-                    guard seen.insert(file.lastPathComponent.lowercased()).inserted else {
+                    let key = file.lastPathComponent.lowercased()
+                    let path = file.standardizedFileURL.path
+                    if let existing = seen[key] {
+                        // The same bin listed twice is fine; two different files with one name are not.
+                        if existing == path { continue }
                         throw ImportError.mediaNameCollision(file.lastPathComponent)
                     }
+                    seen[key] = path
                     try fm.copyItem(at: file, to: media.appending(path: file.lastPathComponent))
                 }
                 try sheet.flattenedData.write(to: media.appending(path: p.source.lastPathComponent))
@@ -153,9 +158,14 @@ public struct Importer: Sendable {
         var files: [URL] = []
         private var lines: [String] = []
         private var encoding: String.Encoding = .utf8
+        private var hasBOM = false
 
         init(_ cue: URL) throws {
-            let data = try Data(contentsOf: cue)
+            var data = try Data(contentsOf: cue)
+            if data.starts(with: [0xEF, 0xBB, 0xBF]) {
+                hasBOM = true
+                data = data.dropFirst(3)
+            }
             let text: String
             if let utf8 = String(data: data, encoding: .utf8) {
                 text = utf8
@@ -166,9 +176,12 @@ public struct Importer: Sendable {
             let dir = cue.deletingLastPathComponent()
             // Splitting on "\n" only keeps any "\r" attached to its line, so line endings survive.
             var found: [URL] = []
-            lines = text.components(separatedBy: "\n").map { line in
+            lines = text.components(separatedBy: "\n").map { raw in
+                let hasCR = raw.hasSuffix("\r")
+                let line = hasCR ? String(raw.dropLast()) : raw
+                let cr = hasCR ? "\r" : ""
                 let body = line.trimmingCharacters(in: .whitespaces)
-                guard body.uppercased().hasPrefix("FILE ") else { return line }
+                guard body.uppercased().hasPrefix("FILE ") else { return raw }
                 let indent = line.prefix { $0 == " " || $0 == "\t" }
                 let rest = body.dropFirst(5).drop { $0 == " " }
                 let name: String, suffix: String, quoted: Bool
@@ -182,17 +195,19 @@ public struct Importer: Sendable {
                     suffix = parts.count > 1 ? " " + parts[1] : ""
                     quoted = false
                 }
-                guard !name.isEmpty else { return line }
+                guard !name.isEmpty else { return raw }
                 let normalized = name.replacingOccurrences(of: "\\", with: "/")
                 found.append(dir.appending(path: normalized, directoryHint: .notDirectory))
                 let flat = (normalized as NSString).lastPathComponent
-                let trailing = line.hasSuffix("\r") && !suffix.hasSuffix("\r") ? "\r" : ""
-                return indent + "FILE " + (quoted ? "\"\(flat)\"" : flat) + suffix + trailing
+                return indent + "FILE " + (quoted ? "\"\(flat)\"" : flat) + suffix + cr
             }
             files = found
         }
 
-        var flattenedData: Data { lines.joined(separator: "\n").data(using: encoding) ?? Data() }
+        var flattenedData: Data {
+            let body = lines.joined(separator: "\n").data(using: encoding) ?? Data()
+            return hasBOM ? Data([0xEF, 0xBB, 0xBF]) + body : body
+        }
     }
 
     /// Copies a directory tree, dropping symlinks so a crate never points at host paths.
