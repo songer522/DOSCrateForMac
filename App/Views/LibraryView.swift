@@ -35,6 +35,8 @@ struct LibraryView: View {
     @AppStorage("libraryShowsGrid") private var showsGrid = true
     @State private var removing: UUID?
     @State private var showsInspector = true
+    @State private var imports = ImportQueue()
+    @State private var choosingImport = false
 
     private var records: [GameRecord] {
         model.query.apply(to: model.store.records, now: Date())
@@ -69,6 +71,20 @@ struct LibraryView: View {
             Button("Cancel", role: .cancel) {}
         } message: { record in
             Text("\"\(record.game.title)\" will be removed from the library.")
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            guard !files.isEmpty else { return false }
+            imports.add(files)
+            return true
+        }
+        .fileImporter(isPresented: $choosingImport, allowedContentTypes: ImportQueue.contentTypes,
+                      allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { imports.add(urls) }
+        }
+        .sheet(item: Binding(get: { imports.current }, set: { if $0 == nil { imports.finishCurrent() } })) { item in
+            ImportSheet(model: model, url: item.url) { imports.finishCurrent() }
+                .interactiveDismissDisabled()
         }
         .onChange(of: model.pendingFix) { _, pending in
             guard let pending else { return }
@@ -115,9 +131,7 @@ struct LibraryView: View {
             Button("Details", systemImage: "sidebar.trailing") { showsInspector.toggle() }
         }
         ToolbarItem {
-            // Wired to the import sheet in Task 13.
-            Button("Import", systemImage: "plus") {}
-                .disabled(true)
+            Button("Import", systemImage: "plus") { choosingImport = true }
         }
     }
 
