@@ -17,6 +17,21 @@ func touch(_ root: URL, _ path: String, bytes: Int = 4) throws -> URL {
 }
 
 struct ExecutableRankerTests {
+    @Test func unreadableEntryDoesNotFailRanking() throws {
+        let root = try makeImportTempDir()
+        let locked = root.appending(path: "LOCKED", directoryHint: .isDirectory)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+        try touch(root, "GAME.EXE")
+        try touch(root, "LOCKED/OTHER.EXE")
+        // Readable but not searchable: the walk can list OTHER.EXE but can't read its attributes.
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: locked.path)
+        let ranked = try ExecutableRanker.rank(root: root, title: "Game")
+        #expect(ranked.map(\.relativePath) == ["GAME.EXE"])
+    }
+
     @Test func prefersTitleMatchOverSetup() throws {
         let root = try makeImportTempDir()
         defer { try? FileManager.default.removeItem(at: root) }

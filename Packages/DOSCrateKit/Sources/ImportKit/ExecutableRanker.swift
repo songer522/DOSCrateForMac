@@ -37,8 +37,9 @@ public enum ExecutableRanker {
                 walker.skipDescendants()
                 continue
             }
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            guard values.isRegularFile == true, extensions.contains(url.pathExtension.lowercased()) else { continue }
+            // One unreadable entry must not fail the whole import; it just isn't a candidate.
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  values.isRegularFile == true, extensions.contains(url.pathExtension.lowercased()) else { continue }
 
             let base = url.deletingPathExtension().lastPathComponent
             var score = 100
