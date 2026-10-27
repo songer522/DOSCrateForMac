@@ -1,0 +1,3 @@
+STAGING_VERSION=0.83.0
+STAGING_URL=https://github.com/dosbox-staging/dosbox-staging/releases/download/v0.83.0/dosbox-staging-macOS-v0.83.0.dmg
+STAGING_SHA256=d8a771adfb8010fa6b5f7fb5351abfba659273ad01c89f03675a92bdbdae8167

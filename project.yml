@@ -10,8 +10,8 @@ settings:
     SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     ARCHS: arm64
     ONLY_ACTIVE_ARCH: NO
+    # Silences Xcode's AppIntents "Metadata extraction skipped" warning, which would trip the warning gate.
     LM_SKIP_METADATA_EXTRACTION: YES
-    MACOSX_DEPLOYMENT_TARGET: "15.0"
 packages:
   DOSCrateKit:
     path: Packages/DOSCrateKit
@@ -45,9 +45,13 @@ targets:
         product: LauncherKit
       - package: Sparkle
         product: Sparkle
-    preBuildScripts:
-      - name: Bundle DOSBox Staging (placeholder, filled in Task 2)
-        script: "echo \"DOSBox Staging bundling not yet implemented\""
+    postCompileScripts:
+      - name: Embed DOSBox Staging
+        script: "\"${SRCROOT}/scripts/embed-staging.sh\""
+        inputFiles:
+          - "$(SRCROOT)/Vendor/DOSBox Staging.app"
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/DOSBox Staging.app"
         basedOnDependencyAnalysis: false
   DOSCrateTests:
     type: bundle.unit-test

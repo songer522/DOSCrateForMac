@@ -3,16 +3,16 @@ XCB = xcodebuild -project DOSCrate.xcodeproj -scheme DOSCrate -destination 'plat
 .PHONY: vendor generate test build release
 
 vendor:
-	@echo "vendor: not yet implemented (Task 2)"
+	scripts/fetch-staging.sh
 
 generate:
 	xcodegen generate
 
 test: vendor
-	swift test --package-path Packages/DOSCrateKit
 	mkdir -p build
+	set -o pipefail; swift test --package-path Packages/DOSCrateKit 2>&1 | tee build/swift-test.log
 	set -o pipefail; $(XCB) test 2>&1 | tee build/test.log
-	@if grep -E "warning:" build/test.log; then echo "FAIL: warnings found"; exit 1; fi
+	@if grep -E "warning:" build/swift-test.log build/test.log; then echo "FAIL: warnings found"; exit 1; fi
 
 build: vendor
 	$(XCB) -configuration Debug build
