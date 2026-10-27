@@ -99,4 +99,110 @@ struct LibraryStoreTests {
         }
         #expect(store.records.count == 2)
     }
+
+    @Test func saveRefusesReadOnlyRecords() async throws {
+        let (lib, crates) = try makeLibrary(titles: ["Future"])
+        defer { try? FileManager.default.removeItem(at: lib) }
+        try rewrite(crates[0]) { $0["schemaVersion"] = 2 }
+        let before = try Data(contentsOf: crates[0].appending(path: "game.json"))
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        var game = try #require(store.records.first).game
+        game.notes = "edited"
+        #expect(throws: LibraryError.readOnly) { try store.save(game) }
+        #expect(try Data(contentsOf: crates[0].appending(path: "game.json")) == before)
+    }
+
+    func makeReferenced(in lib: URL) throws -> (crate: URL, source: URL) {
+        let source = lib.deletingLastPathComponent().appending(path: "src-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: source.appending(path: "GAME.EXE"))
+        let crate = try io.makeCrate(title: "Ref \(UUID().uuidString)", in: lib)
+        try io.save(Game(title: "Ref", source: .referenced(path: source.path, bookmark: CrateIO.makeBookmark(for: source))),
+                    extra: [:], to: crate)
+        return (crate, source)
+    }
+
+    @Test func removeReferencedFromLibraryKeepsSourceAndTrashesCrate() async throws {
+        let lib = try makeTempDir()
+        let (crate, source) = try makeReferenced(in: lib)
+        defer { try? FileManager.default.removeItem(at: lib); try? FileManager.default.removeItem(at: source) }
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        try store.remove(try #require(store.records.first).id, trashFiles: false)
+        #expect(!FileManager.default.fileExists(atPath: crate.path))
+        #expect(FileManager.default.fileExists(atPath: source.appending(path: "GAME.EXE").path))
+        #expect(store.records.isEmpty)
+    }
+
+    @Test func removeReferencedWithFilesTrashesSourceToo() async throws {
+        let lib = try makeTempDir()
+        let (crate, source) = try makeReferenced(in: lib)
+        defer { try? FileManager.default.removeItem(at: lib); try? FileManager.default.removeItem(at: source) }
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        try store.remove(try #require(store.records.first).id, trashFiles: true)
+        #expect(!FileManager.default.fileExists(atPath: crate.path))
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test func scanStartedBeforeASaveCannotOverwriteIt() async throws {
+        let (lib, _) = try makeLibrary(titles: ["Keen"])
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let gate = Gate()
+        let io = self.io
+        let store = LibraryStore(library: lib, io: io) { library in
+            let records = await io.scan(library: library)
+            await gate.arriveAndWait()
+            return records
+        }
+        let initial = Task { await store.reload() }
+        await gate.waitForArrival()
+        await gate.open()
+        await initial.value
+        var game = try #require(store.records.first).game
+
+        let stale = Task { await store.reload() }
+        await gate.waitForArrival()
+        game.title = "Saved While Scanning"
+        try store.save(game)
+        await gate.open()
+        await stale.value
+        #expect(store.records.first?.game.title == "Saved While Scanning")
+    }
+
+    @Test func cacheAndFilesChangesAreIgnored() throws {
+        let lib = URL(filePath: "/Users/x/DOSCrate Library", directoryHint: .isDirectory)
+        #expect(!LibraryStore.isRelevantChange("/Users/x/DOSCrate Library/Keen.doscrate/.cache/logs/a.log", library: lib))
+        #expect(!LibraryStore.isRelevantChange("/Users/x/DOSCrate Library/Keen.doscrate/files/SAVE.DAT", library: lib))
+        #expect(LibraryStore.isRelevantChange("/Users/x/DOSCrate Library/Keen.doscrate/game.json", library: lib))
+        #expect(LibraryStore.isRelevantChange("/Users/x/DOSCrate Library/New.doscrate", library: lib))
+        #expect(LibraryStore.isRelevantChange("/Users/x/DOSCrate Library", library: lib))
+        #expect(LibraryStore.isRelevantChange("/Users/x/DOSCrate Library/Keen.doscrate/media/files", library: lib))
+    }
+}
+
+/// Lets a test hold a scan open until it says so.
+actor Gate {
+    private var arrivals = 0
+    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+    private var openWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func arriveAndWait() async {
+        arrivals += 1
+        arrivalWaiters.forEach { $0.resume() }
+        arrivalWaiters = []
+        await withCheckedContinuation { openWaiters.append($0) }
+    }
+
+    func waitForArrival() async {
+        if arrivals > 0 { arrivals -= 1; return }
+        await withCheckedContinuation { arrivalWaiters.append($0) }
+        arrivals -= 1
+    }
+
+    func open() {
+        openWaiters.forEach { $0.resume() }
+        openWaiters = []
+    }
 }

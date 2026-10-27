@@ -152,4 +152,27 @@ public struct GameSettings: Sendable, Equatable, Codable {
         self.aspect = aspect; self.fullscreen = fullscreen; self.soundCard = soundCard
         self.midi = midi; self.mouseCapture = mouseCapture; self.keyboardLayout = keyboardLayout
     }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case preset, cycles, core, memoryMB, machine, shader, aspect, fullscreen, soundCard, midi, mouseCapture, keyboardLayout
+    }
+
+    static let knownKeys = Set(CodingKeys.allCases.map(\.rawValue))
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let lenient = decoder.decodesEnumsLeniently
+        preset = try c.decodeEnumIfPresent(Preset.self, forKey: .preset, lenient: lenient)
+        cycles = try c.decodeEnumIfPresent(Cycles.self, forKey: .cycles, lenient: lenient)
+        core = try c.decodeEnumIfPresent(CPUCore.self, forKey: .core, lenient: lenient)
+        memoryMB = try c.decodeIfPresent(Int.self, forKey: .memoryMB)
+        machine = try c.decodeEnumIfPresent(Machine.self, forKey: .machine, lenient: lenient)
+        shader = try c.decodeIfPresent(String.self, forKey: .shader)
+        aspect = try c.decodeEnumIfPresent(Aspect.self, forKey: .aspect, lenient: lenient)
+        fullscreen = try c.decodeIfPresent(Bool.self, forKey: .fullscreen)
+        soundCard = try c.decodeEnumIfPresent(SoundCard.self, forKey: .soundCard, lenient: lenient)
+        midi = try c.decodeEnumIfPresent(MIDIMode.self, forKey: .midi, lenient: lenient)
+        mouseCapture = try c.decodeEnumIfPresent(MouseCapture.self, forKey: .mouseCapture, lenient: lenient)
+        keyboardLayout = try c.decodeIfPresent(String.self, forKey: .keyboardLayout)
+    }
 }

@@ -8,16 +8,29 @@ public final class LibraryStore {
     public var library: URL
 
     @ObservationIgnored private let io: CrateIO
+    @ObservationIgnored private let scan: @Sendable (URL) async -> [GameRecord]
     @ObservationIgnored private var watcher: FolderWatcher?
     @ObservationIgnored private var debounce: Task<Void, Never>?
+    /// Bumped by every reload and every local change, so a scan that started earlier can't overwrite newer state.
+    @ObservationIgnored private var generation = 0
 
-    public init(library: URL, io: CrateIO = .init()) {
+    public convenience init(library: URL, io: CrateIO = .init()) {
+        self.init(library: library, io: io, scan: { await io.scan(library: $0) })
+    }
+
+    /// `scan` is a test hook; it defaults to `CrateIO.scan`.
+    init(library: URL, io: CrateIO, scan: @escaping @Sendable (URL) async -> [GameRecord]) {
         self.library = library
         self.io = io
+        self.scan = scan
     }
 
     public func reload() async {
-        records = await io.scan(library: library)
+        generation += 1
+        let started = generation
+        let scanned = await scan(library)
+        guard started == generation else { return }
+        records = scanned
     }
 
     public func record(_ id: UUID) -> GameRecord? {
@@ -29,6 +42,8 @@ public final class LibraryStore {
         guard let index = records.firstIndex(where: { $0.id == game.id }) else {
             throw CocoaError(.fileNoSuchFile)
         }
+        if case .readOnly = records[index].status { throw LibraryError.readOnly }
+        generation += 1
         let crate = records[index].crateURL
         let extra = io.extraOnDisk(at: crate) ?? records[index].extra
         try io.save(game, extra: extra, to: crate)
@@ -37,24 +52,23 @@ public final class LibraryStore {
         records[index].status = io.loadRecord(at: crate).status
     }
 
-    /// Removes a game. Crates are always moved to the Trash rather than deleted outright, except that a
-    /// referenced game's crate holds only metadata, so it is deleted directly when `trashFiles` is false.
+    /// Removes a game by moving its crate to the Trash; nothing is ever deleted outright. With `trashFiles`,
+    /// a referenced game's own folder goes to the Trash too (a managed game's files are inside its crate).
     public func remove(_ id: UUID, trashFiles: Bool) throws {
         guard let record = record(id) else { return }
+        generation += 1
         let fm = FileManager.default
-        var isReferenced = false
-        if case .referenced = record.game.source { isReferenced = true }
-        if trashFiles || !isReferenced {
-            try fm.trashItem(at: record.crateURL, resultingItemURL: nil)
-        } else {
-            try fm.removeItem(at: record.crateURL)
+        if trashFiles, let folder = try? io.referencedFolderURL(for: record) {
+            try fm.trashItem(at: folder, resultingItemURL: nil)
         }
+        try fm.trashItem(at: record.crateURL, resultingItemURL: nil)
         records.removeAll { $0.id == id }
     }
 
     public func startWatching() {
         stopWatching()
-        watcher = FolderWatcher(url: library) { [weak self] in
+        let library = self.library
+        watcher = FolderWatcher(url: library, isRelevant: { Self.isRelevantChange($0, library: library) }) { [weak self] in
             Task { @MainActor in self?.scheduleReload() }
         }
     }
@@ -64,6 +78,25 @@ public final class LibraryStore {
         watcher = nil
         debounce?.cancel()
         debounce = nil
+    }
+
+    /// False for changes inside a crate's `.cache/` (logs, launch.conf) or `files/` (game saves), which
+    /// never change the library index.
+    nonisolated static func isRelevantChange(_ path: String, library: URL) -> Bool {
+        var bases = [library.standardizedFileURL.path]
+        if let real = realpath(library.path, nil) {
+            bases.append(String(cString: real))
+            free(real)
+        }
+        for base in bases where path.hasPrefix(base + "/") {
+            let components = path.dropFirst(base.count).split(separator: "/")
+            if components.count >= 2, components[0].hasSuffix("." + CrateIO.crateExtension),
+               components[1] == ".cache" || components[1] == "files" {
+                return false
+            }
+            return true
+        }
+        return true
     }
 
     private func scheduleReload() {

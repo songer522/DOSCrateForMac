@@ -5,11 +5,15 @@ public enum RecordStatus: Sendable, Equatable {
     case ok
     case needsRepair(reason: String)
     case missingSource
+    /// `game.json` is from a newer DOSCrate or holds values this version doesn't know. It is shown but never rewritten.
+    case readOnly(reason: String)
 }
 
 public enum LibraryError: Error, Equatable {
     case sourceUnreachable(path: String)
     case crateExists
+    /// The record is read-only; saving it would lose data written by a newer DOSCrate.
+    case readOnly
 }
 
 public struct GameRecord: Sendable, Equatable, Identifiable {
@@ -56,24 +60,43 @@ public struct CrateIO: Sendable {
     // MARK: Loading and saving
 
     public func loadRecord(at crateURL: URL) -> GameRecord {
-        let fm = FileManager.default
         let file = gameFileURL(crateURL)
         func repair(_ reason: String) -> GameRecord {
-            let name = crateURL.deletingPathExtension().lastPathComponent
-            var placeholder = Game(title: name, source: .managed)
-            placeholder.id = Self.derivedID(for: crateURL)
-            return GameRecord(game: placeholder, crateURL: crateURL, extra: [:], status: .needsRepair(reason: reason))
+            GameRecord(game: placeholder(for: crateURL, raw: [:]), crateURL: crateURL, extra: [:],
+                       status: .needsRepair(reason: reason))
+        }
+        func broken() -> GameRecord {
+            let target = brokenFileURL(in: crateURL)
+            guard (try? FileManager.default.moveItem(at: file, to: target)) != nil else {
+                return repair("game.json could not be read")
+            }
+            return repair("game.json could not be read and was renamed to \(target.lastPathComponent)")
+        }
+        func readOnly(_ data: Data, raw: [String: JSONValue], reason: String) -> GameRecord {
+            if let lenient = try? GameFileCodec.decodeLenient(data) {
+                return GameRecord(game: lenient.game, crateURL: crateURL, extra: lenient.extra, status: .readOnly(reason: reason))
+            }
+            return GameRecord(game: placeholder(for: crateURL, raw: raw), crateURL: crateURL, extra: [:],
+                              status: .readOnly(reason: reason))
         }
 
         guard let data = try? Data(contentsOf: file) else { return repair("game.json is missing or unreadable") }
+        guard let raw = try? GameFileCodec.rawObject(data) else { return broken() }
+        let version = GameFileCodec.schemaVersion(of: raw)
+        if version > GameFileCodec.schemaVersion {
+            return readOnly(data, raw: raw, reason: "This game was saved by a newer version of DOSCrate "
+                            + "(game.json schema \(version)), so it can't be changed or played here.")
+        }
         let decoded: (game: Game, extra: [String: JSONValue])
         do {
             decoded = try GameFileCodec.decode(data)
         } catch {
-            let broken = crateURL.appending(path: Self.gameFileName + ".broken", directoryHint: .notDirectory)
-            try? fm.removeItem(at: broken)
-            try? fm.moveItem(at: file, to: broken)
-            return repair("game.json could not be read and was renamed to game.json.broken")
+            // Valid JSON that only fails on values a newer DOSCrate may have written is kept as it is.
+            if (try? GameFileCodec.decodeLenient(data)) != nil {
+                return readOnly(data, raw: raw, reason: "This game has settings this version of DOSCrate doesn't "
+                                + "recognize, so it can't be changed or played here.")
+            }
+            return broken()
         }
 
         var record = GameRecord(game: decoded.game, crateURL: crateURL, extra: decoded.extra, status: .ok)
@@ -102,6 +125,9 @@ public struct CrateIO: Sendable {
         return try? GameFileCodec.decode(data).extra
     }
 
+    /// Loads every crate. A crate whose game id is already taken by an earlier crate (in name order, so
+    /// "Keen" before "Keen 2" or "Keen copy"), as happens when a crate is duplicated in Finder, gets a fresh id
+    /// written back to its `game.json`.
     public func scan(library: URL) async -> [GameRecord] {
         let fm = FileManager.default
         let entries = (try? fm.contentsOfDirectory(
@@ -116,7 +142,19 @@ public struct CrateIO: Sendable {
             for await record in group { out.append(record) }
             return out
         }
-        return records.sorted {
+        var seen = Set<UUID>()
+        var unique: [GameRecord] = []
+        let byName = records.sorted {
+            let order = $0.crateURL.deletingPathExtension().lastPathComponent
+                .localizedStandardCompare($1.crateURL.deletingPathExtension().lastPathComponent)
+            return order == .orderedSame ? $0.crateURL.path < $1.crateURL.path : order == .orderedAscending
+        }
+        for var record in byName {
+            if seen.contains(record.id) { record = withFreshID(record) }
+            seen.insert(record.id)
+            unique.append(record)
+        }
+        return unique.sorted {
             let order = $0.game.title.localizedStandardCompare($1.game.title)
             return order == .orderedSame ? $0.crateURL.path < $1.crateURL.path : order == .orderedAscending
         }
@@ -137,23 +175,69 @@ public struct CrateIO: Sendable {
 
     // MARK: Drive C:
 
-    public func cDriveURL(for record: GameRecord) throws -> URL {
-        let root: URL
-        switch record.game.source {
-        case .managed:
-            root = record.crateURL.appending(path: "files", directoryHint: .isDirectory)
-        case .referenced(let path, let bookmark):
-            do {
-                root = try Self.resolve(path: path, bookmark: bookmark).url
-            } catch {
-                throw LibraryError.sourceUnreachable(path: path)
-            }
+    /// The folder a referenced game points at, resolved from its bookmark; nil for a managed game.
+    public func referencedFolderURL(for record: GameRecord) throws -> URL? {
+        guard case .referenced(let path, let bookmark) = record.game.source else { return nil }
+        do {
+            return try Self.resolve(path: path, bookmark: bookmark).url
+        } catch {
+            throw LibraryError.sourceUnreachable(path: path)
         }
+    }
+
+    public func cDriveURL(for record: GameRecord) throws -> URL {
+        let root = try referencedFolderURL(for: record)
+            ?? record.crateURL.appending(path: "files", directoryHint: .isDirectory)
         let sub = record.game.launch.driveCRoot
         return sub.isEmpty ? root : root.appending(path: sub, directoryHint: .isDirectory)
     }
 
     // MARK: Helpers
+
+    /// Gives a duplicate a new id: written to disk when the record is writable, derived from its path otherwise.
+    private func withFreshID(_ record: GameRecord) -> GameRecord {
+        var record = record
+        switch record.status {
+        case .ok, .missingSource:
+            record.game.id = UUID()
+            do {
+                try save(record.game, extra: record.extra, to: record.crateURL)
+            } catch {
+                record.game.id = Self.derivedID(for: record.crateURL)
+            }
+        case .needsRepair, .readOnly:
+            record.game.id = Self.derivedID(for: record.crateURL)
+        }
+        return record
+    }
+
+    /// Stand-in for a record that can't be decoded: title and id from the raw JSON when present, else from the path.
+    private func placeholder(for crateURL: URL, raw: [String: JSONValue]) -> Game {
+        var title = crateURL.deletingPathExtension().lastPathComponent
+        if case .string(let t)? = raw["title"], !t.isEmpty { title = t }
+        var game = Game(title: title, source: .managed)
+        if case .string(let s)? = raw["id"], let id = UUID(uuidString: s) {
+            game.id = id
+        } else {
+            game.id = Self.derivedID(for: crateURL)
+        }
+        return game
+    }
+
+    /// `game.json.<timestamp>.broken`, numbered so an earlier broken file is never overwritten.
+    private func brokenFileURL(in crate: URL) -> URL {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        let stamp = f.string(from: Date())
+        var candidate = crate.appending(path: "\(Self.gameFileName).\(stamp).broken", directoryHint: .notDirectory)
+        var n = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = crate.appending(path: "\(Self.gameFileName).\(stamp)-\(n).broken", directoryHint: .notDirectory)
+            n += 1
+        }
+        return candidate
+    }
 
     /// Creates a non-security-scoped bookmark (the app is not sandboxed).
     public static func makeBookmark(for url: URL) throws -> Data {

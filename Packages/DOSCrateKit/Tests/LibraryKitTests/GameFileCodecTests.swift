@@ -54,4 +54,39 @@ struct GameFileCodecTests {
         #expect(game.launch.exitWhenDone == true)
         #expect(game.tags == [])
     }
+
+    @Test func nestedUnknownKeysSurviveRewrite() throws {
+        let json = """
+        {"schemaVersion":1,"id":"\(UUID())","title":"X","source":{"type":"managed"},
+         "launch":{"executable":"A.EXE","futureLaunch":"x"},
+         "settings":{"memoryMB":16,"futureKnob":3},"stats":{"launchCount":2,"futureStat":[1]}}
+        """
+        var decoded = try GameFileCodec.decode(Data(json.utf8))
+        decoded.game.settings.memoryMB = nil
+        decoded.game.settings.preset = .pc486
+        let out = try GameFileCodec.encode(decoded.game, extra: decoded.extra)
+        let raw = try JSONDecoder().decode([String: JSONValue].self, from: out)
+        guard case .object(let settings) = raw["settings"], case .object(let launch) = raw["launch"],
+              case .object(let stats) = raw["stats"] else { Issue.record("missing nested objects"); return }
+        #expect(settings["futureKnob"] == .number(3))
+        #expect(settings["memoryMB"] == nil)
+        #expect(settings["preset"] == .string("pc486"))
+        #expect(launch["futureLaunch"] == .string("x"))
+        #expect(launch["executable"] == .string("A.EXE"))
+        #expect(stats["futureStat"] == .array([.number(1)]))
+        #expect(try GameFileCodec.decode(out).game == decoded.game)
+    }
+
+    @Test func lenientDecodeOnlyRelaxesEnumValues() throws {
+        let json = """
+        {"id":"\(UUID())","title":"X","source":{"type":"managed"},"settings":{"preset":"pentium4","core":"jit"}}
+        """
+        #expect(throws: DecodingError.self) { try GameFileCodec.decode(Data(json.utf8)) }
+        let game = try GameFileCodec.decodeLenient(Data(json.utf8)).game
+        #expect(game.settings.preset == nil && game.settings.core == nil)
+        let wrongType = """
+        {"id":"\(UUID())","title":7,"source":{"type":"managed"}}
+        """
+        #expect(throws: DecodingError.self) { try GameFileCodec.decodeLenient(Data(wrongType.utf8)) }
+    }
 }

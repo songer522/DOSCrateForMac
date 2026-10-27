@@ -16,6 +16,8 @@ public enum LaunchError: Error, Equatable {
     case nonDOSPath(component: String, suggestedCRoot: String)
     case unsupportedPath(String)
     case needsRepair
+    /// `game.json` is from a newer DOSCrate or holds values this version doesn't know; it is never rewritten.
+    case readOnly(reason: String)
     case alreadyRunning
 }
 

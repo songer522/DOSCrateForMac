@@ -15,6 +15,8 @@ public enum GameSource: Sendable, Equatable, Codable {
             self = .referenced(path: try c.decode(String.self, forKey: .path),
                                bookmark: try c.decode(Data.self, forKey: .bookmark))
         case let other:
+            // Shown read-only, so the stand-in is never written back.
+            if decoder.decodesEnumsLeniently { self = .managed; return }
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown source type \(other)")
         }
     }
@@ -44,6 +46,18 @@ public struct MediaImage: Sendable, Equatable, Codable {
         self.relativePath = relativePath
         self.kind = kind
     }
+
+    private enum CodingKeys: String, CodingKey { case relativePath, kind }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        relativePath = try c.decode(String.self, forKey: .relativePath)
+        if decoder.decodesEnumsLeniently {
+            kind = try c.decodeEnumIfPresent(MediaKind.self, forKey: .kind, lenient: true) ?? .cdrom
+        } else {
+            kind = try c.decode(MediaKind.self, forKey: .kind)
+        }
+    }
 }
 
 public struct LaunchSpec: Sendable, Equatable, Codable {
@@ -65,9 +79,11 @@ public struct LaunchSpec: Sendable, Equatable, Codable {
         self.exitWhenDone = exitWhenDone; self.driveCRoot = driveCRoot
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case executable, arguments, preCommands, postCommands, exitWhenDone, driveCRoot
     }
+
+    static let knownKeys = Set(CodingKeys.allCases.map(\.rawValue))
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -91,7 +107,9 @@ public struct PlayStats: Sendable, Equatable, Codable {
         self.launchCount = launchCount
     }
 
-    private enum CodingKeys: String, CodingKey { case totalPlaySeconds, lastPlayed, launchCount }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case totalPlaySeconds, lastPlayed, launchCount }
+
+    static let knownKeys = Set(CodingKeys.allCases.map(\.rawValue))
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)

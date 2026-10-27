@@ -65,6 +65,7 @@ struct CoverView: View {
             switch record.status {
             case .missingSource: badge("Missing", .orange)
             case .needsRepair: badge("Needs repair", .red)
+            case .readOnly: badge("Read-only", .gray)
             case .ok: EmptyView()
             }
             if isRunning { badge("Running", .green) }

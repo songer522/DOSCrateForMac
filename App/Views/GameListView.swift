@@ -17,6 +17,7 @@ struct GameListView: View {
                     switch record.status {
                     case .missingSource: Text("Missing").font(.caption).foregroundStyle(.orange)
                     case .needsRepair: Text("Needs repair").font(.caption).foregroundStyle(.red)
+                    case .readOnly: Text("Read-only").font(.caption).foregroundStyle(.secondary)
                     case .ok: EmptyView()
                     }
                 }

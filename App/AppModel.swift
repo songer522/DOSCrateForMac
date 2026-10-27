@@ -218,6 +218,8 @@ final class AppModel {
             return AppAlert(title: "Unsupported path", message: "\(path) contains characters DOSBox can't mount.")
         case .needsRepair:
             return AppAlert(title: "Game needs repair", message: "This game's data file is unreadable.")
+        case .readOnly(let reason):
+            return AppAlert(title: "Game is read-only", message: reason)
         case .alreadyRunning:
             return AppAlert(title: "Already running", message: "This game is already running.")
         }

@@ -9,6 +9,7 @@ public enum Preflight {
         switch r.status {
         case .ok: break
         case .needsRepair: throw .needsRepair
+        case .readOnly(let reason): throw .readOnly(reason: reason)
         case .missingSource:
             if case .referenced(let path, _) = r.game.source { throw .sourceUnreachable(path: path) }
             throw .needsRepair

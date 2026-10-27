@@ -25,6 +25,15 @@ struct CrateIOTests {
         #expect(try io.makeCrate(title: "Keen", in: lib).lastPathComponent == "Keen 2.doscrate")
     }
 
+    func brokenFiles(in crate: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: crate.path)
+            .filter { $0.hasPrefix("game.json.") && $0.hasSuffix(".broken") }.sorted()
+    }
+
+    func writeJSON(_ object: [String: Any], to crate: URL) throws {
+        try JSONSerialization.data(withJSONObject: object).write(to: crate.appending(path: "game.json"))
+    }
+
     @Test func brokenJSONIsRenamedAndFlagged() throws {
         let lib = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: lib) }
@@ -32,10 +41,75 @@ struct CrateIOTests {
         try Data("{".utf8).write(to: crate.appending(path: "game.json"))
         let record = io.loadRecord(at: crate)
         guard case .needsRepair = record.status else { Issue.record("expected needsRepair, got \(record.status)"); return }
-        #expect(FileManager.default.fileExists(atPath: crate.appending(path: "game.json.broken").path))
+        #expect(try brokenFiles(in: crate).count == 1)
         #expect(!FileManager.default.fileExists(atPath: crate.appending(path: "game.json").path))
         #expect(record.game.title == "Bad")
         #expect(io.loadRecord(at: crate).id == record.id)
+    }
+
+    @Test func secondBreakageNeverOverwritesTheFirstBrokenFile() throws {
+        let lib = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let crate = try io.makeCrate(title: "Bad", in: lib)
+        try Data("{ first".utf8).write(to: crate.appending(path: "game.json"))
+        _ = io.loadRecord(at: crate)
+        try Data("{ second".utf8).write(to: crate.appending(path: "game.json"))
+        _ = io.loadRecord(at: crate)
+        let names = try brokenFiles(in: crate)
+        #expect(names.count == 2)
+        let contents = try Set(names.map { try String(contentsOf: crate.appending(path: $0), encoding: .utf8) })
+        #expect(contents == ["{ first", "{ second"])
+    }
+
+    @Test func newerSchemaIsReadOnlyAndLeftAlone() throws {
+        let lib = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let crate = try io.makeCrate(title: "Future", in: lib)
+        let id = UUID()
+        try writeJSON(["schemaVersion": 2, "id": id.uuidString, "title": "From The Future",
+                       "source": ["type": "cloud"], "hologram": true], to: crate)
+        let before = try Data(contentsOf: crate.appending(path: "game.json"))
+        let record = io.loadRecord(at: crate)
+        guard case .readOnly = record.status else { Issue.record("expected readOnly, got \(record.status)"); return }
+        #expect(record.game.title == "From The Future")
+        #expect(record.id == id)
+        #expect(try Data(contentsOf: crate.appending(path: "game.json")) == before)
+        #expect(try brokenFiles(in: crate).isEmpty)
+    }
+
+    @Test func unknownEnumValueIsReadOnlyNotBroken() throws {
+        let lib = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let crate = try io.makeCrate(title: "Odd", in: lib)
+        try writeJSON(["schemaVersion": 1, "id": UUID().uuidString, "title": "Odd",
+                       "source": ["type": "managed"],
+                       "media": [["relativePath": "media/x.tap", "kind": "tape"]],
+                       "settings": ["preset": "pentium4", "memoryMB": 16, "cycles": "turbo"]], to: crate)
+        let before = try Data(contentsOf: crate.appending(path: "game.json"))
+        let record = io.loadRecord(at: crate)
+        guard case .readOnly = record.status else { Issue.record("expected readOnly, got \(record.status)"); return }
+        #expect(record.game.settings.preset == nil)
+        #expect(record.game.settings.cycles == nil)
+        #expect(record.game.settings.memoryMB == 16)
+        #expect(try Data(contentsOf: crate.appending(path: "game.json")) == before)
+        #expect(try brokenFiles(in: crate).isEmpty)
+    }
+
+    @Test func duplicateIDsAcrossCratesAreSplit() async throws {
+        let lib = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let game = Game(title: "Keen", source: .managed)
+        let first = try io.makeCrate(title: "Keen", in: lib)
+        let second = try io.makeCrate(title: "Keen", in: lib)
+        try io.save(game, extra: ["futureField": .string("kept")], to: first)
+        try io.save(game, extra: ["futureField": .string("kept")], to: second)
+        let records = await io.scan(library: lib)
+        #expect(Set(records.map(\.id)).count == 2)
+        #expect(records.first { $0.crateURL.lastPathComponent == first.lastPathComponent }?.id == game.id)
+        let onDisk = try GameFileCodec.decode(Data(contentsOf: second.appending(path: "game.json")))
+        #expect(onDisk.game.id != game.id)
+        #expect(onDisk.extra["futureField"] == .string("kept"))
+        #expect(records.first { $0.crateURL.lastPathComponent == second.lastPathComponent }?.id == onDisk.game.id)
     }
 
     @Test func scanFindsOnlyCrates() async throws {
