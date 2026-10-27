@@ -31,11 +31,11 @@ public struct LibraryQuery: Sendable, Equatable {
         self.sort = sort
     }
 
-    /// Filters, searches and sorts. Records that need repair always stay visible.
+    /// Filters, searches and sorts. Records that need repair always pass the sidebar filter, but still honour search.
     public func apply(to records: [GameRecord], now: Date) -> [GameRecord] {
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let visible = records.filter { record in
-            if case .needsRepair = record.status { return true }
+            if case .needsRepair = record.status { return matchesSearch(record, needle: needle) }
             return matchesFilter(record, now: now) && matchesSearch(record, needle: needle)
         }
         return visible.sorted { precedes($0, $1) }

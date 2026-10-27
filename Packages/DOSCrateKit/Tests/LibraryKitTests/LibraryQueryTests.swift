@@ -70,9 +70,11 @@ struct LibraryQueryTests {
         #expect(titles(LibraryQuery(sort: .playTime), rs) == ["A", "C", "B"])
     }
 
-    @Test func needsRepairAlwaysVisible() {
+    @Test func needsRepairBypassesFilterButNotSearch() {
         let rs = [record("Broken", status: .needsRepair(reason: "x")), record("Fine")]
-        #expect(titles(LibraryQuery(filter: .favorites, search: "zzz"), rs) == ["Broken"])
+        #expect(titles(LibraryQuery(filter: .favorites), rs) == ["Broken"])
+        #expect(titles(LibraryQuery(filter: .favorites, search: "brok"), rs) == ["Broken"])
+        #expect(titles(LibraryQuery(search: "zzz"), rs).isEmpty)
     }
 
     @Test func allTagsSortedUnique() {
