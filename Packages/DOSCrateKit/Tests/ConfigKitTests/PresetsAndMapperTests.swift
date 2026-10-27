@@ -52,6 +52,17 @@ private let env = ConfigEnvironment(soundfontPath: nil, mt32RomDir: nil)
     #expect(none.value("gus", "gus") == "false")
 }
 
+@Test func soundBlasterOverridesInheritedAudio() {
+    var preset = Presets.document(.early80s)
+    for card in [SoundCard.sb16, .sbPro] {
+        preset.merge(SettingsMapper.document(GameSettings(soundCard: card), env: env))
+        #expect(preset.value("sblaster", "oplmode") == "auto")
+        #expect(preset.value("gus", "gus") == "false")
+    }
+    let adlib = SettingsMapper.document(GameSettings(soundCard: .adlib), env: env)
+    #expect(adlib.value("gus", "gus") == "false")
+}
+
 @Test func generalMIDIUsesSoundfontWhenSet() {
     let e = ConfigEnvironment(soundfontPath: "/sf/gm.sf2", mt32RomDir: "/roms")
     let gm = SettingsMapper.document(GameSettings(midi: .generalMIDI), env: e)
