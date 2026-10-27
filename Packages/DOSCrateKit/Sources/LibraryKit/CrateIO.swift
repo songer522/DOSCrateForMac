@@ -120,7 +120,7 @@ public struct CrateIO: Sendable {
     }
 
     /// Extra keys currently on disk, for callers whose in-memory copy may be stale.
-    func extraOnDisk(at crateURL: URL) -> [String: JSONValue]? {
+    public func extraOnDisk(at crateURL: URL) -> [String: JSONValue]? {
         guard let data = try? Data(contentsOf: gameFileURL(crateURL)) else { return nil }
         return try? GameFileCodec.decode(data).extra
     }

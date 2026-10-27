@@ -321,4 +321,223 @@ struct ImporterTests {
         #expect(p.suggestedTitle == "Commander Keen 1")
         importer.discard(p)
     }
+
+    @Test func duplicateFinderMatchesReferencedOriginZipAndTitle() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        // 1. Referenced same-folder match (including via symlink).
+        let refFolder = tmp.appending(path: "ref_keen", directoryHint: .isDirectory)
+        try touch(refFolder, "KEEN1.EXE")
+        let pRef = try await importer.prepare(refFolder)
+        let recRef = try await importer.commit(pRef, mode: .reference, title: "Commander Keen", executable: "KEEN1.EXE", into: lib)
+
+        let symlinkToRef = tmp.appending(path: "keen_link")
+        try FileManager.default.createSymbolicLink(at: symlinkToRef, withDestinationURL: refFolder)
+        let matchRef = DuplicateFinder.match(for: symlinkToRef, in: [recRef])
+        #expect(matchRef?.kind == .sameSource)
+        #expect(matchRef?.record.id == recRef.id)
+
+        // 2. Origin-path match for a copied folder.
+        let copyFolder = tmp.appending(path: "doom_folder", directoryHint: .isDirectory)
+        try touch(copyFolder, "DOOM.EXE")
+        let pCopy = try await importer.prepare(copyFolder)
+        let recCopy = try await importer.commit(pCopy, mode: .copy, title: "Custom Doom Title", executable: "DOOM.EXE", into: lib)
+        #expect(recCopy.game.origin == ImportOrigin.from(copyFolder))
+
+        let matchFolderOrigin = DuplicateFinder.match(for: copyFolder, in: [recCopy])
+        #expect(matchFolderOrigin?.kind == .sameSource)
+        #expect(matchFolderOrigin?.record.id == recCopy.id)
+
+        // 3. Zip with same path, size, and date is .sameSource; different size or date is not .sameSource.
+        let zipTree = tmp.appending(path: "wolf_tree", directoryHint: .isDirectory)
+        try touch(zipTree, "WOLF3D.EXE")
+        let wolfZip = try zip(zipTree, to: "wolf_archive.zip", in: tmp)
+        let pZip = try await importer.prepare(wolfZip)
+        let recZip = try await importer.commit(pZip, mode: .copy, title: "Wolfenstein 3D", executable: "WOLF3D.EXE", into: lib)
+        importer.discard(pZip)
+
+        #expect(DuplicateFinder.match(for: wolfZip, in: [recZip])?.kind == .sameSource)
+
+        // Modify modification date -> no longer .sameSource.
+        let originalMtime = try FileManager.default.attributesOfItem(atPath: wolfZip.path)[.modificationDate] as? Date
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_600_000_000)],
+            ofItemAtPath: wolfZip.path
+        )
+        #expect(DuplicateFinder.match(for: wolfZip, in: [recZip])?.kind != .sameSource)
+
+        // Restore date, change size -> no longer .sameSource.
+        if let originalMtime {
+            try FileManager.default.setAttributes([.modificationDate: originalMtime], ofItemAtPath: wolfZip.path)
+        }
+        try Data("different-size-bytes".utf8).write(to: wolfZip)
+        if let originalMtime {
+            try FileManager.default.setAttributes([.modificationDate: originalMtime], ofItemAtPath: wolfZip.path)
+        }
+        #expect(DuplicateFinder.match(for: wolfZip, in: [recZip])?.kind != .sameSource)
+
+        // 4. Title-only match (case- and diacritic-insensitive and trimmed) is .sameTitle.
+        var pokemonGame = Game(title: "  Pokémon  ", source: .managed)
+        pokemonGame.origin = ImportOrigin(path: "/elsewhere/pokemon")
+        let recPokemon = GameRecord(game: pokemonGame, crateURL: lib.appending(path: "Pokemon.doscrate"))
+        let otherPokemon = tmp.appending(path: "pokemon", directoryHint: .isDirectory)
+        try touch(otherPokemon, "POKE.EXE")
+        let matchTitle = DuplicateFinder.match(for: otherPokemon, in: [recPokemon])
+        #expect(matchTitle?.kind == .sameTitle)
+        #expect(matchTitle?.record.id == recPokemon.id)
+
+        // 5. No match.
+        let unrelated = tmp.appending(path: "heretic", directoryHint: .isDirectory)
+        try touch(unrelated, "HERETIC.EXE")
+        #expect(DuplicateFinder.match(for: unrelated, in: [recRef, recCopy, recZip, recPokemon]) == nil)
+    }
+
+    @Test func replaceManagedGameKeepsSavesSettingsAndResetsMissingExecutable() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        let v1 = tmp.appending(path: "keen_v1", directoryHint: .isDirectory)
+        try touch(v1, "OLD.EXE")
+        try Data("v1-data".utf8).write(to: v1.appending(path: "DATA.DAT"))
+
+        let p1 = try await importer.prepare(v1)
+        var rec = try await importer.commit(p1, mode: .copy, title: "Commander Keen", executable: "OLD.EXE", into: lib)
+
+        // Populate metadata, settings, play stats, unknown collection key, override.conf, cover.png, and a save file.
+        rec.game.year = 1990
+        rec.game.developer = "id Software"
+        rec.game.publisher = "Apogee"
+        rec.game.genre = "Platformer"
+        rec.game.tags = ["dos", "classic"]
+        rec.game.notes = "My notes"
+        rec.game.isFavorite = true
+        rec.game.settings.cycles = .fixed(12000)
+        rec.game.stats = PlayStats(totalPlaySeconds: 3600, lastPlayed: Date(timeIntervalSince1970: 1_700_000_000), launchCount: 9)
+        let extra: [String: JSONValue] = ["collections": .array([.string("Favorites")])]
+        try io.save(rec.game, extra: extra, to: rec.crateURL)
+        try Data("[sdl]\nfullscreen = true\n".utf8).write(to: io.overrideURL(rec.crateURL))
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: io.coverURL(rec.crateURL))
+        let saveFile = rec.crateURL.appending(path: "files/SAVES/GAME1.SAV")
+        try FileManager.default.createDirectory(at: saveFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("saved-progress".utf8).write(to: saveFile)
+        rec = io.loadRecord(at: rec.crateURL)
+
+        // v2 replaces DATA.DAT and replaces OLD.EXE with two candidates (KEEN1.EXE, SETUP.EXE).
+        let v2 = tmp.appending(path: "keen_v2", directoryHint: .isDirectory)
+        try touch(v2, "KEEN1.EXE")
+        try touch(v2, "SETUP.EXE")
+        try Data("v2-data".utf8).write(to: v2.appending(path: "DATA.DAT"))
+
+        let p2 = try await importer.prepare(v2)
+        let replaced = try await importer.replace(rec, with: p2, mode: .copy)
+        let reloaded = io.loadRecord(at: replaced.crateURL)
+
+        #expect(reloaded.id == rec.id)
+        #expect(reloaded.crateURL == rec.crateURL)
+        #expect(reloaded.game.title == "Commander Keen")
+        #expect(reloaded.game.year == 1990)
+        #expect(reloaded.game.developer == "id Software")
+        #expect(reloaded.game.publisher == "Apogee")
+        #expect(reloaded.game.genre == "Platformer")
+        #expect(reloaded.game.tags == ["dos", "classic"])
+        #expect(reloaded.game.notes == "My notes")
+        #expect(reloaded.game.isFavorite == true)
+        #expect(reloaded.game.settings.cycles == .fixed(12000))
+        #expect(reloaded.game.stats == rec.game.stats)
+        #expect(reloaded.extra["collections"] == .array([.string("Favorites")]))
+        #expect(reloaded.game.origin == ImportOrigin.from(v2))
+        // OLD.EXE no longer exists in v2 and v2 has 2 candidates -> executable is reset to nil.
+        #expect(reloaded.game.launch.executable == nil)
+
+        // New file content wins; old-only save file survives; override.conf and cover.png survive.
+        #expect(try String(contentsOf: reloaded.crateURL.appending(path: "files/DATA.DAT"), encoding: .utf8) == "v2-data")
+        #expect(try String(contentsOf: reloaded.crateURL.appending(path: "files/SAVES/GAME1.SAV"), encoding: .utf8) == "saved-progress")
+        #expect(try String(contentsOf: io.overrideURL(reloaded.crateURL), encoding: .utf8) == "[sdl]\nfullscreen = true\n")
+        #expect(try Data(contentsOf: io.coverURL(reloaded.crateURL)) == Data([0x89, 0x50, 0x4E, 0x47]))
+    }
+
+    @Test func replaceManagedGameFailureLeavesOldCrateUnchanged() async throws {
+        let tmp = try makeImportTempDir()
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        let v1 = tmp.appending(path: "keen_v1", directoryHint: .isDirectory)
+        try touch(v1, "KEEN1.EXE")
+        try Data("original".utf8).write(to: v1.appending(path: "DATA.DAT"))
+        let p1 = try await importer.prepare(v1)
+        let rec = try await importer.commit(p1, mode: .copy, title: "Keen", executable: "KEEN1.EXE", into: lib)
+        try Data("save".utf8).write(to: rec.crateURL.appending(path: "files/SAVE.GAM"))
+
+        let v2 = tmp.appending(path: "keen_v2", directoryHint: .isDirectory)
+        try touch(v2, "KEEN2.EXE")
+        try Data("updated".utf8).write(to: v2.appending(path: "DATA.DAT"))
+        let p2 = try await importer.prepare(v2)
+
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rec.crateURL.path)
+            try? FileManager.default.removeItem(at: tmp)
+        }
+
+        // Force failure by making a file in the new source unreadable so copyTree fails partway through staging.
+        let badFile = v2.appending(path: "UNREADABLE.DAT")
+        try Data("secret".utf8).write(to: badFile)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: badFile.path)
+        await #expect(throws: (any Error).self) {
+            _ = try await importer.replace(rec, with: p2, mode: .copy)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: badFile.path)
+        try FileManager.default.removeItem(at: badFile)
+
+        // Also force failure by making the crate directory read-only during swap.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: rec.crateURL.path)
+        await #expect(throws: (any Error).self) {
+            _ = try await importer.replace(rec, with: p2, mode: .copy)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rec.crateURL.path)
+
+        let after = io.loadRecord(at: rec.crateURL)
+        #expect(after.game == rec.game)
+        #expect(try String(contentsOf: rec.crateURL.appending(path: "files/DATA.DAT"), encoding: .utf8) == "original")
+        #expect(try String(contentsOf: rec.crateURL.appending(path: "files/SAVE.GAM"), encoding: .utf8) == "save")
+        #expect(!exists(rec.crateURL.appending(path: "files/KEEN2.EXE")))
+    }
+
+    @Test func replaceReferencedGameUpdatesPathAndBookmarkAndKeepsID() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        let folder1 = tmp.appending(path: "keen_a", directoryHint: .isDirectory)
+        try touch(folder1, "KEEN1.EXE")
+        let p1 = try await importer.prepare(folder1)
+        let rec = try await importer.commit(p1, mode: .reference, title: "Keen", executable: "KEEN1.EXE", into: lib)
+
+        let folder2 = tmp.appending(path: "keen_b", directoryHint: .isDirectory)
+        try touch(folder2, "KEEN1.EXE")
+        let p2 = try await importer.prepare(folder2)
+        let replaced = try await importer.replace(rec, with: p2, mode: .reference)
+
+        #expect(replaced.id == rec.id)
+        #expect(replaced.crateURL == rec.crateURL)
+        #expect(replaced.game.origin == ImportOrigin.from(folder2))
+        let resolved = try io.cDriveURL(for: io.loadRecord(at: replaced.crateURL))
+        #expect(resolved.resolvingSymlinksInPath().path == folder2.resolvingSymlinksInPath().path)
+        #expect(exists(folder1.appending(path: "KEEN1.EXE")))
+        #expect(exists(folder2.appending(path: "KEEN1.EXE")))
+
+        // Mixed mode: referenced -> copy converts crate to managed.
+        let toManaged = try await importer.replace(replaced, with: p2, mode: .copy)
+        #expect(toManaged.id == rec.id)
+        #expect(toManaged.game.source == .managed)
+        #expect(exists(toManaged.crateURL.appending(path: "files/KEEN1.EXE")))
+
+        // Mixed mode: managed -> referenced converts crate back to referenced and trashes crate/files.
+        let backToRef = try await importer.replace(toManaged, with: p1, mode: .reference)
+        #expect(backToRef.id == rec.id)
+        if case .referenced = backToRef.game.source {} else { Issue.record("Expected referenced source") }
+        #expect(!exists(backToRef.crateURL.appending(path: "files")))
+    }
 }

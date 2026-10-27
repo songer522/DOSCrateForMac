@@ -8,6 +8,7 @@ public enum GameFileCodec {
     /// Nested objects whose unknown keys are carried in `extra` under the same key and merged back on encode.
     static let nestedKnownKeys: [String: Set<String>] = [
         "launch": LaunchSpec.knownKeys, "settings": GameSettings.knownKeys, "stats": PlayStats.knownKeys,
+        "origin": ImportOrigin.knownKeys,
     ]
 
     public static func decode(_ data: Data) throws -> (game: Game, extra: [String: JSONValue]) {

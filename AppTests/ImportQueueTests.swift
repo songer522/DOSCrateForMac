@@ -420,4 +420,111 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
 
         #expect(model.store.records.map(\.game.title) == ["A", "B", "E", "F"])
     }
+
+    @Test func batchWithDuplicatesSkipReplaceAndKeepBoth() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .copy)
+        let queue = ImportQueue()
+        let io = CrateIO()
+
+        // Seed library with "Keen" (managed, with a save file and launchCount = 5).
+        let keenV1 = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(keenV1, "KEEN1.EXE")
+        try Data("old-keen".utf8).write(to: keenV1.appending(path: "DATA.DAT"))
+        let pSeed = try await model.importer.prepare(keenV1)
+        var seeded = try await model.importer.commit(
+            pSeed, mode: .copy, title: "Keen", executable: "KEEN1.EXE", into: model.store.library
+        )
+        seeded.game.stats.launchCount = 5
+        try io.save(seeded.game, extra: [:], to: seeded.crateURL)
+        let saveURL = seeded.crateURL.appending(path: "files/SAVES/GAME1.SAV")
+        try FileManager.default.createDirectory(at: saveURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("my-save".utf8).write(to: saveURL)
+        await model.store.reload()
+        let keenID = seeded.id
+
+        // Prepare batch items: an updated "keen" folder + a new "doom" folder.
+        try Data("new-keen".utf8).write(to: keenV1.appending(path: "DATA.DAT"))
+        let doom = root.appending(path: "doom", directoryHint: .isDirectory)
+        try touchFile(doom, "DOOM.EXE")
+
+        // 1. Skip: even with importLocation == .copy, duplicate triggers prompt; Skip imports only Doom.
+        #expect(queue.add([keenV1, doom], model: model) == nil)
+        let prompt1 = try #require(queue.batchPrompt)
+        #expect(prompt1.title == "1 of 2 items are already in your library")
+        #expect(prompt1.duplicateTitles == ["Keen"])
+
+        await queue.confirmBatch(duplicateAction: .skip, model: model)?.value
+        #expect(model.store.records.map(\.game.title) == ["Doom", "Keen"])
+        #expect(try String(contentsOf: seeded.crateURL.appending(path: "files/DATA.DAT"), encoding: .utf8) == "old-keen")
+
+        // 2. Replace: updates Keen in place (keeping id, stats, and SAVES/GAME1.SAV; no "Keen 2" crate), and adds Wolf.
+        let wolf = root.appending(path: "wolf", directoryHint: .isDirectory)
+        try touchFile(wolf, "WOLF3D.EXE")
+
+        #expect(queue.add([keenV1, wolf], model: model) == nil)
+        #expect(queue.batchPrompt?.duplicateTitles == ["Keen"])
+        await queue.confirmBatch(duplicateAction: .replace, model: model)?.value
+
+        #expect(model.store.records.map(\.game.title) == ["Doom", "Keen", "Wolf"])
+        let keenAfterReplace = try #require(model.store.record(keenID))
+        #expect(keenAfterReplace.crateURL.lastPathComponent == "Keen.doscrate")
+        #expect(keenAfterReplace.game.stats.launchCount == 5)
+        #expect(try String(contentsOf: keenAfterReplace.crateURL.appending(path: "files/DATA.DAT"), encoding: .utf8) == "new-keen")
+        #expect(try String(contentsOf: keenAfterReplace.crateURL.appending(path: "files/SAVES/GAME1.SAV"), encoding: .utf8) == "my-save")
+
+        // 3. Keep Both: creates a second crate ("Keen 2.doscrate").
+        let quake = root.appending(path: "quake", directoryHint: .isDirectory)
+        try touchFile(quake, "QUAKE.EXE")
+
+        #expect(queue.add([keenV1, quake], model: model) == nil)
+        await queue.confirmBatch(duplicateAction: .keepBoth, model: model)?.value
+
+        let keenRecords = model.store.records.filter { $0.game.title == "Keen" }
+        #expect(keenRecords.count == 2)
+        #expect(Set(keenRecords.map { $0.crateURL.lastPathComponent }) == ["Keen.doscrate", "Keen 2.doscrate"])
+    }
+
+    @Test func replaceRefusesRunningGameInBatchAndSingleImport() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .copy)
+        let queue = ImportQueue()
+
+        let keen = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(keen, "KEEN1.EXE")
+        let pSeed = try await model.importer.prepare(keen)
+        let seeded = try await model.importer.commit(
+            pSeed, mode: .copy, title: "Keen", executable: "KEEN1.EXE", into: model.store.library
+        )
+        await model.store.reload()
+
+        // Start Keen so it is running.
+        model.play(seeded.id)
+        #expect(model.sessions.running.contains(seeded.id))
+
+        // Single-item duplicate notice check + running refusal on Replace.
+        let pSingle = try await model.importer.prepare(keen)
+        let match = try #require(DuplicateFinder.match(for: pSingle, in: model.store.records))
+        #expect(ImportSheet.duplicateNotice(for: match) == "\"Keen\" is already in your library.")
+        let titleMatch = DuplicateMatch(record: seeded, kind: .sameTitle)
+        #expect(ImportSheet.duplicateNotice(for: titleMatch) == "A game named \"Keen\" is already in your library.")
+
+        let replacedSingle = try await queue.finishSingleImport(
+            pSingle, action: .replace, replacing: seeded, mode: .copy, title: "Keen", executable: "KEEN1.EXE", model: model
+        )
+        #expect(replacedSingle == nil)
+        #expect(model.alert?.title == "Already running")
+        model.alert = nil
+
+        // Batch Replace while Keen is running counts Keen as a failure and still imports Duke.
+        let duke = root.appending(path: "duke", directoryHint: .isDirectory)
+        try touchFile(duke, "DUKE.EXE")
+        #expect(queue.add([keen, duke], model: model) == nil)
+        await queue.confirmBatch(duplicateAction: .replace, model: model)?.value
+
+        #expect(model.store.records.map(\.game.title) == ["Duke", "Keen"])
+        let alert = try #require(model.alert)
+        #expect(alert.title == "Couldn't import 1 item")
+        #expect(alert.message.contains("already running"))
+    }
 }

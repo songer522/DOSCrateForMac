@@ -123,15 +123,8 @@ final class AppModel {
     }
 
     private func importExistingLibraryContents(at url: URL) async {
-        var referenced = Set<String>()
-        for record in store.records {
-            if let folder = try? io.referencedFolderURL(for: record) {
-                referenced.insert(Self.canonicalPath(folder))
-            } else if case .referenced(let path, _) = record.game.source {
-                referenced.insert(Self.canonicalPath(URL(filePath: path)))
-            }
-        }
-        let entries = await Task.detached { Self.scanExistingFolder(url, referenced: referenced) }.value
+        let records = store.records
+        let entries = await Task.detached { Self.scanExistingFolder(url, records: records) }.value
         let cancelled = scanCancelled
         isScanningLibrary = false
         scanCancelled = false
@@ -139,7 +132,7 @@ final class AppModel {
         await imports.enqueue(entries, model: self)?.value
     }
 
-    nonisolated private static func scanExistingFolder(_ url: URL, referenced: Set<String>) -> [ImportQueue.BatchEntry] {
+    nonisolated private static func scanExistingFolder(_ url: URL, records: [GameRecord]) -> [ImportQueue.BatchEntry] {
         let fm = FileManager.default
         guard let children = try? fm.contentsOfDirectory(
             at: url,
@@ -171,7 +164,7 @@ final class AppModel {
             let ext = child.pathExtension.lowercased()
             if values?.isDirectory == true {
                 if ext == CrateIO.crateExtension { continue }
-                if referenced.contains(canonicalPath(child)) { continue }
+                if DuplicateFinder.match(for: child, in: records)?.kind == .sameSource { continue }
                 let candidates = (try? ExecutableRanker.rank(root: child, title: child.lastPathComponent)) ?? []
                 if !candidates.isEmpty {
                     entries.append(.init(url: child, mode: .reference))
@@ -180,14 +173,11 @@ final class AppModel {
                 if ext == "iso", cueBases.contains(child.deletingPathExtension().lastPathComponent.lowercased()) {
                     continue
                 }
+                if DuplicateFinder.match(for: child, in: records)?.kind == .sameSource { continue }
                 entries.append(.init(url: child, mode: .copy))
             }
         }
         return entries
-    }
-
-    nonisolated private static func canonicalPath(_ url: URL) -> String {
-        url.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     // MARK: Launching

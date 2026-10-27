@@ -119,6 +119,41 @@ public struct PlayStats: Sendable, Equatable, Codable {
     }
 }
 
+public struct ImportOrigin: Sendable, Equatable, Codable {
+    public var path: String
+    public var fileSize: Int64?
+    public var modifiedAt: Date?
+
+    public init(path: String, fileSize: Int64? = nil, modifiedAt: Date? = nil) {
+        self.path = path
+        self.fileSize = fileSize
+        self.modifiedAt = modifiedAt
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable { case path, fileSize, modifiedAt }
+
+    static let knownKeys = Set(CodingKeys.allCases.map(\.rawValue))
+
+    public static func canonicalPath(for url: URL) -> String {
+        url.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    public static func from(_ url: URL) -> ImportOrigin {
+        let path = canonicalPath(for: url)
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path) else {
+            return ImportOrigin(path: path)
+        }
+        if attrs[.type] as? FileAttributeType == .typeDirectory {
+            return ImportOrigin(path: path)
+        }
+        let size = (attrs[.size] as? NSNumber)?.int64Value
+        let mtime = (attrs[.modificationDate] as? Date).map {
+            Date(timeIntervalSince1970: floor($0.timeIntervalSince1970))
+        }
+        return ImportOrigin(path: path, fileSize: size, modifiedAt: mtime)
+    }
+}
+
 public struct Game: Sendable, Equatable, Codable, Identifiable {
     public var id: UUID
     public var title: String
@@ -130,12 +165,13 @@ public struct Game: Sendable, Equatable, Codable, Identifiable {
     public var tags: [String]
     public var isFavorite: Bool
     public var source: GameSource
+    public var origin: ImportOrigin?
     public var media: [MediaImage]
     public var launch: LaunchSpec
     public var settings: GameSettings
     public var stats: PlayStats
 
-    public init(title: String, source: GameSource) {
+    public init(title: String, source: GameSource, origin: ImportOrigin? = nil) {
         self.id = UUID()
         self.title = title
         self.year = nil
@@ -146,6 +182,7 @@ public struct Game: Sendable, Equatable, Codable, Identifiable {
         self.tags = []
         self.isFavorite = false
         self.source = source
+        self.origin = origin
         self.media = []
         self.launch = LaunchSpec()
         self.settings = GameSettings()
@@ -155,12 +192,12 @@ public struct Game: Sendable, Equatable, Codable, Identifiable {
     /// Top-level `game.json` keys this type owns; everything else is carried as `extra`.
     static let knownKeys: Set<String> = [
         "id", "title", "year", "developer", "publisher", "genre", "notes", "tags",
-        "isFavorite", "source", "media", "launch", "settings", "stats",
+        "isFavorite", "source", "origin", "media", "launch", "settings", "stats",
     ]
 
     private enum CodingKeys: String, CodingKey {
         case id, title, year, developer, publisher, genre, notes, tags
-        case isFavorite, source, media, launch, settings, stats
+        case isFavorite, source, origin, media, launch, settings, stats
     }
 
     public init(from decoder: Decoder) throws {
@@ -175,6 +212,7 @@ public struct Game: Sendable, Equatable, Codable, Identifiable {
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         isFavorite = try c.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         source = try c.decode(GameSource.self, forKey: .source)
+        origin = try c.decodeIfPresent(ImportOrigin.self, forKey: .origin)
         media = try c.decodeIfPresent([MediaImage].self, forKey: .media) ?? []
         launch = try c.decodeIfPresent(LaunchSpec.self, forKey: .launch) ?? LaunchSpec()
         settings = try c.decodeIfPresent(GameSettings.self, forKey: .settings) ?? GameSettings()

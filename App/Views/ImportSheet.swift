@@ -15,12 +15,32 @@ final class ImportQueue {
     struct BatchPrompt: Identifiable, Equatable {
         let id = UUID()
         var urls: [URL]
-        var title: String { "Import \(urls.count) items" }
+        var presetMode: ImportMode?
+        var duplicateTitles: [String] = []
+
+        var duplicateCount: Int { duplicateTitles.count }
+        var hasDuplicates: Bool { !duplicateTitles.isEmpty }
+        var duplicateMessage: String {
+            "\(duplicateCount) of \(urls.count) items are already in your library"
+        }
+        var title: String {
+            if presetMode != nil, hasDuplicates {
+                return duplicateMessage
+            }
+            return "Import \(urls.count) items"
+        }
     }
 
     struct BatchEntry: Equatable, Sendable {
         var url: URL
         var mode: ImportMode
+        var replacing: UUID?
+
+        init(url: URL, mode: ImportMode, replacing: UUID? = nil) {
+            self.url = url
+            self.mode = mode
+            self.replacing = replacing
+        }
     }
 
     struct Progress: Equatable {
@@ -50,30 +70,107 @@ final class ImportQueue {
             if current == nil { advance() }
             return nil
         }
+        let duplicateTitles = urls.compactMap {
+            DuplicateFinder.match(for: $0, in: model.store.records)?.record.game.title
+        }
         switch preference {
         case .ask:
-            waitingPrompts.append(BatchPrompt(urls: urls))
+            waitingPrompts.append(BatchPrompt(urls: urls, presetMode: nil, duplicateTitles: duplicateTitles))
             if batchPrompt == nil { advanceBatchPrompt() }
             return nil
-        case .copy:
-            return enqueue(urls.map { BatchEntry(url: $0, mode: .copy) }, model: model)
-        case .reference:
-            return enqueue(urls.map { BatchEntry(url: $0, mode: .reference) }, model: model)
+        case .copy, .reference:
+            let mode: ImportMode = preference == .reference ? .reference : .copy
+            if !duplicateTitles.isEmpty {
+                waitingPrompts.append(BatchPrompt(urls: urls, presetMode: mode, duplicateTitles: duplicateTitles))
+                if batchPrompt == nil { advanceBatchPrompt() }
+                return nil
+            }
+            return enqueue(urls.map { BatchEntry(url: $0, mode: mode) }, model: model)
         }
     }
 
     @discardableResult
-    func confirmBatch(mode: ImportMode, remember: Bool = false, model: AppModel) -> Task<Void, Never>? {
+    func confirmBatch(
+        mode: ImportMode? = nil,
+        remember: Bool = false,
+        duplicateAction: DuplicateAction = .skip,
+        model: AppModel
+    ) -> Task<Void, Never>? {
         guard let prompt = batchPrompt else { return nil }
+        let resolvedMode = mode ?? prompt.presetMode ?? model.prefs.importLocation.defaultMode
         if remember {
-            model.prefs.importLocation = mode == .reference ? .reference : .copy
+            model.prefs.importLocation = resolvedMode == .reference ? .reference : .copy
         }
         advanceBatchPrompt()
-        return enqueue(prompt.urls.map { BatchEntry(url: $0, mode: mode) }, model: model)
+        let records = model.store.records
+        var entries: [BatchEntry] = []
+        for url in prompt.urls {
+            if let match = DuplicateFinder.match(for: url, in: records) {
+                switch duplicateAction {
+                case .skip:
+                    continue
+                case .replace:
+                    entries.append(BatchEntry(url: url, mode: resolvedMode, replacing: match.record.id))
+                case .keepBoth:
+                    entries.append(BatchEntry(url: url, mode: resolvedMode, replacing: nil))
+                }
+            } else {
+                entries.append(BatchEntry(url: url, mode: resolvedMode, replacing: nil))
+            }
+        }
+        return enqueue(entries, model: model)
     }
 
     func cancelBatch() {
         advanceBatchPrompt()
+    }
+
+    @discardableResult
+    func finishSingleImport(
+        _ prepared: PreparedImport,
+        action: DuplicateAction,
+        replacing existing: GameRecord? = nil,
+        mode: ImportMode,
+        title: String,
+        executable: String?,
+        model: AppModel
+    ) async throws -> GameRecord? {
+        let importer = model.importer
+        let library = model.store.library
+        let effectiveMode = prepared.allowsReference ? mode : .copy
+        switch action {
+        case .skip:
+            importer.discard(prepared)
+            return nil
+        case .replace:
+            guard let existing else {
+                importer.discard(prepared)
+                return nil
+            }
+            guard !model.sessions.running.contains(existing.id) else {
+                model.alert = AppModel.alert(for: .alreadyRunning, gameID: existing.id, game: existing.game)
+                importer.discard(prepared)
+                return nil
+            }
+            let fresh = CrateIO().loadRecord(at: existing.crateURL)
+            let record = try await Task.detached {
+                try await importer.replace(fresh, with: prepared, mode: effectiveMode)
+            }.value
+            importer.discard(prepared)
+            await model.store.reload()
+            model.selection = record.id
+            return record
+        case .keepBoth:
+            let record = try await Task.detached {
+                try await importer.commit(
+                    prepared, mode: effectiveMode, title: title, executable: executable, into: library
+                )
+            }.value
+            importer.discard(prepared)
+            await model.store.reload()
+            model.selection = record.id
+            return record
+        }
     }
 
     @discardableResult
@@ -106,6 +203,7 @@ final class ImportQueue {
         let importer = model.importer
         let library = model.store.library
         let hook = itemHook
+        let io = CrateIO()
         var firstID: UUID?
         var selectedFirst = false
         var dirtyCount = 0
@@ -120,11 +218,24 @@ final class ImportQueue {
             let entry = batchEntries[batchIndex]
             progress = Progress(current: batchIndex + 1, total: batchEntries.count)
             do {
+                var replaceTarget: GameRecord?
+                if let replaceID = entry.replacing {
+                    if model.sessions.running.contains(replaceID) {
+                        throw ImportError.alreadyRunning
+                    }
+                    if let currentRecord = model.store.record(replaceID) {
+                        replaceTarget = io.loadRecord(at: currentRecord.crateURL)
+                    }
+                }
+                let target = replaceTarget
                 let record = try await Task.detached {
                     await hook?(entry.url)
                     let prepared = try await importer.prepare(entry.url)
                     defer { importer.discard(prepared) }
                     let mode = prepared.allowsReference ? entry.mode : .copy
+                    if let target {
+                        return try await importer.replace(target, with: prepared, mode: mode)
+                    }
                     let executable = prepared.candidates.count == 1 ? prepared.candidates[0].relativePath : nil
                     return try await importer.commit(
                         prepared, mode: mode, title: prepared.suggestedTitle, executable: executable, into: library
@@ -182,6 +293,8 @@ func importErrorMessage(_ error: Error) -> String {
         return "Only a folder can be kept in place. Choose Copy into library."
     case .mediaNameCollision(let name):
         return "Two different files in this disc image are named \"\(name)\"."
+    case .alreadyRunning:
+        return "This game is already running."
     }
 }
 
@@ -191,6 +304,7 @@ struct ImportSheet: View {
     let onFinish: () -> Void
 
     @State private var prepared: PreparedImport?
+    @State private var duplicateMatch: DuplicateMatch?
     @State private var mode: ImportMode
     @State private var title = ""
     @State private var executable: String?
@@ -202,6 +316,15 @@ struct ImportSheet: View {
         self.url = url
         self.onFinish = onFinish
         self._mode = State(initialValue: defaultMode ?? model.prefs.importLocation.defaultMode)
+    }
+
+    nonisolated static func duplicateNotice(for match: DuplicateMatch) -> String {
+        switch match.kind {
+        case .sameSource:
+            return "\"\(match.record.game.title)\" is already in your library."
+        case .sameTitle:
+            return "A game named \"\(match.record.game.title)\" is already in your library."
+        }
     }
 
     var body: some View {
@@ -220,12 +343,23 @@ struct ImportSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel, action: cancel)
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isCreating)
-                Button("Create", action: create)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(prepared == nil || isCreating || title.trimmingCharacters(in: .whitespaces).isEmpty)
+                if let match = duplicateMatch {
+                    Button("Skip", role: .cancel, action: cancel)
+                        .keyboardShortcut(.cancelAction)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(isCreating)
+                    Button("Keep Both", action: create)
+                        .disabled(prepared == nil || isCreating || title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Replace") { replace(match.record) }
+                        .disabled(prepared == nil || isCreating)
+                } else {
+                    Button("Cancel", role: .cancel, action: cancel)
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(isCreating)
+                    Button("Create", action: create)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(prepared == nil || isCreating || title.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
         }
         .padding(20)
@@ -234,6 +368,15 @@ struct ImportSheet: View {
     }
 
     @ViewBuilder private func form(_ prepared: PreparedImport) -> some View {
+        if let match = duplicateMatch {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Self.duplicateNotice(for: match))
+                    .font(.callout.weight(.medium))
+                Text("Keeps saves, settings and play history.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
         Picker("Location", selection: $mode) {
             Text("Copy into library").tag(ImportMode.copy)
             Text("Keep in place").tag(ImportMode.reference)
@@ -268,6 +411,7 @@ struct ImportSheet: View {
                 return
             }
             prepared = result
+            duplicateMatch = DuplicateFinder.match(for: result, in: model.store.records)
             if !result.allowsReference { mode = .copy }
             title = result.suggestedTitle
             executable = result.candidates.first?.relativePath
@@ -280,20 +424,35 @@ struct ImportSheet: View {
         guard let prepared else { return }
         isCreating = true
         error = nil
-        let importer = model.importer
-        let library = model.store.library
         let mode = prepared.allowsReference ? mode : .copy
         let title = title.trimmingCharacters(in: .whitespaces)
         let executable = executable
         Task {
             do {
-                // Copying can take a while; keep it off the main actor.
-                let record = try await Task.detached {
-                    try await importer.commit(prepared, mode: mode, title: title, executable: executable, into: library)
-                }.value
-                importer.discard(prepared)
-                await model.store.reload()
-                model.selection = record.id
+                _ = try await model.imports.finishSingleImport(
+                    prepared, action: .keepBoth, mode: mode, title: title, executable: executable, model: model
+                )
+                onFinish()
+            } catch {
+                self.error = importErrorMessage(error)
+                isCreating = false
+            }
+        }
+    }
+
+    private func replace(_ existing: GameRecord) {
+        guard let prepared else { return }
+        isCreating = true
+        error = nil
+        let mode = prepared.allowsReference ? mode : .copy
+        let title = title.trimmingCharacters(in: .whitespaces)
+        let executable = executable
+        Task {
+            do {
+                _ = try await model.imports.finishSingleImport(
+                    prepared, action: .replace, replacing: existing, mode: mode, title: title,
+                    executable: executable, model: model
+                )
                 onFinish()
             } catch {
                 self.error = importErrorMessage(error)
@@ -315,19 +474,50 @@ struct BatchImportSheet: View {
 
     @State private var mode = ImportMode.copy
     @State private var remember = false
+    @State private var duplicateAction = DuplicateAction.skip
+    @State private var showsDuplicates = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(prompt.title).font(.headline)
-            Picker("Location", selection: $mode) {
-                Text("Copy into library").tag(ImportMode.copy)
-                Text("Keep in place").tag(ImportMode.reference)
+            if prompt.presetMode == nil {
+                Picker("Location", selection: $mode) {
+                    Text("Copy into library").tag(ImportMode.copy)
+                    Text("Keep in place").tag(ImportMode.reference)
+                }
+                .pickerStyle(.radioGroup)
+                Text("Zips and disc images are always copied.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("Remember my choice", isOn: $remember)
             }
-            .pickerStyle(.radioGroup)
-            Text("Zips and disc images are always copied.")
+            if prompt.hasDuplicates {
+                if prompt.presetMode == nil {
+                    Divider()
+                    Text(prompt.duplicateMessage).font(.subheadline.weight(.medium))
+                }
+                DisclosureGroup("Already in library (\(prompt.duplicateCount))", isExpanded: $showsDuplicates) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(Array(prompt.duplicateTitles.enumerated()), id: \.offset) { _, name in
+                                Text(name).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 100)
+                }
                 .font(.caption)
-                .foregroundStyle(.secondary)
-            Toggle("Remember my choice", isOn: $remember)
+                Picker("Duplicates", selection: $duplicateAction) {
+                    Text("Skip duplicates").tag(DuplicateAction.skip)
+                    Text("Replace").tag(DuplicateAction.replace)
+                    Text("Keep Both").tag(DuplicateAction.keepBoth)
+                }
+                .pickerStyle(.radioGroup)
+                Text("Keeps saves, settings and play history.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) {
@@ -335,13 +525,18 @@ struct BatchImportSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
                 Button("Import") {
-                    model.imports.confirmBatch(mode: mode, remember: remember, model: model)
+                    model.imports.confirmBatch(
+                        mode: prompt.presetMode ?? mode,
+                        remember: prompt.presetMode == nil ? remember : false,
+                        duplicateAction: duplicateAction,
+                        model: model
+                    )
                 }
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
-        .frame(width: 400)
+        .frame(width: 420)
     }
 }
 

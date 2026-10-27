@@ -534,4 +534,47 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         await model.chooseLibrary(laterLib, create: false)?.value
         #expect(model.store.records.isEmpty)
     }
+
+    @Test func firstRunScanSkipsOriginMatchButImportsTitleOnlyMatch() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let existingLib = root.appending(path: "OriginScanLib", directoryHint: .isDirectory)
+        try fm.createDirectory(at: existingLib, withIntermediateDirectories: true)
+
+        // 1. A folder in existingLib that was previously copied into a managed crate (matches by origin).
+        let copiedFolder = existingLib.appending(path: "keen_src", directoryHint: .isDirectory)
+        try fm.createDirectory(at: copiedFolder, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: copiedFolder.appending(path: "KEEN1.EXE"))
+
+        let importer = Importer()
+        let pKeen = try await importer.prepare(copiedFolder)
+        _ = try await importer.commit(pKeen, mode: .copy, title: "Commander Keen", executable: "KEEN1.EXE", into: existingLib)
+
+        // 2. A zip in existingLib that was previously copied into a managed crate (matches by origin path+size+mtime).
+        let wolfSrc = root.appending(path: "wolf-src", directoryHint: .isDirectory)
+        try fm.createDirectory(at: wolfSrc, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: wolfSrc.appending(path: "WOLF3D.EXE"))
+        let wolfZip = existingLib.appending(path: "wolf.zip", directoryHint: .notDirectory)
+        let ditto = Process()
+        ditto.executableURL = URL(filePath: "/usr/bin/ditto")
+        ditto.arguments = ["-c", "-k", wolfSrc.path, wolfZip.path]
+        try ditto.run()
+        ditto.waitUntilExit()
+        let pWolf = try await importer.prepare(wolfZip)
+        _ = try await importer.commit(pWolf, mode: .copy, title: "Wolfenstein", executable: "WOLF3D.EXE", into: existingLib)
+        importer.discard(pWolf)
+
+        // 3. Another folder whose suggested title ("Wolfenstein") matches an existing title, but has a different origin.
+        let sameTitleDifferentOrigin = existingLib.appending(path: "wolfenstein", directoryHint: .isDirectory)
+        try fm.createDirectory(at: sameTitleDifferentOrigin, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: sameTitleDifferentOrigin.appending(path: "WOLF.EXE"))
+
+        let (model, _) = try await makeModel(executable: nil, libraryExists: false)
+        await model.chooseLibrary(existingLib, create: false)?.value
+
+        // keen_src and wolf.zip were skipped via .sameSource origin match; wolfenstein (title-only match) was imported.
+        #expect(model.store.records.count == 3)
+        #expect(model.store.records.filter { $0.game.title == "Commander Keen" }.count == 1)
+        #expect(model.store.records.filter { $0.game.title == "Wolfenstein" }.count == 2)
+    }
 }
