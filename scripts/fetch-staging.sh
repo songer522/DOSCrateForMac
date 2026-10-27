@@ -53,4 +53,8 @@ ditto "$APP/Contents/doc/licenses" "$LIC/licenses"
 find "$MOUNT" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) \
     -exec cp {} "$LIC/" \;
 
+# The checksum above vouches for these files; a quarantine flag from the download would
+# be copied into DOSCrate.app and make Gatekeeper block DOSBox Staging at launch.
+xattr -dr com.apple.quarantine "$APP" "$LIC" 2>/dev/null || true
+
 echo "vendor: installed $("$BIN" --version 2>/dev/null | head -n 1)"
