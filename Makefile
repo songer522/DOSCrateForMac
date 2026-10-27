@@ -17,5 +17,5 @@ test: vendor
 build: vendor
 	$(XCB) -configuration Debug build
 
-release: vendor
-	$(XCB) -configuration Release build
+release:
+	scripts/release.sh
