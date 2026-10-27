@@ -51,6 +51,8 @@ final class AppModel {
     @ObservationIgnored private let dosbox: URL
     @ObservationIgnored private let io = CrateIO()
     @ObservationIgnored private let verifyDosbox: @MainActor (URL) throws -> Void
+    /// Debounced editor writes not yet on disk, keyed by game; `play` runs them first.
+    @ObservationIgnored private var pendingWrites: [UUID: @MainActor () -> Void] = [:]
 
     init(prefs: Preferences, store: LibraryStore, sessions: SessionManager, importer: Importer, dosbox: URL,
          verifyDosbox: @escaping @MainActor (URL) throws -> Void = { try StagingLocator.verify($0) }) {
@@ -92,7 +94,12 @@ final class AppModel {
 
     // MARK: Launching
 
+    func setPendingWrite(_ id: UUID, _ write: (@MainActor () -> Void)?) {
+        pendingWrites[id] = write
+    }
+
     func play(_ id: UUID) {
+        pendingWrites.removeValue(forKey: id)?()
         guard let record = store.record(id) else { return }
         do {
             try verifyDosbox(dosbox)

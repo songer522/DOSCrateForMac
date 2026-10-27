@@ -107,6 +107,20 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.store.record(id)?.game.stats.launchCount == 1)
     }
 
+    @Test func playRunsPendingWriteBeforeLaunchingOnce() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        var launchedBeforeWrite: [Bool] = []
+        model.setPendingWrite(id) { launchedBeforeWrite.append(!self.runner.processes.isEmpty) }
+        model.play(id)
+        #expect(launchedBeforeWrite == [false])
+        #expect(model.sessions.running.contains(id))
+        runner.processes[0].finish(0)
+        await waitUntil { !model.sessions.running.contains(id) }
+        model.play(id)
+        #expect(launchedBeforeWrite == [false])
+    }
+
     @Test func playNonDOSPathRaisesAlertWithUseFolderFix() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "Long Name/GAME.EXE", files: ["Long Name/GAME.EXE"])
