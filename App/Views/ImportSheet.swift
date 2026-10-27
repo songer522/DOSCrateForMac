@@ -18,8 +18,12 @@ final class ImportQueue {
     }
 
     private var waiting: [URL] = []
+    private var batchURLs: [URL] = []
+    private var batchTask: Task<Void, Never>?
     private(set) var current: Item?
     private(set) var progress: Progress?
+    /// Test hook called inside each batch item's detached task before preparing the item.
+    var itemHook: (@Sendable (URL) async -> Void)?
 
     @discardableResult
     func add(_ urls: [URL], model: AppModel) -> Task<Void, Never>? {
@@ -29,24 +33,32 @@ final class ImportQueue {
             if current == nil { advance() }
             return nil
         }
-        progress = Progress(current: 1, total: urls.count)
-        return Task { await runBatch(urls, model: model) }
+        batchURLs.append(contentsOf: urls)
+        progress = Progress(current: progress?.current ?? 1, total: batchURLs.count)
+        if batchTask == nil {
+            batchTask = Task { await runBatch(model: model) }
+        }
+        return batchTask
     }
 
     func finishCurrent() { advance() }
 
     private func advance() { current = waiting.isEmpty ? nil : Item(url: waiting.removeFirst()) }
 
-    private func runBatch(_ urls: [URL], model: AppModel) async {
+    private func runBatch(model: AppModel) async {
         let importer = model.importer
         let library = model.store.library
+        let hook = itemHook
         var firstID: UUID?
         var failures: [String] = []
+        var index = 0
 
-        for (index, url) in urls.enumerated() {
-            progress = Progress(current: index + 1, total: urls.count)
+        while index < batchURLs.count {
+            let url = batchURLs[index]
+            progress = Progress(current: index + 1, total: batchURLs.count)
             do {
                 let record = try await Task.detached {
+                    await hook?(url)
                     let prepared = try await importer.prepare(url)
                     defer { importer.discard(prepared) }
                     let executable = prepared.candidates.count == 1 ? prepared.candidates[0].relativePath : nil
@@ -62,8 +74,11 @@ final class ImportQueue {
             } catch {
                 failures.append("\(url.lastPathComponent): \(importErrorMessage(error))")
             }
+            index += 1
         }
 
+        batchURLs.removeAll()
+        batchTask = nil
         progress = nil
         if let firstID { model.selection = firstID }
         if !failures.isEmpty {

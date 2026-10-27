@@ -152,4 +152,80 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         #expect(model.alert != nil)
         #expect(try FileManager.default.contentsOfDirectory(atPath: staging.path).isEmpty)
     }
+
+    @Test func secondBatchAddedWhileRunningSerializesGrowsProgressAndCombinesSummary() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel()
+        let queue = ImportQueue()
+
+        let g1 = root.appending(path: "alpha", directoryHint: .isDirectory)
+        try touchFile(g1, "ALPHA.EXE")
+        let g2 = root.appending(path: "beta", directoryHint: .isDirectory)
+        try touchFile(g2, "BETA.EXE")
+        let bad1 = try touchFile(root, "fail1.rar")
+
+        let g3 = root.appending(path: "gamma", directoryHint: .isDirectory)
+        try touchFile(g3, "GAMMA.EXE")
+        let bad2 = try touchFile(root, "fail2.7z")
+
+        let single = URL(filePath: "/tmp/single.zip")
+
+        final class ConcurrencyProbe: @unchecked Sendable {
+            private let lock = NSLock()
+            private var inFlight = 0
+            private(set) var maxInFlight = 0
+            func enter() {
+                lock.withLock {
+                    inFlight += 1
+                    if inFlight > maxInFlight { maxInFlight = inFlight }
+                }
+            }
+            func leave() {
+                lock.withLock { inFlight -= 1 }
+            }
+        }
+
+        let probe = ConcurrencyProbe()
+        var observedLabels: [String] = []
+        var secondTask: Task<Void, Never>?
+
+        queue.itemHook = { url in
+            probe.enter()
+            defer { probe.leave() }
+            await MainActor.run {
+                if let label = queue.progress?.label { observedLabels.append(label) }
+                if url == g2 {
+                    secondTask = queue.add([g3, bad2], model: model)
+                    if let label = queue.progress?.label { observedLabels.append(label) }
+                    queue.add([single], model: model)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        let firstTask = queue.add([g1, g2, bad1], model: model)
+        await firstTask?.value
+        await secondTask?.value
+
+        #expect(probe.maxInFlight == 1)
+        #expect(observedLabels == [
+            "Importing 1 of 3…",
+            "Importing 2 of 3…",
+            "Importing 2 of 5…",
+            "Importing 3 of 5…",
+            "Importing 4 of 5…",
+            "Importing 5 of 5…",
+        ])
+        #expect(queue.progress == nil)
+        #expect(queue.current?.url == single)
+        #expect(model.store.records.map(\.game.title) == ["Alpha", "Beta", "Gamma"])
+        #expect(model.selection == model.store.records.first { $0.game.title == "Alpha" }?.id)
+
+        let alert = try #require(model.alert)
+        let expected = [
+            "fail1.rar: \(importErrorMessage(ImportError.unsupportedType("rar")))",
+            "fail2.7z: \(importErrorMessage(ImportError.unsupportedType("7z")))",
+        ].joined(separator: "\n")
+        #expect(alert.message == expected)
+    }
 }
