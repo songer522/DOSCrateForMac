@@ -14,6 +14,8 @@ public enum ImportError: Error, Equatable {
     case noExecutables
     case unzipFailed(String)
     case referenceNotAllowed
+    /// Two files of a disc image would land on the same name in `media/`.
+    case mediaNameCollision(String)
 }
 
 public struct PreparedImport: Sendable {
@@ -30,12 +32,15 @@ public struct PreparedImport: Sendable {
 public struct Importer: Sendable {
     private let io: CrateIO
     private let stagingParent: URL
+    /// Test hook: told where each commit builds its scratch crate.
+    private let workObserver: (@Sendable (URL) -> Void)?
 
     public init(io: CrateIO = .init()) { self.init(io: io, stagingParent: FileManager.default.temporaryDirectory) }
 
-    init(io: CrateIO, stagingParent: URL) {
+    init(io: CrateIO, stagingParent: URL, workObserver: (@Sendable (URL) -> Void)? = nil) {
         self.io = io
         self.stagingParent = stagingParent
+        self.workObserver = workObserver
     }
 
     // MARK: Prepare
@@ -89,6 +94,7 @@ public struct Importer: Sendable {
 
         let work = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: library, create: true)
         defer { try? fm.removeItem(at: work) }
+        workObserver?(work)
         let crate = work.appending(path: "crate.\(CrateIO.crateExtension)", directoryHint: .isDirectory)
         try fm.createDirectory(at: crate, withIntermediateDirectories: true)
 
@@ -102,18 +108,25 @@ public struct Importer: Sendable {
             } else {
                 game = Game(title: title, source: .managed)
                 try fm.createDirectory(at: files, withIntermediateDirectories: true)
-                let root = p.stagingRoot ?? p.source
-                for child in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
-                    try fm.copyItem(at: child, to: files.appending(path: child.lastPathComponent))
-                }
+                try Self.copyTree(from: p.stagingRoot ?? p.source, to: files)
             }
         case .discImage, .floppyImage:
             game = Game(title: title, source: .managed)
             try fm.createDirectory(at: files, withIntermediateDirectories: true)
             let media = crate.appending(path: "media", directoryHint: .isDirectory)
             try fm.createDirectory(at: media, withIntermediateDirectories: true)
-            for file in try Self.imageFiles(p.source) {
-                try fm.copyItem(at: file, to: media.appending(path: file.lastPathComponent))
+            if p.source.pathExtension.lowercased() == "cue" {
+                let sheet = try CueSheet(p.source)
+                var seen: Set<String> = [p.source.lastPathComponent.lowercased()]
+                for file in sheet.files {
+                    guard seen.insert(file.lastPathComponent.lowercased()).inserted else {
+                        throw ImportError.mediaNameCollision(file.lastPathComponent)
+                    }
+                    try fm.copyItem(at: file, to: media.appending(path: file.lastPathComponent))
+                }
+                try sheet.flattenedData.write(to: media.appending(path: p.source.lastPathComponent))
+            } else {
+                try fm.copyItem(at: p.source, to: media.appending(path: p.source.lastPathComponent))
             }
             game.media = [MediaImage(relativePath: "media/" + p.source.lastPathComponent,
                                      kind: p.kind == .discImage ? .cdrom : .floppy)]
@@ -134,31 +147,82 @@ public struct Importer: Sendable {
 
     // MARK: Helpers
 
-    /// The image itself, plus every `FILE "…"` target when it is a cue sheet.
-    private static func imageFiles(_ image: URL) throws -> [URL] {
-        guard image.pathExtension.lowercased() == "cue" else { return [image] }
-        let text = try String(contentsOf: image, encoding: .utf8)
-        var files = [image]
-        for line in text.split(whereSeparator: \.isNewline) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.uppercased().hasPrefix("FILE ") else { continue }
-            let rest = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            let name: String
-            if rest.hasPrefix("\""), let close = rest.dropFirst().firstIndex(of: "\"") {
-                name = String(rest[rest.index(after: rest.startIndex)..<close])
+    /// A cue sheet: its referenced files, and its text with every `FILE` entry reduced to a bare file name
+    /// (the files are copied flat into `media/`).
+    private struct CueSheet {
+        var files: [URL] = []
+        private var lines: [String] = []
+        private var encoding: String.Encoding = .utf8
+
+        init(_ cue: URL) throws {
+            let data = try Data(contentsOf: cue)
+            let text: String
+            if let utf8 = String(data: data, encoding: .utf8) {
+                text = utf8
             } else {
-                name = rest.split(separator: " ").first.map(String.init) ?? ""
+                text = String(data: data, encoding: .isoLatin1) ?? ""
+                encoding = .isoLatin1
             }
-            guard !name.isEmpty else { continue }
-            let file = image.deletingLastPathComponent().appending(path: name, directoryHint: .notDirectory)
-            if !files.contains(file) { files.append(file) }
+            let dir = cue.deletingLastPathComponent()
+            // Splitting on "\n" only keeps any "\r" attached to its line, so line endings survive.
+            var found: [URL] = []
+            lines = text.components(separatedBy: "\n").map { line in
+                let body = line.trimmingCharacters(in: .whitespaces)
+                guard body.uppercased().hasPrefix("FILE ") else { return line }
+                let indent = line.prefix { $0 == " " || $0 == "\t" }
+                let rest = body.dropFirst(5).drop { $0 == " " }
+                let name: String, suffix: String, quoted: Bool
+                if rest.hasPrefix("\""), let close = rest.dropFirst().firstIndex(of: "\"") {
+                    name = String(rest[rest.index(after: rest.startIndex)..<close])
+                    suffix = String(rest[rest.index(after: close)...])
+                    quoted = true
+                } else {
+                    let parts = rest.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+                    name = parts.first.map(String.init) ?? ""
+                    suffix = parts.count > 1 ? " " + parts[1] : ""
+                    quoted = false
+                }
+                guard !name.isEmpty else { return line }
+                let normalized = name.replacingOccurrences(of: "\\", with: "/")
+                found.append(dir.appending(path: normalized, directoryHint: .notDirectory))
+                let flat = (normalized as NSString).lastPathComponent
+                let trailing = line.hasSuffix("\r") && !suffix.hasSuffix("\r") ? "\r" : ""
+                return indent + "FILE " + (quoted ? "\"\(flat)\"" : flat) + suffix + trailing
+            }
+            files = found
         }
-        return files
+
+        var flattenedData: Data { lines.joined(separator: "\n").data(using: encoding) ?? Data() }
+    }
+
+    /// Copies a directory tree, dropping symlinks so a crate never points at host paths.
+    private static func copyTree(from source: URL, to destination: URL) throws {
+        let fm = FileManager.default
+        for child in try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey]) {
+            let values = try child.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+            if values.isSymbolicLink == true { continue }
+            let target = destination.appending(path: child.lastPathComponent, directoryHint: values.isDirectory == true ? .isDirectory : .notDirectory)
+            if values.isDirectory == true {
+                try fm.createDirectory(at: target, withIntermediateDirectories: true)
+                try copyTree(from: child, to: target)
+            } else {
+                try fm.copyItem(at: child, to: target)
+            }
+        }
+    }
+
+    private static func removeSymlinks(in root: URL) {
+        let fm = FileManager.default
+        guard let walker = fm.enumerator(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey]) else { return }
+        for case let url as URL in walker where (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
+            try? fm.removeItem(at: url)
+        }
     }
 
     /// Drops macOS archive litter and unwraps a single top-level folder.
     private static func tidy(_ root: URL) throws {
         let fm = FileManager.default
+        removeSymlinks(in: root)
         for junk in ["__MACOSX", ".DS_Store"] {
             try? fm.removeItem(at: root.appending(path: junk))
         }

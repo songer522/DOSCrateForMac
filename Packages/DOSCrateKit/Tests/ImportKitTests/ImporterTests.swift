@@ -16,6 +16,13 @@ private func zip(_ folder: URL, to name: String, in dir: URL) throws -> URL {
 
 private func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
 
+private final class WorkDirs: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls: [URL] = []
+    func add(_ url: URL) { lock.lock(); urls.append(url); lock.unlock() }
+    var all: [URL] { lock.lock(); defer { lock.unlock() }; return urls }
+}
+
 struct ImporterTests {
     let importer = Importer()
     let io = CrateIO()
@@ -184,6 +191,67 @@ struct ImporterTests {
         #expect(rec.game.media == [MediaImage(relativePath: "media/game.cue", kind: .cdrom)])
     }
 
+    @Test func cueInSubdirectoryIsRewrittenToFlatNames() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let src = tmp.appending(path: "disc", directoryHint: .isDirectory)
+        try touch(src, "tracks/a.bin"); try touch(src, "tracks/b track.wav")
+        let cue = "FILE \"tracks/a.bin\" BINARY\r\n  TRACK 01 MODE1/2352\r\nFILE \"tracks\\b track.wav\" WAVE\r\n"
+        try cue.write(to: src.appending(path: "g.cue"), atomically: true, encoding: .utf8)
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+        let p = try await importer.prepare(src.appending(path: "g.cue"))
+        let rec = try await importer.commit(p, mode: .copy, title: "G", executable: nil, into: lib)
+        #expect(exists(rec.crateURL.appending(path: "media/a.bin")))
+        #expect(exists(rec.crateURL.appending(path: "media/b track.wav")))
+        let text = try String(contentsOf: rec.crateURL.appending(path: "media/g.cue"), encoding: .utf8)
+        #expect(text == "FILE \"a.bin\" BINARY\r\n  TRACK 01 MODE1/2352\r\nFILE \"b track.wav\" WAVE\r\n")
+    }
+
+    @Test func cueNameCollisionThrows() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let src = tmp.appending(path: "disc", directoryHint: .isDirectory)
+        try touch(src, "one/a.bin"); try touch(src, "two/a.bin")
+        try "FILE \"one/a.bin\" BINARY\nFILE \"two/a.bin\" BINARY\n"
+            .write(to: src.appending(path: "g.cue"), atomically: true, encoding: .utf8)
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+        let p = try await importer.prepare(src.appending(path: "g.cue"))
+        await #expect(throws: ImportError.mediaNameCollision("a.bin")) {
+            _ = try await importer.commit(p, mode: .copy, title: "G", executable: nil, into: lib)
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: lib.path).isEmpty)
+    }
+
+    @Test func latin1CueIsReadable() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let src = tmp.appending(path: "disc", directoryHint: .isDirectory)
+        try touch(src, "caf\u{E9}.bin")
+        try "FILE \"caf\u{E9}.bin\" BINARY\n".data(using: .isoLatin1)!.write(to: src.appending(path: "g.cue"))
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+        let p = try await importer.prepare(src.appending(path: "g.cue"))
+        let rec = try await importer.commit(p, mode: .copy, title: "G", executable: nil, into: lib)
+        #expect(exists(rec.crateURL.appending(path: "media/caf\u{E9}.bin")))
+    }
+
+    @Test func symlinksAreNotCarriedIntoTheCrate() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let outside = try touch(tmp, "outside/secret.txt")
+        let src = tmp.appending(path: "g", directoryHint: .isDirectory)
+        try touch(src, "G.EXE"); try touch(src, "sub/X.DAT")
+        try FileManager.default.createSymbolicLink(at: src.appending(path: "link"), withDestinationURL: outside.deletingLastPathComponent())
+        try FileManager.default.createSymbolicLink(at: src.appending(path: "sub/file-link"), withDestinationURL: outside)
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+        let p = try await importer.prepare(src)
+        let rec = try await importer.commit(p, mode: .copy, title: "G", executable: "G.EXE", into: lib)
+        let files = rec.crateURL.appending(path: "files")
+        #expect(exists(files.appending(path: "sub/X.DAT")))
+        #expect(!FileManager.default.fileExists(atPath: files.appending(path: "link").path))
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: files.appending(path: "link").path)) == nil)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: files.appending(path: "sub/file-link").path)) == nil)
+    }
+
     @Test func failedCommitLeavesNoCrate() async throws {
         let tmp = try makeImportTempDir()
         let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
@@ -194,13 +262,18 @@ struct ImporterTests {
         }
         let src = tmp.appending(path: "g", directoryHint: .isDirectory)
         try touch(src, "G.EXE")
-        let p = try await importer.prepare(src)
+        let seen = WorkDirs()
+        let observed = Importer(io: CrateIO(), stagingParent: tmp) { seen.add($0) }
+        let p = try await observed.prepare(src)
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: lib.path)
         await #expect(throws: (any Error).self) {
-            _ = try await importer.commit(p, mode: .copy, title: "G", executable: "G.EXE", into: lib)
+            _ = try await observed.commit(p, mode: .copy, title: "G", executable: "G.EXE", into: lib)
         }
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lib.path)
         #expect(try FileManager.default.contentsOfDirectory(atPath: lib.path).isEmpty)
+        let dirs = seen.all
+        #expect(dirs.count == 1)
+        for d in dirs { #expect(!exists(d)) }
     }
 
     @Test func suggestedTitleFromName() async throws {
