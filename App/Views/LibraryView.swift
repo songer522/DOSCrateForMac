@@ -26,6 +26,7 @@ struct GameContextMenu: View {
         }
         Divider()
         Button("Remove…", role: .destructive, action: onRemove)
+            .disabled(model.sessions.running.contains(record.id))
     }
 }
 

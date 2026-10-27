@@ -26,24 +26,38 @@ struct CoverView: View {
     @State private var image: NSImage?
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            if let image {
-                Image(nsImage: image).resizable().scaledToFill()
-            } else {
-                PlaceholderCover.color(for: record.game.title)
-                    .overlay {
-                        Text(record.game.title)
-                            .font(.headline)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.white)
-                            .padding(8)
-                    }
+        Color.clear
+            .aspectRatio(3.0 / 4.0, contentMode: .fit)
+            .overlay {
+                if let image {
+                    Image(nsImage: image).resizable().scaledToFill()
+                } else {
+                    PlaceholderCover.color(for: record.game.title)
+                        .overlay {
+                            Text(record.game.title)
+                                .font(.headline)
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.white)
+                                .padding(8)
+                        }
+                }
             }
-            badges.padding(6)
-        }
-        .aspectRatio(3.0 / 4.0, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .task(id: record.crateURL) { image = await Self.loadCover(in: record.crateURL) }
+            .clipped()
+            .overlay(alignment: .topLeading) { badges.padding(6) }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .task(id: CoverKey(crate: record.crateURL, modified: coverModified)) {
+                image = await Self.loadCover(in: record.crateURL)
+            }
+    }
+
+    private struct CoverKey: Equatable {
+        var crate: URL
+        var modified: Date?
+    }
+
+    private var coverModified: Date? {
+        let url = CrateIO().coverURL(record.crateURL)
+        return (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
     @ViewBuilder private var badges: some View {

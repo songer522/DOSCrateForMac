@@ -21,7 +21,7 @@ struct GameGridView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { model.play(record.id) }
                     .onTapGesture { model.selection = record.id }
-                    .contextMenu { menu(record) }
+                    .contextMenu { menu(record).onAppear { model.selection = record.id } }
                 }
             }
             .padding()
