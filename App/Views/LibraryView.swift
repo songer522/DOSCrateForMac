@@ -13,6 +13,7 @@ struct GameContextMenu: View {
             Button("Stop") { model.stop(record.id) }
         } else {
             Button("Play") { model.play(record.id) }
+                .disabled(model.pendingRemovalIDs.contains(record.id))
         }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([record.crateURL]) }
         Button(record.game.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
@@ -281,16 +282,7 @@ struct LibraryView: View {
     }
 
     private func remove(_ record: GameRecord, trashFiles: Bool) {
-        guard !model.sessions.running.contains(record.id) else {
-            model.alert = AppAlert(title: "Can't remove \(record.game.title)", message: "Stop the game before removing it.")
-            return
-        }
-        do {
-            try model.store.remove(record.id, trashFiles: trashFiles)
-            if model.selection == record.id { model.selection = nil }
-        } catch {
-            model.alert = AppAlert(title: "Can't remove \(record.game.title)", message: error.localizedDescription)
-        }
+        model.removeGame(record.id, trashFiles: trashFiles)
     }
 
     // MARK: Fixes that need a file picker

@@ -8,15 +8,9 @@ public final class LibraryStore {
     public var library: URL
     /// Test hook called at the start of every `reload()`.
     @ObservationIgnored public var onReload: (@MainActor () -> Void)?
-    /// While true, file-watcher events are ignored so a running batch import controls reload timing.
-    @ObservationIgnored public var isWatcherSuppressed = false {
-        didSet {
-            if isWatcherSuppressed {
-                debounce?.cancel()
-                debounce = nil
-            }
-        }
-    }
+    /// While true, file-watcher events are ignored so a running batch import or removal controls reload timing.
+    public var isWatcherSuppressed: Bool { watcherSuppressions > 0 }
+    @ObservationIgnored private var watcherSuppressions = 0
 
     @ObservationIgnored private let io: CrateIO
     @ObservationIgnored private let scan: @Sendable (URL) async -> [GameRecord]
@@ -86,9 +80,8 @@ public final class LibraryStore {
         let targets = ids.compactMap(record)
         guard !targets.isEmpty else { return [] }
         // Each trashed crate would otherwise trigger a full rescan of the library.
-        let wasSuppressed = isWatcherSuppressed
-        isWatcherSuppressed = true
-        defer { isWatcherSuppressed = wasSuppressed }
+        suppressWatcher()
+        defer { resumeWatcher() }
         let io = self.io
         var failures: [String] = []
         var done = 0
@@ -153,6 +146,18 @@ public final class LibraryStore {
             return true
         }
         return true
+    }
+
+    /// Ignores watcher events until a matching `resumeWatcher()`. Calls nest, so overlapping
+    /// operations (an import and a removal) each keep the watcher off until the last one ends.
+    public func suppressWatcher() {
+        watcherSuppressions += 1
+        debounce?.cancel()
+        debounce = nil
+    }
+
+    public func resumeWatcher() {
+        watcherSuppressions = max(0, watcherSuppressions - 1)
     }
 
     private func scheduleReload() {

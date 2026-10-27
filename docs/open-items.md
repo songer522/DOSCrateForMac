@@ -34,6 +34,7 @@ From PR #5 (multi-select and batch remove):
 - Grid ⌘-click, ⇧-click and ⌘A are covered by no automated test; only the removal logic is. ⌘A in the grid works only once the grid has focus, after a click on a game.
 - Clicking empty space in the grid doesn't clear the selection.
 - Batch removal can't be cancelled once it starts.
+- While a batch removal runs, Play is disabled for the games it will remove; double-clicking one (grid or list) does nothing, with no message.
 
 ## Deviations from the spec
 

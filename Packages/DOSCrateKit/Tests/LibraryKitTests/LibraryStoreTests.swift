@@ -180,6 +180,33 @@ struct LibraryStoreTests {
         #expect(store.records.map(\.game.title) == ["Doom"])
     }
 
+    @Test func overlappingSuppressionsKeepTheWatcherOffUntilTheLastEnds() async throws {
+        let (lib, _) = try makeLibrary(titles: ["Keen", "Doom"])
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        let keen = try #require(store.records.first { $0.game.title == "Keen" })
+
+        // A batch import is running when a removal starts, and ends before the removal does.
+        store.suppressWatcher()
+        var importEnded = false
+        let failures = await store.remove([keen.id], trashFiles: false) { _, _ in
+            store.resumeWatcher()
+            importEnded = true
+            #expect(store.isWatcherSuppressed)
+        }
+        #expect(failures.isEmpty)
+        #expect(importEnded)
+        #expect(!store.isWatcherSuppressed)
+
+        // An unmatched resume can't drive the count below zero.
+        store.resumeWatcher()
+        store.suppressWatcher()
+        #expect(store.isWatcherSuppressed)
+        store.resumeWatcher()
+        #expect(!store.isWatcherSuppressed)
+    }
+
     @Test func scanStartedBeforeASaveCannotOverwriteIt() async throws {
         let (lib, _) = try makeLibrary(titles: ["Keen"])
         defer { try? FileManager.default.removeItem(at: lib) }

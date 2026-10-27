@@ -54,6 +54,8 @@ final class AppModel {
     /// (done, total) while `removeGames` is trashing.
     private(set) var removalProgress: (done: Int, total: Int)?
     var isRemoving: Bool { removalProgress != nil }
+    /// Games `removeGames` hasn't finished with; they can't be launched until it ends.
+    private(set) var pendingRemovalIDs: Set<UUID> = []
     var alert: AppAlert?
     var lastResult: [UUID: SessionResult] = [:]
     var pendingFix: PendingFix?
@@ -194,6 +196,8 @@ final class AppModel {
     func removeGames(_ ids: Set<UUID>, trashFolders: Bool) async {
         let running = ids.filter { sessions.running.contains($0) }
         let targets = Array(ids.subtracting(running))
+        pendingRemovalIDs.formUnion(targets)
+        defer { pendingRemovalIDs.subtract(targets) }
         removalProgress = (0, targets.count)
         let failures = await store.remove(targets, trashFiles: trashFolders) { [weak self] done, total in
             self?.removalProgress = (done, total)
@@ -211,6 +215,21 @@ final class AppModel {
         }
     }
 
+    /// Removes one game; see `LibraryStore.remove(_:trashFiles:)`. A running game shows an alert instead.
+    func removeGame(_ id: UUID, trashFiles: Bool) {
+        guard let record = store.record(id) else { return }
+        guard !sessions.running.contains(id) else {
+            alert = AppAlert(title: "Can't remove \(record.game.title)", message: "Stop the game before removing it.")
+            return
+        }
+        do {
+            try store.remove(id, trashFiles: trashFiles)
+            selectedIDs.remove(id)
+        } catch {
+            alert = AppAlert(title: "Can't remove \(record.game.title)", message: error.localizedDescription)
+        }
+    }
+
     // MARK: Launching
 
     /// Registers (or with nil clears) a write that must finish before `id` launches. Each owner
@@ -223,7 +242,7 @@ final class AppModel {
     func play(_ id: UUID) {
         let writes = pendingWrites.removeValue(forKey: id) ?? [:]
         for write in writes.values { write() }
-        guard let record = store.record(id) else { return }
+        guard !pendingRemovalIDs.contains(id), let record = store.record(id) else { return }
         do {
             try verifyDosbox(dosbox)
             let cDrive = try Preflight.check(record, io: io, dosbox: dosbox)

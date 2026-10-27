@@ -132,6 +132,46 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         await waitUntil { !model.sessions.running.contains(id) }
     }
 
+    @Test func gamesPendingRemovalCannotLaunch() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        var others: [UUID] = []
+        for n in 1...5 {
+            let crate = try io.makeCrate(title: "Other \(n)", in: model.store.library)
+            let game = Game(title: "Other \(n)", source: .managed)
+            try io.save(game, extra: [:], to: crate)
+            others.append(game.id)
+        }
+        await model.store.reload()
+
+        let removal = Task { await model.removeGames(Set(others + [id]), trashFolders: false) }
+        for _ in 0..<1000 where !model.isRemoving { await Task.yield() }
+        #expect(model.pendingRemovalIDs.contains(id))
+        model.play(id)
+        #expect(!model.sessions.running.contains(id))
+        #expect(runner.processes.isEmpty)
+        await removal.value
+        #expect(model.pendingRemovalIDs.isEmpty)
+        #expect(model.store.records.isEmpty)
+    }
+
+    @Test func removeGameDropsItFromAMultipleSelection() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        let other = try io.makeCrate(title: "Other", in: model.store.library)
+        let otherGame = Game(title: "Other", source: .managed)
+        try io.save(otherGame, extra: [:], to: other)
+        await model.store.reload()
+        model.selectedIDs = [id, otherGame.id]
+
+        model.removeGame(otherGame.id, trashFiles: true)
+
+        #expect(model.store.records.map(\.id) == [id])
+        #expect(model.selectedIDs == [id])
+        #expect(model.selection == id)
+        #expect(model.alert == nil)
+    }
+
     @Test func batchRemovalMessageDescribesEachKind() {
         let copied = GameRecord(game: Game(title: "A", source: .managed), crateURL: URL(filePath: "/tmp/A.doscrate"))
         let kept = GameRecord(game: Game(title: "B", source: .referenced(path: "/tmp/B", bookmark: Data())),

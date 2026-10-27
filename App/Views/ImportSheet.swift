@@ -245,8 +245,8 @@ final class ImportQueue {
         var failures: [String] = []
         batchIndex = 0
 
-        model.store.isWatcherSuppressed = true
-        defer { model.store.isWatcherSuppressed = false }
+        model.store.suppressWatcher()
+        defer { model.store.resumeWatcher() }
 
         while batchIndex < batchEntries.count {
             let entry = batchEntries[batchIndex]
