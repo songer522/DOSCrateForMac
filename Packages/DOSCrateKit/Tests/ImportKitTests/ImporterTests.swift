@@ -391,7 +391,76 @@ struct ImporterTests {
         // 5. No match.
         let unrelated = tmp.appending(path: "heretic", directoryHint: .isDirectory)
         try touch(unrelated, "HERETIC.EXE")
-        #expect(DuplicateFinder.match(for: unrelated, in: [recRef, recCopy, recZip, recPokemon]) == nil)
+        let index = DuplicateIndex([recRef, recCopy, recZip, recPokemon])
+        #expect(index.match(for: unrelated) == nil)
+    }
+
+    @Test func duplicateIndexScalesTo2000RecordsAnd100Lookups() throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let refRoot = tmp.appending(path: "refs", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: refRoot, withIntermediateDirectories: true)
+
+        // Create a real folder and bookmark so the 1,000 referenced records carry real bookmark data.
+        let sampleFolder = refRoot.appending(path: "sample", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: sampleFolder, withIntermediateDirectories: true)
+        let sampleBookmark = try CrateIO.makeBookmark(for: sampleFolder)
+
+        var records: [GameRecord] = []
+        records.reserveCapacity(2000)
+        for i in 0..<1000 {
+            let folder = refRoot.appending(path: "ref_\(i)", directoryHint: .isDirectory)
+            var refGame = Game(
+                title: "Referenced Game \(i)",
+                source: .referenced(path: folder.path, bookmark: sampleBookmark),
+                origin: ImportOrigin(path: folder.path)
+            )
+            refGame.id = UUID()
+            records.append(GameRecord(game: refGame, crateURL: tmp.appending(path: "Ref\(i).doscrate")))
+
+            let zipPath = tmp.appending(path: "archives/managed_\(i).zip").path
+            var managedGame = Game(
+                title: "Managed Game \(i)",
+                source: .managed,
+                origin: ImportOrigin(
+                    path: zipPath,
+                    fileSize: Int64(1000 + i),
+                    modifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                )
+            )
+            managedGame.id = UUID()
+            records.append(GameRecord(game: managedGame, crateURL: tmp.appending(path: "Managed\(i).doscrate")))
+        }
+
+        var lookupURLs: [URL] = []
+        lookupURLs.reserveCapacity(100)
+        for i in 0..<40 {
+            lookupURLs.append(refRoot.appending(path: "ref_\(i * 20)", directoryHint: .isDirectory))
+        }
+        for i in 0..<30 {
+            lookupURLs.append(tmp.appending(path: "elsewhere/managed_game_\(i * 30)", directoryHint: .isDirectory))
+        }
+        for i in 0..<30 {
+            lookupURLs.append(tmp.appending(path: "brand_new_game_\(i)", directoryHint: .isDirectory))
+        }
+
+        let start = ContinuousClock.now
+        let index = DuplicateIndex(records)
+        var sameSourceCount = 0
+        var sameTitleCount = 0
+        var nilCount = 0
+        for url in lookupURLs {
+            switch index.match(for: url)?.kind {
+            case .sameSource: sameSourceCount += 1
+            case .sameTitle: sameTitleCount += 1
+            case nil: nilCount += 1
+            }
+        }
+        let elapsed = ContinuousClock.now - start
+
+        #expect(sameSourceCount == 40)
+        #expect(sameTitleCount == 30)
+        #expect(nilCount == 30)
+        #expect(elapsed < .seconds(1))
     }
 
     @Test func replaceManagedGameKeepsSavesSettingsAndResetsMissingExecutable() async throws {

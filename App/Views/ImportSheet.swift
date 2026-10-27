@@ -16,10 +16,13 @@ final class ImportQueue {
         let id = UUID()
         var urls: [URL]
         var presetMode: ImportMode?
-        var duplicateTitles: [String] = []
+        var matches: [URL: DuplicateMatch] = [:]
 
-        var duplicateCount: Int { duplicateTitles.count }
-        var hasDuplicates: Bool { !duplicateTitles.isEmpty }
+        var duplicateTitles: [String] {
+            urls.compactMap { matches[$0]?.record.game.title }
+        }
+        var duplicateCount: Int { matches.count }
+        var hasDuplicates: Bool { !matches.isEmpty }
         var duplicateMessage: String {
             "\(duplicateCount) of \(urls.count) items are already in your library"
         }
@@ -53,9 +56,12 @@ final class ImportQueue {
     private var waitingPrompts: [BatchPrompt] = []
     private var batchEntries: [BatchEntry] = []
     private var batchTask: Task<Void, Never>?
+    private var checkingCount = 0
+    private var checkGeneration = 0
     private(set) var current: Item?
     private(set) var batchPrompt: BatchPrompt?
     private(set) var progress: Progress?
+    var isCheckingDuplicates: Bool { checkingCount > 0 }
     /// Index in `batchEntries` of the item the running batch is importing.
     private var batchIndex = 0
     /// Test hook called inside each batch item's detached task before preparing the item.
@@ -70,23 +76,48 @@ final class ImportQueue {
             if current == nil { advance() }
             return nil
         }
-        let duplicateTitles = urls.compactMap {
-            DuplicateFinder.match(for: $0, in: model.store.records)?.record.game.title
-        }
-        switch preference {
-        case .ask:
-            waitingPrompts.append(BatchPrompt(urls: urls, presetMode: nil, duplicateTitles: duplicateTitles))
-            if batchPrompt == nil { advanceBatchPrompt() }
-            return nil
-        case .copy, .reference:
-            let mode: ImportMode = preference == .reference ? .reference : .copy
-            if !duplicateTitles.isEmpty {
-                waitingPrompts.append(BatchPrompt(urls: urls, presetMode: mode, duplicateTitles: duplicateTitles))
+        let records = model.store.records
+        if records.isEmpty {
+            switch preference {
+            case .ask:
+                waitingPrompts.append(BatchPrompt(urls: urls, presetMode: nil, matches: [:]))
                 if batchPrompt == nil { advanceBatchPrompt() }
                 return nil
+            case .copy, .reference:
+                let mode: ImportMode = preference == .reference ? .reference : .copy
+                return enqueue(urls.map { BatchEntry(url: $0, mode: mode) }, model: model)
             }
-            return enqueue(urls.map { BatchEntry(url: $0, mode: mode) }, model: model)
         }
+        let presetMode: ImportMode? = switch preference {
+        case .ask: nil
+        case .copy: .copy
+        case .reference: .reference
+        }
+        let startedGeneration = checkGeneration
+        checkingCount += 1
+        return Task {
+            let matches = await Task.detached { Self.findDuplicates(for: urls, in: records) }.value
+            guard startedGeneration == checkGeneration else { return }
+            checkingCount -= 1
+            if let presetMode, matches.isEmpty {
+                await enqueue(urls.map { BatchEntry(url: $0, mode: presetMode) }, model: model)?.value
+            } else {
+                waitingPrompts.append(BatchPrompt(urls: urls, presetMode: presetMode, matches: matches))
+                if batchPrompt == nil { advanceBatchPrompt() }
+            }
+        }
+    }
+
+    nonisolated private static func findDuplicates(for urls: [URL], in records: [GameRecord]) -> [URL: DuplicateMatch] {
+        guard !records.isEmpty else { return [:] }
+        let index = DuplicateIndex(records)
+        var matches: [URL: DuplicateMatch] = [:]
+        for url in urls {
+            if let match = index.match(for: url) {
+                matches[url] = match
+            }
+        }
+        return matches
     }
 
     @discardableResult
@@ -102,10 +133,9 @@ final class ImportQueue {
             model.prefs.importLocation = resolvedMode == .reference ? .reference : .copy
         }
         advanceBatchPrompt()
-        let records = model.store.records
         var entries: [BatchEntry] = []
         for url in prompt.urls {
-            if let match = DuplicateFinder.match(for: url, in: records) {
+            if let match = prompt.matches[url] {
                 switch duplicateAction {
                 case .skip:
                     continue
@@ -184,8 +214,12 @@ final class ImportQueue {
         return batchTask
     }
 
-    /// Stops the running batch after the item in progress; games already imported stay in the library.
+    /// Stops the running batch after the item in progress (or cancels a duplicate check); games already imported stay in the library.
     func cancelBatchImport() {
+        if checkingCount > 0 {
+            checkGeneration += 1
+            checkingCount = 0
+        }
         guard batchTask != nil, batchIndex + 1 < batchEntries.count else { return }
         batchEntries.removeSubrange((batchIndex + 1)...)
         progress = Progress(current: batchIndex + 1, total: batchEntries.count)
@@ -404,14 +438,19 @@ struct ImportSheet: View {
     private func prepare() async {
         let importer = model.importer
         let source = url
+        let records = model.store.records
         do {
-            let result = try await Task.detached { try await importer.prepare(source) }.value
+            let (result, match) = try await Task.detached {
+                let prepared = try await importer.prepare(source)
+                let match = DuplicateIndex(records).match(for: prepared)
+                return (prepared, match)
+            }.value
             if Task.isCancelled {
                 importer.discard(result)
                 return
             }
             prepared = result
-            duplicateMatch = DuplicateFinder.match(for: result, in: model.store.records)
+            duplicateMatch = match
             if !result.allowsReference { mode = .copy }
             title = result.suggestedTitle
             executable = result.candidates.first?.relativePath

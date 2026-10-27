@@ -30,52 +30,83 @@ public struct DuplicateMatch: Sendable, Equatable {
     }
 }
 
-public enum DuplicateFinder {
-    public static func match(for prepared: PreparedImport, in records: [GameRecord]) -> DuplicateMatch? {
-        match(for: prepared.source, title: prepared.suggestedTitle, in: records)
+public struct DuplicateIndex: Sendable {
+    private struct SourceEntry: Sendable {
+        var record: GameRecord
+        var isOrigin: Bool
+        var fileSize: Int64?
+        var modifiedAt: Date?
     }
 
-    public static func match(for source: URL, title: String? = nil, in records: [GameRecord]) -> DuplicateMatch? {
-        let origin = ImportOrigin.from(source)
+    private var byPath: [String: [SourceEntry]] = [:]
+    private var byTitle: [String: GameRecord] = [:]
+
+    public init(_ records: [GameRecord]) {
+        self.init(records: records)
+    }
+
+    public init(records: [GameRecord]) {
         let io = CrateIO()
+        byPath.reserveCapacity(records.count * 2)
+        byTitle.reserveCapacity(records.count)
         for record in records {
-            if isSameSource(origin: origin, record: record, io: io) {
-                return DuplicateMatch(record: record, kind: .sameSource)
+            if case .referenced(let path, let bookmark) = record.game.source {
+                let canonical = ImportOrigin.canonicalPath(for: URL(filePath: path))
+                byPath[canonical, default: []].append(SourceEntry(record: record, isOrigin: false))
+                if !bookmark.isEmpty, let resolved = try? io.referencedFolderURL(for: record) {
+                    let resolvedCanonical = ImportOrigin.canonicalPath(for: resolved)
+                    if resolvedCanonical != canonical {
+                        byPath[resolvedCanonical, default: []].append(SourceEntry(record: record, isOrigin: false))
+                    }
+                }
+            }
+            if let origin = record.game.origin {
+                let canonical = ImportOrigin.canonicalPath(for: URL(filePath: origin.path))
+                byPath[canonical, default: []].append(
+                    SourceEntry(record: record, isOrigin: true, fileSize: origin.fileSize, modifiedAt: origin.modifiedAt)
+                )
+            }
+            let titleKey = Self.normalizedTitle(record.game.title)
+            if !titleKey.isEmpty, byTitle[titleKey] == nil {
+                byTitle[titleKey] = record
+            }
+        }
+    }
+
+    public func match(for prepared: PreparedImport) -> DuplicateMatch? {
+        match(for: prepared.source, title: prepared.suggestedTitle)
+    }
+
+    public func match(for source: URL, title: String? = nil) -> DuplicateMatch? {
+        let origin = ImportOrigin.from(source)
+        if let entries = byPath[origin.path] {
+            for entry in entries {
+                if !entry.isOrigin || (entry.fileSize == origin.fileSize && entry.modifiedAt == origin.modifiedAt) {
+                    return DuplicateMatch(record: entry.record, kind: .sameSource)
+                }
             }
         }
         let suggested = title ?? Importer.suggestTitle(from: source.deletingPathExtension().lastPathComponent)
-        let targetTitle = normalizedTitle(suggested)
-        guard !targetTitle.isEmpty else { return nil }
-        for record in records {
-            if normalizedTitle(record.game.title) == targetTitle {
-                return DuplicateMatch(record: record, kind: .sameTitle)
-            }
+        let titleKey = Self.normalizedTitle(suggested)
+        if !titleKey.isEmpty, let record = byTitle[titleKey] {
+            return DuplicateMatch(record: record, kind: .sameTitle)
         }
         return nil
-    }
-
-    private static func isSameSource(origin: ImportOrigin, record: GameRecord, io: CrateIO) -> Bool {
-        if case .referenced(let path, _) = record.game.source {
-            if ImportOrigin.canonicalPath(for: URL(filePath: path)) == origin.path {
-                return true
-            }
-            if let resolved = try? io.referencedFolderURL(for: record),
-               ImportOrigin.canonicalPath(for: resolved) == origin.path {
-                return true
-            }
-        }
-        if let existingOrigin = record.game.origin {
-            let existingPath = ImportOrigin.canonicalPath(for: URL(filePath: existingOrigin.path))
-            return existingPath == origin.path
-                && existingOrigin.fileSize == origin.fileSize
-                && existingOrigin.modifiedAt == origin.modifiedAt
-        }
-        return false
     }
 
     private static func normalizedTitle(_ title: String) -> String {
         title.trimmingCharacters(in: .whitespacesAndNewlines)
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
+}
+
+public enum DuplicateFinder {
+    public static func match(for prepared: PreparedImport, in records: [GameRecord]) -> DuplicateMatch? {
+        DuplicateIndex(records).match(for: prepared)
+    }
+
+    public static func match(for source: URL, title: String? = nil, in records: [GameRecord]) -> DuplicateMatch? {
+        DuplicateIndex(records).match(for: source, title: title)
     }
 }
 

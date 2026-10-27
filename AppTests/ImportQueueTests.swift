@@ -449,10 +449,14 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         try touchFile(doom, "DOOM.EXE")
 
         // 1. Skip: even with importLocation == .copy, duplicate triggers prompt; Skip imports only Doom.
-        #expect(queue.add([keenV1, doom], model: model) == nil)
+        let check1 = queue.add([keenV1, doom], model: model)
+        #expect(queue.isCheckingDuplicates)
+        await check1?.value
+        #expect(!queue.isCheckingDuplicates)
         let prompt1 = try #require(queue.batchPrompt)
         #expect(prompt1.title == "1 of 2 items are already in your library")
         #expect(prompt1.duplicateTitles == ["Keen"])
+        #expect(prompt1.matches[keenV1]?.record.id == keenID)
 
         await queue.confirmBatch(duplicateAction: .skip, model: model)?.value
         #expect(model.store.records.map(\.game.title) == ["Doom", "Keen"])
@@ -462,7 +466,7 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         let wolf = root.appending(path: "wolf", directoryHint: .isDirectory)
         try touchFile(wolf, "WOLF3D.EXE")
 
-        #expect(queue.add([keenV1, wolf], model: model) == nil)
+        await queue.add([keenV1, wolf], model: model)?.value
         #expect(queue.batchPrompt?.duplicateTitles == ["Keen"])
         await queue.confirmBatch(duplicateAction: .replace, model: model)?.value
 
@@ -477,7 +481,7 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         let quake = root.appending(path: "quake", directoryHint: .isDirectory)
         try touchFile(quake, "QUAKE.EXE")
 
-        #expect(queue.add([keenV1, quake], model: model) == nil)
+        await queue.add([keenV1, quake], model: model)?.value
         await queue.confirmBatch(duplicateAction: .keepBoth, model: model)?.value
 
         let keenRecords = model.store.records.filter { $0.game.title == "Keen" }
@@ -504,7 +508,7 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
 
         // Single-item duplicate notice check + running refusal on Replace.
         let pSingle = try await model.importer.prepare(keen)
-        let match = try #require(DuplicateFinder.match(for: pSingle, in: model.store.records))
+        let match = try #require(DuplicateIndex(model.store.records).match(for: pSingle))
         #expect(ImportSheet.duplicateNotice(for: match) == "\"Keen\" is already in your library.")
         let titleMatch = DuplicateMatch(record: seeded, kind: .sameTitle)
         #expect(ImportSheet.duplicateNotice(for: titleMatch) == "A game named \"Keen\" is already in your library.")
@@ -519,7 +523,7 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         // Batch Replace while Keen is running counts Keen as a failure and still imports Duke.
         let duke = root.appending(path: "duke", directoryHint: .isDirectory)
         try touchFile(duke, "DUKE.EXE")
-        #expect(queue.add([keen, duke], model: model) == nil)
+        await queue.add([keen, duke], model: model)?.value
         await queue.confirmBatch(duplicateAction: .replace, model: model)?.value
 
         #expect(model.store.records.map(\.game.title) == ["Duke", "Keen"])

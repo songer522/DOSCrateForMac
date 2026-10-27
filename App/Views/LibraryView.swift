@@ -63,6 +63,11 @@ struct LibraryView: View {
                             ProgressView().controlSize(.small)
                             Text("Looking for games…")
                         }
+                    } else if model.imports.isCheckingDuplicates {
+                        statusBar {
+                            ProgressView().controlSize(.small)
+                            Text("Checking for duplicates…")
+                        }
                     }
                 }
                 .navigationTitle("DOSCrate")

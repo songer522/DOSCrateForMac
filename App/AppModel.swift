@@ -156,6 +156,7 @@ final class AppModel {
         )
 
         let allowedFiles: Set<String> = ["zip", "iso", "cue", "img", "ima"]
+        let duplicates = DuplicateIndex(records)
         var entries: [ImportQueue.BatchEntry] = []
 
         for child in visible {
@@ -164,7 +165,7 @@ final class AppModel {
             let ext = child.pathExtension.lowercased()
             if values?.isDirectory == true {
                 if ext == CrateIO.crateExtension { continue }
-                if DuplicateFinder.match(for: child, in: records)?.kind == .sameSource { continue }
+                if duplicates.match(for: child)?.kind == .sameSource { continue }
                 let candidates = (try? ExecutableRanker.rank(root: child, title: child.lastPathComponent)) ?? []
                 if !candidates.isEmpty {
                     entries.append(.init(url: child, mode: .reference))
@@ -173,7 +174,7 @@ final class AppModel {
                 if ext == "iso", cueBases.contains(child.deletingPathExtension().lastPathComponent.lowercased()) {
                     continue
                 }
-                if DuplicateFinder.match(for: child, in: records)?.kind == .sameSource { continue }
+                if duplicates.match(for: child)?.kind == .sameSource { continue }
                 entries.append(.init(url: child, mode: .copy))
             }
         }
