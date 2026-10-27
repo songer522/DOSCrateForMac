@@ -11,6 +11,8 @@ public final class LibraryStore {
     /// While true, file-watcher events are ignored so a running batch import or removal controls reload timing.
     public var isWatcherSuppressed: Bool { watcherSuppressions > 0 }
     @ObservationIgnored private var watcherSuppressions = 0
+    /// Set when a watcher event arrives (or a pending reload is dropped) while suppressed.
+    @ObservationIgnored private var missedWatcherEvent = false
 
     @ObservationIgnored private let io: CrateIO
     @ObservationIgnored private let scan: @Sendable (URL) async -> [GameRecord]
@@ -152,16 +154,26 @@ public final class LibraryStore {
     /// operations (an import and a removal) each keep the watcher off until the last one ends.
     public func suppressWatcher() {
         watcherSuppressions += 1
+        if debounce != nil { missedWatcherEvent = true }
         debounce?.cancel()
         debounce = nil
     }
 
+    /// Ends one `suppressWatcher()`. When the last one ends, a reload is scheduled if any change
+    /// was ignored meanwhile, so Finder edits made during a batch still show up.
     public func resumeWatcher() {
         watcherSuppressions = max(0, watcherSuppressions - 1)
+        if watcherSuppressions == 0, missedWatcherEvent {
+            missedWatcherEvent = false
+            scheduleReload()
+        }
     }
 
     private func scheduleReload() {
-        guard !isWatcherSuppressed else { return }
+        guard !isWatcherSuppressed else {
+            missedWatcherEvent = true
+            return
+        }
         debounce?.cancel()
         debounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(300))

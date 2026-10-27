@@ -100,6 +100,29 @@ struct LibraryStoreTests {
         #expect(store.records.count == 2)
     }
 
+    @Test func changesIgnoredWhileSuppressedReloadOnceResumed() async throws {
+        let (lib, _) = try makeLibrary(titles: ["A"])
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        store.startWatching()
+        defer { store.stopWatching() }
+        try await Task.sleep(for: .milliseconds(500))
+
+        store.suppressWatcher()
+        let crate = try io.makeCrate(title: "B", in: lib)
+        try io.save(Game(title: "B", source: .managed), extra: [:], to: crate)
+        try await Task.sleep(for: .milliseconds(1000))
+        #expect(store.records.count == 1)
+
+        // The change was ignored, so resuming reloads without waiting for another event.
+        store.resumeWatcher()
+        for _ in 0..<50 where store.records.count < 2 {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(store.records.count == 2)
+    }
+
     @Test func saveRefusesReadOnlyRecords() async throws {
         let (lib, crates) = try makeLibrary(titles: ["Future"])
         defer { try? FileManager.default.removeItem(at: lib) }
