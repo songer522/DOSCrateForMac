@@ -238,9 +238,11 @@ public struct Importer: Sendable {
 
     /// Updates `existing` in place, keeping its id, title, metadata, play stats, settings, `override.conf`,
     /// `cover.png`, unknown `game.json` keys, and any save/config files that exist only in the old `files/`.
+    /// A managed game is always replaced with a copy, whatever `mode` asks for, so those files can be kept.
     public func replace(
         _ existing: GameRecord, with p: PreparedImport, mode: ImportMode
     ) async throws -> GameRecord {
+        let mode = existing.game.source == .managed ? .copy : mode
         if mode == .reference, !p.allowsReference { throw ImportError.referenceNotAllowed }
         if case .readOnly = existing.status { throw LibraryError.readOnly }
         let fm = FileManager.default
@@ -395,7 +397,20 @@ public struct Importer: Sendable {
                 return launch
             }
         }
-        launch.executable = candidates.count == 1 ? candidates[0].relativePath : nil
+        guard candidates.count == 1 else {
+            launch.executable = nil
+            return launch
+        }
+        // Candidates are relative to the whole folder; make the path relative to the kept C: root,
+        // or use the whole folder as C: when the program is outside it.
+        let path = candidates[0].relativePath
+        let prefix = launch.driveCRoot.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
+        if prefix != "/", path.lowercased().hasPrefix(prefix.lowercased()) {
+            launch.executable = String(path.dropFirst(prefix.count))
+        } else {
+            launch.driveCRoot = ""
+            launch.executable = path
+        }
         return launch
     }
 

@@ -603,10 +603,44 @@ struct ImporterTests {
         #expect(toManaged.game.source == .managed)
         #expect(exists(toManaged.crateURL.appending(path: "files/KEEN1.EXE")))
 
-        // Mixed mode: managed -> referenced converts crate back to referenced and trashes crate/files.
-        let backToRef = try await importer.replace(toManaged, with: p1, mode: .reference)
-        #expect(backToRef.id == rec.id)
-        if case .referenced = backToRef.game.source {} else { Issue.record("Expected referenced source") }
-        #expect(!exists(backToRef.crateURL.appending(path: "files")))
+        // A managed game asked to become referenced stays managed, so its saves are carried over.
+        try Data("saved".utf8).write(to: toManaged.crateURL.appending(path: "files/GAME.SAV"))
+        let stillManaged = try await importer.replace(toManaged, with: p1, mode: .reference)
+        #expect(stillManaged.id == rec.id)
+        #expect(stillManaged.game.source == .managed)
+        #expect(io.loadRecord(at: stillManaged.crateURL).game.source == .managed)
+        #expect(try String(contentsOf: stillManaged.crateURL.appending(path: "files/GAME.SAV"), encoding: .utf8) == "saved")
+        #expect(!exists(folder1.appending(path: "GAME.SAV")))
+    }
+
+    @Test func replaceRebasesSoleCandidateOntoKeptCRoot() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        let v1 = tmp.appending(path: "v1", directoryHint: .isDirectory)
+        try touch(v1, "GAME/OLD.EXE")
+        let p1 = try await importer.prepare(v1)
+        var rec = try await importer.commit(p1, mode: .copy, title: "Game", executable: nil, into: lib)
+        rec.game.launch.driveCRoot = "GAME"
+        rec.game.launch.executable = "OLD.EXE"
+        try io.save(rec.game, extra: rec.extra, to: rec.crateURL)
+
+        // The C: root still exists but OLD.EXE is gone; the sole candidate is GAME/NEW.EXE.
+        let v2 = tmp.appending(path: "v2", directoryHint: .isDirectory)
+        try touch(v2, "GAME/NEW.EXE")
+        let p2 = try await importer.prepare(v2)
+        let inRoot = try await importer.replace(io.loadRecord(at: rec.crateURL), with: p2, mode: .copy)
+        #expect(inRoot.game.launch.driveCRoot == "GAME")
+        #expect(inRoot.game.launch.executable == "NEW.EXE")
+
+        // The sole candidate is outside the kept C: root, so the whole folder becomes C:.
+        let v3 = tmp.appending(path: "v3", directoryHint: .isDirectory)
+        try touch(v3, "GAME/README.TXT")
+        try touch(v3, "RUN.EXE")
+        let p3 = try await importer.prepare(v3)
+        let outside = try await importer.replace(io.loadRecord(at: rec.crateURL), with: p3, mode: .copy)
+        #expect(outside.game.launch.driveCRoot == "")
+        #expect(outside.game.launch.executable == "RUN.EXE")
     }
 }

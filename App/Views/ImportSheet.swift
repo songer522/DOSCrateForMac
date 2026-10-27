@@ -406,7 +406,9 @@ struct ImportSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(Self.duplicateNotice(for: match))
                     .font(.callout.weight(.medium))
-                Text("Keeps saves, settings and play history.")
+                Text(match.record.game.source == .managed
+                     ? "Replace keeps saves, settings and play history. It copies the new files so the saves are kept."
+                     : "Replace keeps saves, settings and play history.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -553,7 +555,7 @@ struct BatchImportSheet: View {
                     Text("Keep Both").tag(DuplicateAction.keepBoth)
                 }
                 .pickerStyle(.radioGroup)
-                Text("Keeps saves, settings and play history.")
+                Text("Replace keeps saves, settings and play history. Copied games are replaced with a copy.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
