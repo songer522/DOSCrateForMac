@@ -23,6 +23,7 @@ struct AppAlert: Identifiable {
 }
 
 /// A fix that needs UI (a file picker) to finish; views observe this and present the picker.
+/// Views must set `AppModel.pendingFix` back to nil once they have handled it.
 struct PendingFix: Equatable {
     var fix: AppAlert.Fix
     var gameID: UUID
@@ -94,7 +95,7 @@ final class AppModel {
             let plan = try LaunchPlanner.plan(record, cDrive: cDrive, global: prefs.globalConfig, dosbox: dosbox, io: io)
             try sessions.start(gameID: id, plan: plan)
         } catch let error as LaunchError {
-            alert = Self.alert(for: error, gameID: id)
+            alert = Self.alert(for: error, gameID: id, executable: record.game.launch.executable)
         } catch {
             alert = AppAlert(title: "Can't start \(record.game.title)", message: error.localizedDescription)
         }
@@ -112,10 +113,11 @@ final class AppModel {
         case .reinstall:
             break
         case .useFolderAsC(let root):
-            guard var game = store.record(id)?.game else { return }
+            guard var game = store.record(id)?.game,
+                  Self.isFolderPrefix(root, of: game.launch.executable) else { return }
             let current = game.launch.driveCRoot
             game.launch.driveCRoot = current.isEmpty ? root : current + "/" + root
-            if let exe = game.launch.executable, exe.hasPrefix(root + "/") {
+            if let exe = game.launch.executable {
                 game.launch.executable = String(exe.dropFirst(root.count + 1))
             }
             do {
@@ -141,38 +143,49 @@ final class AppModel {
 
     // MARK: Helpers
 
+    /// True when `root` is a folder containing `executable` (never the executable itself).
+    private static func isFolderPrefix(_ root: String, of executable: String?) -> Bool {
+        guard let executable else { return false }
+        return executable.hasPrefix(root + "/")
+    }
+
     private static func isDirectory(_ url: URL) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
     }
 
-    static func alert(for error: LaunchError, gameID: UUID? = nil) -> AppAlert {
-        var alert = makeAlert(for: error)
+    static func alert(for error: LaunchError, gameID: UUID? = nil, executable: String? = nil) -> AppAlert {
+        var alert = makeAlert(for: error, executable: executable)
         alert.gameID = gameID
         return alert
     }
 
-    private static func makeAlert(for error: LaunchError) -> AppAlert {
+    private static func makeAlert(for error: LaunchError, executable: String?) -> AppAlert {
         switch error {
         case .dosboxMissing:
-            AppAlert(title: "DOSBox Staging is missing or damaged",
-                     message: "The bundled DOSBox Staging can't be used. Reinstall DOSCrate to restore it.", fix: .reinstall)
+            return AppAlert(title: "DOSBox Staging is missing or damaged",
+                     message: "The bundled DOSBox Staging can't be used. Reinstall DOSCrate to restore it.")
         case .executableNotSet:
-            AppAlert(title: "No program to run", message: "Choose which file starts this game.", fix: .chooseExecutable)
+            return AppAlert(title: "No program to run", message: "Choose which file starts this game.", fix: .chooseExecutable)
         case .executableMissing(let path):
-            AppAlert(title: "Program not found", message: "\(path) is no longer in the game folder.", fix: .chooseExecutable)
+            return AppAlert(title: "Program not found", message: "\(path) is no longer in the game folder.", fix: .chooseExecutable)
         case .sourceUnreachable(let path):
-            AppAlert(title: "Game folder unavailable", message: "DOSCrate can't reach \(path).", fix: .locateFolder)
+            return AppAlert(title: "Game folder unavailable", message: "DOSCrate can't reach \(path).", fix: .locateFolder)
         case .nonDOSPath(let component, let root):
-            AppAlert(title: "Name not usable in DOS",
+            guard Self.isFolderPrefix(root, of: executable) else {
+                return AppAlert(title: "Name not usable in DOS",
+                                message: "\"\(component)\" isn't a valid DOS name. Rename the file to an 8.3 name, or choose another program.",
+                                fix: .chooseExecutable)
+            }
+            return AppAlert(title: "Name not usable in DOS",
                      message: "\"\(component)\" isn't a valid DOS name. Use \"\(root)\" as the C: drive instead.",
                      fix: .useFolderAsC(root))
         case .unsupportedPath(let path):
-            AppAlert(title: "Unsupported path", message: "\(path) contains characters DOSBox can't mount.")
+            return AppAlert(title: "Unsupported path", message: "\(path) contains characters DOSBox can't mount.")
         case .needsRepair:
-            AppAlert(title: "Game needs repair", message: "This game's data file is unreadable.")
+            return AppAlert(title: "Game needs repair", message: "This game's data file is unreadable.")
         case .alreadyRunning:
-            AppAlert(title: "Already running", message: "This game is already running.")
+            return AppAlert(title: "Already running", message: "This game is already running.")
         }
     }
 }

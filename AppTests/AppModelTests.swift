@@ -128,6 +128,17 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.sessions.running.contains(id))
     }
 
+    @Test func nonDOSExecutableItselfOffersNoFolderFix() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "KEEN/Long Name.exe", files: ["KEEN/Long Name.exe"])
+        model.play(id)
+        #expect(model.alert?.fix == .chooseExecutable)
+        model.applyFix(.useFolderAsC("KEEN/Long Name.exe"), for: id)
+        let game = try #require(model.store.record(id)).game
+        #expect(game.launch.driveCRoot == "")
+        #expect(game.launch.executable == "KEEN/Long Name.exe")
+    }
+
     @Test func missingLibrarySetsNeedsSetup() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, _) = try await makeModel(executable: nil, libraryExists: false)
@@ -151,7 +162,8 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
     @Test func dosboxVerifyFailureRaisesReinstallAlert() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, _) = try await makeModel(executable: nil, verify: { _ in throw LaunchError.dosboxMissing })
-        #expect(model.alert?.fix == .reinstall)
+        #expect(model.alert != nil)
+        #expect(model.alert?.fix == nil)
     }
 
     @Test func preferencesRoundTripAndBuildGlobalConfig() {
