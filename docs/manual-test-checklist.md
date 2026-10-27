@@ -15,7 +15,9 @@ Run before each release, on the release build.
 
 ## Manual check
 
-- [ ] Drop 3+ folders at once: no per-item sheets appear, toolbar progress ("Importing X of N…") is shown, all games appear in the library, and the first imported game is selected.
+- [ ] Drop 3+ items at once with "When importing" set to Ask (default): one "Import N items" sheet appears (not per-item sheets), Cancel imports nothing, and confirming with "Keep in place" + "Remember my choice" imports folders in place, copies zips/disc images, updates the preference, shows toolbar progress ("Importing X of N…"), and selects the first imported game.
+- [ ] Drop another batch once "When importing" is set to Copy into library or Keep in place: no sheet appears and the batch imports directly using that preference.
+- [ ] First-run "Choose Existing Folder…": choosing a folder that already contains DOS game subfolders, zips, and disc images scans and imports game subfolders in place (referenced) and archives/images by copying (preferring `.cue` over a same-name `.iso`), without prompting for copy vs. keep or duplicating existing crates.
 - [ ] First Play on a multi-candidate imported game shows the ranked "Choose program" sheet with the top candidate preselected.
 - [ ] Cancel in the "Choose program" sheet changes nothing and does not launch the game.
 - [ ] Confirming in the "Choose program" sheet saves the executable and launches; pressing Play a second time launches directly without prompting.

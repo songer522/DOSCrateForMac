@@ -51,11 +51,15 @@ final class AppModel {
     var pendingFix: PendingFix?
     var chooseProgram: ChooseProgramRequest?
     private(set) var needsLibrarySetup: Bool
+    /// True while the first-run scan looks for games, before the batch import (and its progress) starts.
+    private(set) var isScanningLibrary = false
+    @ObservationIgnored private var scanCancelled = false
 
     let prefs: Preferences
     let store: LibraryStore
     let sessions: SessionManager
     let importer: Importer
+    let imports = ImportQueue()
 
     @ObservationIgnored private let dosbox: URL
     @ObservationIgnored private let io = CrateIO()
@@ -82,23 +86,99 @@ final class AppModel {
 
     // MARK: Library
 
-    func chooseLibrary(_ url: URL, create: Bool) {
+    @discardableResult
+    func chooseLibrary(_ url: URL, create: Bool) -> Task<Void, Never>? {
+        let shouldScan = needsLibrarySetup && !create
         if create {
             do {
                 try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             } catch {
                 alert = AppAlert(title: "Can't create the library folder", message: error.localizedDescription)
-                return
+                return nil
             }
         }
         prefs.libraryPath = url.path
         store.library = url
         needsLibrarySetup = !Self.isDirectory(url)
-        guard !needsLibrarySetup else { return }
-        Task {
+        guard !needsLibrarySetup else { return nil }
+        // Show the spinner right away; the reload before the scan can take a while too.
+        if shouldScan { isScanningLibrary = true }
+        return Task {
             await store.reload()
             store.startWatching()
+            if shouldScan {
+                await importExistingLibraryContents(at: url)
+            }
         }
+    }
+
+    /// Stops the first-run scan, or the running batch import after its current game.
+    func cancelImport() {
+        if isScanningLibrary {
+            scanCancelled = true
+            isScanningLibrary = false
+        } else {
+            imports.cancelBatchImport()
+        }
+    }
+
+    private func importExistingLibraryContents(at url: URL) async {
+        let records = store.records
+        let entries = await Task.detached { Self.scanExistingFolder(url, records: records) }.value
+        let cancelled = scanCancelled
+        isScanningLibrary = false
+        scanCancelled = false
+        guard !cancelled, !entries.isEmpty else { return }
+        await imports.enqueue(entries, model: self)?.value
+    }
+
+    nonisolated private static func scanExistingFolder(_ url: URL, records: [GameRecord]) -> [ImportQueue.BatchEntry] {
+        let fm = FileManager.default
+        guard let children = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        let visible = children.filter {
+            let name = $0.lastPathComponent
+            return !name.hasPrefix(".") && !name.hasPrefix("._")
+        }.sorted {
+            let order = $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent)
+            return order == .orderedSame ? $0.path < $1.path : order == .orderedAscending
+        }
+
+        let cueBases = Set(
+            visible.filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
+                    && $0.pathExtension.lowercased() == "cue"
+            }.map { $0.deletingPathExtension().lastPathComponent.lowercased() }
+        )
+
+        let allowedFiles: Set<String> = ["zip", "iso", "cue", "img", "ima"]
+        let duplicates = DuplicateIndex(records)
+        var entries: [ImportQueue.BatchEntry] = []
+
+        for child in visible {
+            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true { continue }
+            let ext = child.pathExtension.lowercased()
+            if values?.isDirectory == true {
+                if ext == CrateIO.crateExtension { continue }
+                if duplicates.match(for: child)?.kind == .sameSource { continue }
+                let candidates = (try? ExecutableRanker.rank(root: child, title: child.lastPathComponent)) ?? []
+                if !candidates.isEmpty {
+                    entries.append(.init(url: child, mode: .reference))
+                }
+            } else if allowedFiles.contains(ext) {
+                if ext == "iso", cueBases.contains(child.deletingPathExtension().lastPathComponent.lowercased()) {
+                    continue
+                }
+                if duplicates.match(for: child)?.kind == .sameSource { continue }
+                entries.append(.init(url: child, mode: .copy))
+            }
+        }
+        return entries
     }
 
     // MARK: Launching

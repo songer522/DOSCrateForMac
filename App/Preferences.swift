@@ -1,13 +1,33 @@
 import ConfigKit
 import Foundation
+import ImportKit
 import LibraryKit
 import Observation
+
+enum ImportLocationPreference: String, CaseIterable, Sendable {
+    case ask
+    case copy
+    case reference
+
+    var displayName: String {
+        switch self {
+        case .ask: "Ask"
+        case .copy: "Copy into library"
+        case .reference: "Keep in place"
+        }
+    }
+
+    var defaultMode: ImportMode {
+        self == .reference ? .reference : .copy
+    }
+}
 
 @MainActor @Observable
 final class Preferences {
     enum Key {
         static let libraryPath = "libraryPath"
         static let defaultPreset = "defaultPreset"
+        static let importLocation = "importLocation"
         static let globalOverrides = "globalOverrides"
         static let rawGlobalOverrides = "rawGlobalOverrides"
         static let soundfontPath = "soundfontPath"
@@ -23,6 +43,9 @@ final class Preferences {
 
     var libraryPath: String { didSet { defaults.set(libraryPath, forKey: Key.libraryPath) } }
     var defaultPreset: Preset { didSet { defaults.set(defaultPreset.rawValue, forKey: Key.defaultPreset) } }
+    var importLocation: ImportLocationPreference {
+        didSet { defaults.set(importLocation.rawValue, forKey: Key.importLocation) }
+    }
     var globalOverrides: GameSettings {
         didSet { defaults.set(try? JSONEncoder().encode(globalOverrides), forKey: Key.globalOverrides) }
     }
@@ -34,6 +57,7 @@ final class Preferences {
         self.defaults = defaults
         libraryPath = defaults.string(forKey: Key.libraryPath) ?? Self.defaultLibraryURL.path
         defaultPreset = defaults.string(forKey: Key.defaultPreset).flatMap(Preset.init(rawValue:)) ?? .auto
+        importLocation = defaults.string(forKey: Key.importLocation).flatMap(ImportLocationPreference.init(rawValue:)) ?? .ask
         globalOverrides = defaults.data(forKey: Key.globalOverrides)
             .flatMap { try? JSONDecoder().decode(GameSettings.self, from: $0) } ?? GameSettings()
         rawGlobalOverrides = defaults.string(forKey: Key.rawGlobalOverrides) ?? ""

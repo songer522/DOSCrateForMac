@@ -27,6 +27,39 @@ struct GameFileCodecTests {
         #expect(decoded.extra.isEmpty)
     }
 
+    @Test func originRoundTripsAndOldJSONWithoutOriginDecodesNil() throws {
+        var game = Game(title: "Keen", source: .managed)
+        game.origin = ImportOrigin(
+            path: "/Volumes/DOS/keen.zip",
+            fileSize: 123_456,
+            modifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let encoded = try GameFileCodec.encode(game, extra: [:])
+        let decoded = try GameFileCodec.decode(encoded)
+        #expect(decoded.game.origin == game.origin)
+        #expect(decoded.extra.isEmpty)
+
+        let legacyJSON = """
+        {"id":"\(UUID())","title":"Legacy","source":{"type":"managed"}}
+        """
+        let legacy = try GameFileCodec.decode(Data(legacyJSON.utf8))
+        #expect(legacy.game.origin == nil)
+
+        let withFutureOriginKey = """
+        {"schemaVersion":1,"id":"\(UUID())","title":"FutureOrigin","source":{"type":"managed"},
+         "origin":{"path":"/tmp/keen","futureOriginFlag":true}}
+        """
+        let futureDecoded = try GameFileCodec.decode(Data(withFutureOriginKey.utf8))
+        #expect(futureDecoded.game.origin == ImportOrigin(path: "/tmp/keen"))
+        let reencoded = try GameFileCodec.encode(futureDecoded.game, extra: futureDecoded.extra)
+        let raw = try GameFileCodec.rawObject(reencoded)
+        guard case .object(let originObj) = raw["origin"] else {
+            Issue.record("expected origin object")
+            return
+        }
+        #expect(originObj["futureOriginFlag"] == .bool(true))
+    }
+
     @Test func unknownTopLevelKeysPreserved() throws {
         let json = """
         {"schemaVersion":1,"id":"\(UUID())","title":"X","source":{"type":"managed"},"futureField":{"a":1}}
