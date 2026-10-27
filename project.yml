@@ -22,7 +22,9 @@ targets:
   DOSCrate:
     type: application
     platform: macOS
-    sources: [App]
+    sources:
+      - path: App
+        excludes: ["Resources/Licenses/**"] # copied by scripts/embed-staging.sh
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.songer522.DOSCrate
@@ -31,6 +33,9 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/DOSCrate.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         GENERATE_INFOPLIST_FILE: NO
+        # Sparkle: empty in Debug (updates disabled); Release builds pass real values.
+        DOSCRATE_APPCAST_URL: ""
+        DOSCRATE_SPARKLE_KEY: ""
       configs:
         Debug:
           CODE_SIGN_IDENTITY: "-"

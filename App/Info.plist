@@ -18,6 +18,10 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
+	<key>SUFeedURL</key>
+	<string>$(DOSCRATE_APPCAST_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(DOSCRATE_SPARKLE_KEY)</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

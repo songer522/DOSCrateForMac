@@ -1,13 +1,20 @@
+import AppKit
 import ImportKit
 import LauncherKit
 import LibraryKit
+import Sparkle
 import SwiftUI
 
 @main
 struct DOSCrateApp: App {
     @State private var model: AppModel
+    private let updaterController: SPUStandardUpdaterController
+    /// Empty in Debug builds, which disables Sparkle.
+    private let appcastURL = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? ""
 
     init() {
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: !appcastURL.isEmpty, updaterDelegate: nil, userDriverDelegate: nil)
         let prefs = Preferences()
         let store = LibraryStore(library: prefs.libraryURL)
         _model = State(initialValue: AppModel(
@@ -40,6 +47,17 @@ struct DOSCrateApp: App {
                 }
             }
         }
+        .commands {
+            AppCommands(updater: updaterController.updater, updatesEnabled: !appcastURL.isEmpty)
+        }
+
+        Settings {
+            PreferencesView(model: model, updater: appcastURL.isEmpty ? nil : updaterController.updater)
+        }
+
+        Window("Licenses", id: AppCommands.licensesWindowID) {
+            LicensesView()
+        }
     }
 
     private static func label(_ fix: AppAlert.Fix) -> String {
@@ -48,6 +66,27 @@ struct DOSCrateApp: App {
         case .locateFolder: "Locate Folder…"
         case .useFolderAsC: "Use Folder as C:"
         case .reinstall: "OK"
+        }
+    }
+}
+
+struct AppCommands: Commands {
+    static let licensesWindowID = "licenses"
+    let updater: SPUUpdater
+    let updatesEnabled: Bool
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About DOSCrate") {
+                NSApp.orderFrontStandardAboutPanel(options: [
+                    .credits: NSAttributedString(string: LicensesView.notice),
+                ])
+            }
+            Button("Licenses…") { openWindow(id: Self.licensesWindowID) }
+            if updatesEnabled {
+                Button("Check for Updates…") { updater.checkForUpdates() }
+            }
         }
     }
 }
