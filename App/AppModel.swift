@@ -34,6 +34,14 @@ struct PendingFix: Equatable {
     var gameID: UUID
 }
 
+/// Request to show the ranked "Choose program" sheet for a game before launching.
+struct ChooseProgramRequest: Identifiable, Equatable {
+    var id: UUID { gameID }
+    var gameID: UUID
+    var title: String
+    var candidates: [ExecutableCandidate]
+}
+
 @MainActor @Observable
 final class AppModel {
     var query = LibraryQuery()
@@ -41,6 +49,7 @@ final class AppModel {
     var alert: AppAlert?
     var lastResult: [UUID: SessionResult] = [:]
     var pendingFix: PendingFix?
+    var chooseProgram: ChooseProgramRequest?
     private(set) var needsLibrarySetup: Bool
 
     let prefs: Preferences
@@ -111,10 +120,35 @@ final class AppModel {
             let plan = try LaunchPlanner.plan(record, cDrive: cDrive, global: prefs.globalConfig, dosbox: dosbox, io: io)
             try sessions.start(gameID: id, plan: plan)
         } catch let error as LaunchError {
+            if error == .executableNotSet, presentChooseProgram(for: record) { return }
             alert = Self.alert(for: error, gameID: id, game: record.game)
         } catch {
             alert = AppAlert(title: "Can't start \(record.game.title)", message: error.localizedDescription)
         }
+    }
+
+    func confirmProgram(_ executable: String) {
+        guard let request = chooseProgram else { return }
+        chooseProgram = nil
+        guard var game = store.record(request.gameID)?.game else { return }
+        game.launch.executable = executable
+        do {
+            try store.save(game)
+        } catch {
+            alert = AppAlert(title: "Can't save \(game.title)", message: error.localizedDescription)
+            return
+        }
+        play(request.gameID)
+    }
+
+    func cancelChooseProgram() {
+        chooseProgram = nil
+    }
+
+    func chooseAnotherProgram() {
+        guard let id = chooseProgram?.gameID else { return }
+        chooseProgram = nil
+        pendingFix = PendingFix(fix: .chooseExecutable, gameID: id)
     }
 
     func stop(_ id: UUID) {
@@ -125,6 +159,7 @@ final class AppModel {
         alert = nil
         switch fix {
         case .chooseExecutable:
+            if let record = store.record(id), presentChooseProgram(for: record) { return }
             pendingFix = PendingFix(fix: fix, gameID: id)
         case .locateFolder:
             guard let record = store.record(id), case .referenced = record.game.source else { return }
@@ -160,6 +195,14 @@ final class AppModel {
             }
             save(game)
         }
+    }
+
+    private func presentChooseProgram(for record: GameRecord) -> Bool {
+        guard let cDrive = try? io.cDriveURL(for: record),
+              let candidates = try? ExecutableRanker.rank(root: cDrive, title: record.game.title),
+              !candidates.isEmpty else { return false }
+        chooseProgram = ChooseProgramRequest(gameID: record.id, title: record.game.title, candidates: candidates)
+        return true
     }
 
     private func save(_ game: Game) {

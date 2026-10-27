@@ -35,7 +35,9 @@ public struct Importer: Sendable {
     /// Test hook: told where each commit builds its scratch crate.
     private let workObserver: (@Sendable (URL) -> Void)?
 
-    public init(io: CrateIO = .init()) { self.init(io: io, stagingParent: FileManager.default.temporaryDirectory) }
+    public init(io: CrateIO = .init(), stagingParent: URL = FileManager.default.temporaryDirectory) {
+        self.init(io: io, stagingParent: stagingParent, workObserver: nil)
+    }
 
     init(io: CrateIO, stagingParent: URL, workObserver: (@Sendable (URL) -> Void)? = nil) {
         self.io = io

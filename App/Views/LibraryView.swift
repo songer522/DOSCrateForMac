@@ -81,17 +81,21 @@ struct LibraryView: View {
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
             guard !files.isEmpty else { return false }
-            imports.add(files)
+            imports.add(files, model: model)
             return true
         }
         .fileImporter(isPresented: $choosingImport, allowedContentTypes: ImportQueue.contentTypes,
                       allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { imports.add(urls) }
+            if case .success(let urls) = result { imports.add(urls, model: model) }
         }
         .sheet(item: Binding(get: { imports.current }, set: { _ in })) { item in
             ImportSheet(model: model, url: item.url) { imports.finishCurrent() }
                 .id(item.id)
                 .interactiveDismissDisabled()
+        }
+        .sheet(item: $model.chooseProgram) { request in
+            ChooseProgramSheet(model: model, request: request)
+                .id(request.id)
         }
         .onChange(of: model.pendingFix) { _, pending in
             guard let pending else { return }
@@ -119,6 +123,17 @@ struct LibraryView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        if let progress = imports.progress {
+            ToolbarItem {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(progress.label)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+        }
         ToolbarItem {
             Picker("View", selection: $showsGrid) {
                 Label("Grid", systemImage: "square.grid.2x2").tag(true)

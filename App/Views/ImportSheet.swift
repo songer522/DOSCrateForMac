@@ -3,7 +3,7 @@ import LibraryKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Queue of dropped or chosen items; the library window shows one import sheet at a time.
+/// Handles dropped or chosen items: one item opens `ImportSheet`; two or more run as a background batch.
 @MainActor @Observable
 final class ImportQueue {
     struct Item: Identifiable {
@@ -11,17 +11,68 @@ final class ImportQueue {
         let url: URL
     }
 
+    struct Progress: Equatable {
+        var current: Int
+        var total: Int
+        var label: String { "Importing \(current) of \(total)…" }
+    }
+
     private var waiting: [URL] = []
     private(set) var current: Item?
+    private(set) var progress: Progress?
 
-    func add(_ urls: [URL]) {
-        waiting.append(contentsOf: urls)
-        if current == nil { advance() }
+    @discardableResult
+    func add(_ urls: [URL], model: AppModel) -> Task<Void, Never>? {
+        guard !urls.isEmpty else { return nil }
+        if urls.count == 1 {
+            waiting.append(urls[0])
+            if current == nil { advance() }
+            return nil
+        }
+        progress = Progress(current: 1, total: urls.count)
+        return Task { await runBatch(urls, model: model) }
     }
 
     func finishCurrent() { advance() }
 
     private func advance() { current = waiting.isEmpty ? nil : Item(url: waiting.removeFirst()) }
+
+    private func runBatch(_ urls: [URL], model: AppModel) async {
+        let importer = model.importer
+        let library = model.store.library
+        var firstID: UUID?
+        var failures: [String] = []
+
+        for (index, url) in urls.enumerated() {
+            progress = Progress(current: index + 1, total: urls.count)
+            do {
+                let record = try await Task.detached {
+                    let prepared = try await importer.prepare(url)
+                    defer { importer.discard(prepared) }
+                    let executable = prepared.candidates.count == 1 ? prepared.candidates[0].relativePath : nil
+                    return try await importer.commit(
+                        prepared, mode: .copy, title: prepared.suggestedTitle, executable: executable, into: library
+                    )
+                }.value
+                await model.store.reload()
+                if firstID == nil {
+                    firstID = record.id
+                    model.selection = record.id
+                }
+            } catch {
+                failures.append("\(url.lastPathComponent): \(importErrorMessage(error))")
+            }
+        }
+
+        progress = nil
+        if let firstID { model.selection = firstID }
+        if !failures.isEmpty {
+            model.alert = AppAlert(
+                title: failures.count == 1 ? "Couldn't import 1 item" : "Couldn't import \(failures.count) items",
+                message: failures.joined(separator: "\n")
+            )
+        }
+    }
 
     /// Folders, zips and the disc and floppy image types the importer accepts.
     static let contentTypes: [UTType] = [.folder, .zip] + ["iso", "cue", "img", "ima"].compactMap { UTType(filenameExtension: $0) }
@@ -158,5 +209,43 @@ struct ImportSheet: View {
         guard !isCreating else { return }
         if let prepared { model.importer.discard(prepared) }
         onFinish()
+    }
+}
+
+struct ChooseProgramSheet: View {
+    let model: AppModel
+    let request: ChooseProgramRequest
+
+    @State private var selection: String?
+
+    init(model: AppModel, request: ChooseProgramRequest) {
+        self.model = model
+        self.request = request
+        self._selection = State(initialValue: request.candidates.first?.relativePath)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(request.title).font(.headline)
+            Text("Choose which program starts this game.").font(.subheadline).foregroundStyle(.secondary)
+            List(request.candidates, id: \.relativePath, selection: $selection) { candidate in
+                Text(candidate.relativePath).tag(candidate.relativePath)
+            }
+            .frame(height: 160)
+            .border(Color.secondary.opacity(0.3))
+            HStack {
+                Button("Choose another file…") { model.chooseAnotherProgram() }
+                Spacer()
+                Button("Cancel", role: .cancel) { model.cancelChooseProgram() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Play") {
+                    if let selection { model.confirmProgram(selection) }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(selection == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
     }
 }

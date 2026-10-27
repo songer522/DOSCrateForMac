@@ -301,4 +301,106 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(cfg.env.soundfontPath == "/sf.sf2")
         #expect(cfg.env.mt32RomDir == nil)
     }
+
+    @Test func playWithNoExecutableAndCandidatesPresentsChooseProgramAndDoesNotLaunch() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: nil, files: ["SETUP.EXE", "TESTGAME.EXE"])
+        model.play(id)
+        #expect(model.alert == nil)
+        #expect(runner.processes.isEmpty)
+        let prompt = try #require(model.chooseProgram)
+        #expect(prompt.gameID == id)
+        #expect(prompt.title == "Test Game")
+        #expect(prompt.candidates.map(\.relativePath) == ["TESTGAME.EXE", "SETUP.EXE"])
+    }
+
+    @Test func confirmProgramSavesPreservingExtraAndLaunches() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: nil, files: ["SETUP.EXE", "TESTGAME.EXE"]) {
+            $0.notes = "Keep me"
+        }
+        let crate = try #require(model.store.record(id)).crateURL
+        let game = try #require(model.store.record(id)).game
+        try io.save(game, extra: ["futureKey": .string("preserved")], to: crate)
+        await model.store.reload()
+
+        model.play(id)
+        #expect(model.chooseProgram?.gameID == id)
+        #expect(runner.processes.isEmpty)
+
+        model.confirmProgram("TESTGAME.EXE")
+        #expect(model.chooseProgram == nil)
+        #expect(model.alert == nil)
+        #expect(model.sessions.running.contains(id))
+        #expect(runner.processes.count == 1)
+        #expect(model.store.record(id)?.game.launch.executable == "TESTGAME.EXE")
+
+        await model.store.reload()
+        let saved = try #require(model.store.record(id))
+        #expect(saved.game.launch.executable == "TESTGAME.EXE")
+        #expect(saved.game.notes == "Keep me")
+        #expect(saved.extra["futureKey"] == .string("preserved"))
+    }
+
+    @Test func cancelChooseProgramChangesNothing() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: nil, files: ["GAME.EXE"])
+        model.play(id)
+        #expect(model.chooseProgram != nil)
+        model.cancelChooseProgram()
+        #expect(model.chooseProgram == nil)
+        #expect(model.alert == nil)
+        #expect(runner.processes.isEmpty)
+        #expect(model.store.record(id)?.game.launch.executable == nil)
+    }
+
+    @Test func imageImportGameLaunchesWithoutPrompt() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: nil) {
+            $0.media = [MediaImage(relativePath: "media/disc.iso", kind: .cdrom)]
+        }
+        let crate = try #require(model.store.record(id)).crateURL
+        try FileManager.default.createDirectory(at: crate.appending(path: "files"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: crate.appending(path: "media"), withIntermediateDirectories: true)
+        try Data("iso".utf8).write(to: crate.appending(path: "media/disc.iso"))
+
+        model.play(id)
+        #expect(model.chooseProgram == nil)
+        #expect(model.alert == nil)
+        #expect(model.sessions.running.contains(id))
+    }
+
+    @Test func playWithNoExecutableAndNoCandidatesFallsBackToAlert() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: nil, files: ["README.TXT"])
+        model.play(id)
+        #expect(model.chooseProgram == nil)
+        #expect(model.alert?.title == "No program to run")
+        #expect(model.alert?.fix == .chooseExecutable)
+        #expect(runner.processes.isEmpty)
+
+        model.applyFix(.chooseExecutable, for: id)
+        #expect(model.chooseProgram == nil)
+        #expect(model.pendingFix == PendingFix(fix: .chooseExecutable, gameID: id))
+    }
+
+    @Test func missingExecutableFixUsesRankedChooseProgramSheet() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GONE.EXE", files: ["SETUP.EXE", "TESTGAME.EXE"])
+        model.play(id)
+        #expect(model.chooseProgram == nil)
+        #expect(model.alert?.title == "Program not found")
+        #expect(model.alert?.fix == .chooseExecutable)
+
+        model.applyFix(.chooseExecutable, for: id)
+        #expect(model.alert == nil)
+        #expect(model.pendingFix == nil)
+        let prompt = try #require(model.chooseProgram)
+        #expect(prompt.gameID == id)
+        #expect(prompt.candidates.map(\.relativePath) == ["TESTGAME.EXE", "SETUP.EXE"])
+
+        model.chooseAnotherProgram()
+        #expect(model.chooseProgram == nil)
+        #expect(model.pendingFix == PendingFix(fix: .chooseExecutable, gameID: id))
+    }
 }
