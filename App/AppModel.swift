@@ -14,6 +14,8 @@ struct AppAlert: Identifiable {
         case useFolderAsC(String)
         /// Go back to mounting the whole game folder as C: (its `driveCRoot` subfolder is gone).
         case resetCRoot
+        /// Write a fresh game.json for a record that needs repair (any `.broken` file is kept).
+        case recreate
         case reinstall
     }
 
@@ -118,6 +120,17 @@ final class AppModel {
             pendingFix = PendingFix(fix: fix, gameID: id)
         case .reinstall:
             break
+        case .recreate:
+            guard let record = store.record(id), case .needsRepair = record.status else { return }
+            if Self.isDirectory(record.crateURL.appending(path: "files", directoryHint: .isDirectory)) {
+                // The stand-in record is already a managed game titled after the crate.
+                var game = record.game
+                game.source = .managed
+                save(game)
+            } else {
+                // No files/: it was a referenced game, so ask where its folder is.
+                pendingFix = PendingFix(fix: .recreate, gameID: id)
+            }
         case .resetCRoot:
             guard var game = store.record(id)?.game, !game.launch.driveCRoot.isEmpty else { return }
             // Keep the program pointing at the same file, now relative to the whole game folder.
@@ -217,7 +230,10 @@ final class AppModel {
         case .unsupportedPath(let path):
             return AppAlert(title: "Unsupported path", message: "\(path) contains characters DOSBox can't mount.")
         case .needsRepair:
-            return AppAlert(title: "Game needs repair", message: "This game's data file is unreadable.")
+            return AppAlert(title: "Game needs repair",
+                            message: "This game's game.json is missing or unreadable. Recreate it to play the game again; "
+                                + "its title, settings and play stats start fresh.",
+                            fix: .recreate)
         case .readOnly(let reason):
             return AppAlert(title: "Game is read-only", message: reason)
         case .alreadyRunning:

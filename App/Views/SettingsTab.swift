@@ -64,9 +64,11 @@ struct OptionalPicker<T: Hashable>: View {
 /// Every curated per-game setting group (spec section 4.2) that lives in `GameSettings`.
 struct CuratedSettingsSections: View {
     @Binding var settings: GameSettings
+    /// Off for the global defaults, where the preset comes from General › Default preset instead.
+    var showsPreset = true
 
     var body: some View {
-        PresetSection(settings: $settings)
+        if showsPreset { PresetSection(settings: $settings) }
         CPUSection(settings: $settings)
         MemorySection(settings: $settings)
         GraphicsSection(settings: $settings)

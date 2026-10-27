@@ -28,19 +28,27 @@ struct GameDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            GameHeader(model: model, record: record)
+            GameHeader(model: model, record: record, onPlay: play)
                 .padding()
+            if case .readOnly(let reason) = record.status {
+                Text(reason).font(.callout).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal).padding(.bottom, 8)
+            }
             Picker("Section", selection: $tab) {
                 ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .padding(.horizontal)
-            switch tab {
-            case .info: InfoTab(game: $draft)
-            case .settings: SettingsTab(record: record, game: $draft, onError: showError) { removedMedia.append($0.relativePath) }
-            case .advanced: AdvancedTab(model: model, record: record, game: draft)
+            Group {
+                switch tab {
+                case .info: InfoTab(game: $draft)
+                case .settings: SettingsTab(record: record, game: $draft, onError: showError) { removedMedia.append($0.relativePath) }
+                case .advanced: AdvancedTab(model: model, record: record, game: draft)
+                }
             }
+            .disabled(isReadOnly)
         }
         .onChange(of: draft) { _, _ in scheduleSave() }
         .onChange(of: record.game) { _, new in
@@ -48,6 +56,20 @@ struct GameDetailView: View {
             if saveTask == nil, Self.shouldAdopt(stored: new, over: draft) { draft = new }
         }
         .onDisappear { if saveTask != nil { flush() } }
+    }
+
+    private var isReadOnly: Bool {
+        if case .readOnly = record.status { return true }
+        return false
+    }
+
+    /// Saves a pending edit first, so the launch uses what the inspector shows.
+    private func play() {
+        if saveTask != nil {
+            saveTask?.cancel()
+            flush()
+        }
+        model.play(record.id)
     }
 
     private func showError(_ title: String, _ message: String) {
@@ -119,6 +141,7 @@ struct GameDetailView: View {
 private struct GameHeader: View {
     let model: AppModel
     let record: GameRecord
+    let onPlay: () -> Void
     @State private var coverRevision = 0
     @State private var dropTargeted = false
 
@@ -139,7 +162,7 @@ private struct GameHeader: View {
                     if running {
                         Button("Stop", systemImage: "stop.fill") { model.stop(record.id) }
                     } else {
-                        Button("Play", systemImage: "play.fill") { model.play(record.id) }
+                        Button("Play", systemImage: "play.fill", action: onPlay)
                             .buttonStyle(.borderedProminent)
                     }
                 }

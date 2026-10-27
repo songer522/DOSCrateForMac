@@ -175,6 +175,53 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(AppModel.alert(for: .sourceUnreachable(path: "/x"), game: nil).fix == nil)
     }
 
+    /// Breaks the game's game.json and reloads, leaving a needs-repair record.
+    func breakGameJSON(_ model: AppModel, _ id: UUID) async throws -> URL {
+        let crate = try #require(model.store.record(id)).crateURL
+        try Data("{".utf8).write(to: crate.appending(path: "game.json"))
+        await model.store.reload()
+        return crate
+    }
+
+    func brokenFiles(_ crate: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: crate.path).filter { $0.hasSuffix(".broken") }
+    }
+
+    @Test func recreateWritesManagedGameAndKeepsBrokenFile() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, oldID) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        let crate = try await breakGameJSON(model, oldID)
+        let record = try #require(model.store.records.first)
+        guard case .needsRepair = record.status else { Issue.record("expected needsRepair"); return }
+        model.play(record.id)
+        #expect(model.alert?.fix == .recreate)
+        model.applyFix(.recreate, for: record.id)
+        #expect(model.store.record(record.id)?.status == .ok)
+        await model.store.reload()
+        let fresh = try #require(model.store.records.first)
+        #expect(fresh.status == .ok)
+        #expect(fresh.game.source == .managed)
+        #expect(try brokenFiles(crate).count == 1)
+    }
+
+    @Test func recreateWithoutFilesAsksForTheFolder() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, oldID) = try await makeModel(executable: nil)
+        _ = try await breakGameJSON(model, oldID)
+        let record = try #require(model.store.records.first)
+        model.applyFix(.recreate, for: record.id)
+        #expect(model.pendingFix == PendingFix(fix: .recreate, gameID: record.id))
+    }
+
+    @Test func removalWordingIsHonestPerSource() {
+        let managed = GameRecord(game: Game(title: "M", source: .managed), crateURL: URL(filePath: "/l/M.doscrate"))
+        #expect(LibraryView.removalMessage(for: managed, running: false).contains("moved to the Trash"))
+        let referenced = GameRecord(game: Game(title: "R", source: .referenced(path: "/games/r", bookmark: Data())),
+                                    crateURL: URL(filePath: "/l/R.doscrate"))
+        #expect(LibraryView.removalMessage(for: referenced, running: false).contains("/games/r stays"))
+        #expect(LibraryView.removalMessage(for: managed, running: true).hasPrefix("Stop"))
+    }
+
     @Test func missingLibrarySetsNeedsSetup() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, _) = try await makeModel(executable: nil, libraryExists: false)

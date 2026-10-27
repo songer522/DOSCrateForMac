@@ -29,11 +29,21 @@ struct LicenseFile: Identifiable, Hashable {
     }
 }
 
+/// The bundled DOSBox Staging release.
+enum StagingRelease {
+    /// Must equal STAGING_VERSION in scripts/staging.lock; a test checks it.
+    static let version = "0.83.0"
+    static var tagURL: String { "https://github.com/dosbox-staging/dosbox-staging/tree/v\(version)" }
+}
+
 struct LicensesView: View {
-    static let notice = "DOSCrate bundles DOSBox Staging 0.83.0, licensed under GPL-2.0-or-later. "
-        + "Source: https://github.com/dosbox-staging/dosbox-staging/tree/v0.83.0 — "
-        + "a copy of the corresponding source is attached to every DOSCrate release, "
-        + "and we will provide it on request for three years."
+    /// Where to ask for the corresponding source. Placeholder until the owner confirms it.
+    static let sourceOfferContact = "https://github.com/songer522/DOSCrate"
+
+    static let notice = "DOSCrate bundles DOSBox Staging \(StagingRelease.version), licensed under GPL-2.0-or-later, "
+        + "which uses the LGPL-2.1-or-later libraries GLib and gettext (libintl). "
+        + "Source: \(StagingRelease.tagURL) — a copy of the corresponding source of each is attached to every "
+        + "DOSCrate release, and for three years we will provide it on request at \(sourceOfferContact)."
 
     private let files = LicenseFile.bundled
     @State private var selection: LicenseFile.ID?

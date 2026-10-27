@@ -66,6 +66,7 @@ struct DOSCrateApp: App {
         case .locateFolder: "Locate Folder…"
         case .useFolderAsC: "Use Folder as C:"
         case .resetCRoot: "Use Whole Folder as C:"
+        case .recreate: "Recreate…"
         case .reinstall: "OK"
         }
     }

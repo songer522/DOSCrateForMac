@@ -24,6 +24,9 @@ struct GameContextMenu: View {
                 model.alert = AppAlert(title: "Can't save \(game.title)", message: error.localizedDescription)
             }
         }
+        if case .needsRepair = record.status {
+            Button("Recreate Game Info…") { model.applyFix(.recreate, for: record.id) }
+        }
         Divider()
         Button("Remove…", role: .destructive, action: onRemove)
             .disabled(model.sessions.running.contains(record.id))
@@ -64,13 +67,16 @@ struct LibraryView: View {
         }
         .confirmationDialog("Remove this game?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
                             titleVisibility: .visible, presenting: removing.flatMap(model.store.record)) { record in
-            Button("Remove from Library") { remove(record, trashFiles: false) }
-            if record.game.source == .managed {
-                Button("Move Files to Trash", role: .destructive) { remove(record, trashFiles: true) }
+            let running = model.sessions.running.contains(record.id)
+            if case .referenced = record.game.source {
+                Button("Remove from Library") { remove(record, trashFiles: false) }.disabled(running)
+                Button("Move Files to Trash", role: .destructive) { remove(record, trashFiles: true) }.disabled(running)
+            } else {
+                Button("Move to Trash", role: .destructive) { remove(record, trashFiles: true) }.disabled(running)
             }
             Button("Cancel", role: .cancel) {}
         } message: { record in
-            Text("\"\(record.game.title)\" will be removed from the library.")
+            Text(Self.removalMessage(for: record, running: model.sessions.running.contains(record.id)))
         }
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
@@ -144,7 +150,21 @@ struct LibraryView: View {
         }
     }
 
+    /// What removal does, worded per source: a managed game's files live in its crate, so they always go with it.
+    static func removalMessage(for record: GameRecord, running: Bool) -> String {
+        if running { return "Stop \"\(record.game.title)\" before removing it." }
+        if case .referenced(let path, _) = record.game.source {
+            return "\"\(record.game.title)\" will be removed from the library. Its folder at \(path) stays where it is, "
+                + "unless you also move its files to the Trash."
+        }
+        return "\"\(record.game.title)\" and its game files will be moved to the Trash."
+    }
+
     private func remove(_ record: GameRecord, trashFiles: Bool) {
+        guard !model.sessions.running.contains(record.id) else {
+            model.alert = AppAlert(title: "Can't remove \(record.game.title)", message: "Stop the game before removing it.")
+            return
+        }
         do {
             try model.store.remove(record.id, trashFiles: trashFiles)
             if model.selection == record.id { model.selection = nil }
@@ -174,8 +194,12 @@ struct LibraryView: View {
                 return
             }
             game.launch.executable = String(chosen.dropFirst(root.count))
-        case .locateFolder:
-            guard case .referenced = record.game.source else { return }
+        case .locateFolder, .recreate:
+            if pending.fix == .locateFolder {
+                guard case .referenced = record.game.source else { return }
+            } else {
+                guard case .needsRepair = record.status else { return }
+            }
             panel.canChooseDirectories = true
             panel.canChooseFiles = false
             panel.prompt = "Use Folder"

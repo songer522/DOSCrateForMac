@@ -79,7 +79,7 @@ private struct DefaultsPreferences: View {
     var body: some View {
         Form {
             Text("Applied to every game before its own settings.").foregroundStyle(.secondary)
-            CuratedSettingsSections(settings: $prefs.globalOverrides)
+            CuratedSettingsSections(settings: $prefs.globalOverrides, showsPreset: false)
             Section("Raw DOSBox settings") {
                 TextEditor(text: $prefs.rawGlobalOverrides)
                     .font(.system(.body, design: .monospaced))
