@@ -10,7 +10,8 @@ func overrideConfWinsOverGeneratedAndAutoexecRuns() throws {
     let f = try Fixture(); defer { f.cleanup() }
     var r = f.record(executable: nil, exitWhenDone: true)
     r.game.settings.memoryMB = 16
-    try Data("[dosbox]\nmemsize = 32\n[autoexec]\nconfig -get memsize > MEM.TXT\n".utf8)
+    // No program is set, so the plan omits --exit; the override's autoexec quits instead.
+    try Data("[dosbox]\nmemsize = 32\n[autoexec]\nconfig -get memsize > MEM.TXT\nexit\n".utf8)
         .write(to: f.io.overrideURL(f.crate))
     let cDrive = try f.io.cDriveURL(for: r)
     var plan = try LaunchPlanner.plan(r, cDrive: cDrive, global: GlobalConfig(), dosbox: dosbox, io: f.io)

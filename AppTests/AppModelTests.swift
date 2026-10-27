@@ -58,6 +58,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
 
     /// Creates a library holding one managed game; returns the model and the game id.
     func makeModel(executable: String?, files: [String] = [], libraryExists: Bool = true,
+                   configure: (inout Game) -> Void = { _ in },
                    verify: @escaping @MainActor (URL) throws -> Void = { _ in }) async throws -> (AppModel, UUID) {
         let fm = FileManager.default
         let lib = root.appending(path: "Library")
@@ -67,6 +68,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
             let crate = try io.makeCrate(title: "Test Game", in: lib)
             var game = Game(title: "Test Game", source: .managed)
             game.launch.executable = executable
+            configure(&game)
             id = game.id
             try io.save(game, extra: [:], to: crate)
             for f in files {
@@ -137,6 +139,40 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         let game = try #require(model.store.record(id)).game
         #expect(game.launch.driveCRoot == "")
         #expect(game.launch.executable == "KEEN/Long Name.exe")
+    }
+
+    @Test func missingDriveCRootOffersResetNotLocate() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { $0.launch.driveCRoot = "GONE" }
+        model.play(id)
+        #expect(model.alert?.fix == .resetCRoot)
+        #expect(runner.processes.isEmpty)
+        model.applyFix(.resetCRoot, for: id)
+        let game = try #require(model.store.record(id)).game
+        #expect(game.launch.driveCRoot == "")
+        #expect(game.launch.executable == "GONE/GAME.EXE")
+    }
+
+    @Test func missingMediaIsNotAFolderProblem() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: nil) {
+            $0.media = [MediaImage(relativePath: "media/gone.iso", kind: .cdrom)]
+        }
+        try FileManager.default.createDirectory(at: try #require(model.store.record(id)).crateURL.appending(path: "files"),
+                                                withIntermediateDirectories: true)
+        model.play(id)
+        #expect(model.alert?.title == "Disc image missing")
+        #expect(model.alert?.fix == nil)
+    }
+
+    @Test func locateFolderIsNeverOfferedForManagedGames() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE")
+        model.play(id)
+        #expect(model.alert?.fix == nil)
+        model.applyFix(.locateFolder, for: id)
+        #expect(model.pendingFix == nil)
+        #expect(AppModel.alert(for: .sourceUnreachable(path: "/x"), game: nil).fix == nil)
     }
 
     @Test func missingLibrarySetsNeedsSetup() async throws {

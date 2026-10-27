@@ -84,6 +84,32 @@ struct Fixture {
         }
     }
 
+    @Test func preflightMissingMediaIsMediaMissing() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        var r = f.record(executable: nil)
+        r.game.media = [MediaImage(relativePath: "media/gone.iso", kind: .cdrom)]
+        #expect(throws: LaunchError.mediaMissing(path: f.crate.appendingPathComponent("media/gone.iso").path)) {
+            try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+        }
+    }
+
+    @Test func preflightBadDriveCRootIsCRootMissing() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        var r = f.record(executable: "GAME.EXE")
+        r.game.launch.driveCRoot = "NOPE"
+        #expect(throws: LaunchError.cRootMissing(path: f.crate.appendingPathComponent("files/NOPE").path)) {
+            try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+        }
+    }
+
+    @Test func preflightManagedWithoutFilesIsCRootMissing() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try FileManager.default.removeItem(at: f.crate.appendingPathComponent("files"))
+        #expect(throws: LaunchError.cRootMissing(path: f.crate.appendingPathComponent("files").path)) {
+            try Preflight.check(f.record(executable: "GAME.EXE"), io: f.io, dosbox: f.dosbox)
+        }
+    }
+
     @Test func preflightNeedsRepair() throws {
         let f = try Fixture(); defer { f.cleanup() }
         var r = f.record(executable: "GAME.EXE")

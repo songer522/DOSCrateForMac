@@ -5,7 +5,14 @@ public enum LaunchError: Error, Equatable {
     case dosboxMissing
     case executableNotSet
     case executableMissing(path: String)
+    /// A referenced game's folder can't be reached.
     case sourceUnreachable(path: String)
+    /// A disc or floppy image listed in `media` is gone.
+    case mediaMissing(path: String)
+    /// The folder mounted as C: (the crate's `files/`, or the `driveCRoot` subfolder) is gone.
+    case cRootMissing(path: String)
+    /// DOSBox could not be started.
+    case launchFailed(String)
     case nonDOSPath(component: String, suggestedCRoot: String)
     case unsupportedPath(String)
     case needsRepair

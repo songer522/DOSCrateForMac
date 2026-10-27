@@ -44,13 +44,21 @@ final class FakeProcess: RunningProcess, @unchecked Sendable {
     }
 }
 
+struct FakeStartError: Error, LocalizedError {
+    var errorDescription: String? { "spawn failed" }
+}
+
 final class FakeRunner: ProcessRunner, @unchecked Sendable {
     private let lock = NSLock()
     private var _started: [(plan: LaunchPlan, logURL: URL, process: FakeProcess)] = []
     let exitOnTerminate: Int32?
-    init(exitOnTerminate: Int32? = nil) { self.exitOnTerminate = exitOnTerminate }
+    let fails: Bool
+    init(exitOnTerminate: Int32? = nil, fails: Bool = false) { self.exitOnTerminate = exitOnTerminate; self.fails = fails }
     var started: [(plan: LaunchPlan, logURL: URL, process: FakeProcess)] { lock.withLock { _started } }
     func start(_ plan: LaunchPlan, logURL: URL) throws -> any RunningProcess {
+        if fails { throw FakeStartError() }
+        // Like the real runner, the session log exists once the process starts.
+        try? Data().write(to: logURL)
         let p = FakeProcess(exitOnTerminate: exitOnTerminate)
         lock.withLock { _started.append((plan, logURL, p)) }
         return p
@@ -181,8 +189,31 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: logs.deletingLastPathComponent()) }
         for i in 1...8 { try Data().write(to: logs.appending(path: "2020010\(i)-000000.log")) }
-        let m = SessionManager(runner: FakeRunner())
+        let runner = FakeRunner()
+        let m = SessionManager(runner: runner)
         try m.start(gameID: UUID(), plan: plan())
-        #expect(try FileManager.default.contentsOfDirectory(atPath: logs.path).count == 5)
+        let names = try FileManager.default.contentsOfDirectory(atPath: logs.path).sorted()
+        #expect(names.count == 5)
+        #expect(names.contains(runner.started[0].logURL.lastPathComponent))
+    }
+
+    @Test func unprunableLogsDoNotAbortLaunch() throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: logs.path)
+            try? FileManager.default.removeItem(at: logs.deletingLastPathComponent())
+        }
+        for i in 1...8 { try Data().write(to: logs.appending(path: "2020010\(i)-000000.log")) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: logs.path)
+        let runner = FakeRunner()
+        let m = SessionManager(runner: runner)
+        try m.start(gameID: UUID(), plan: plan())
+        #expect(runner.started.count == 1)
+    }
+
+    @Test func runnerFailureIsLaunchFailed() {
+        let m = SessionManager(runner: FakeRunner(fails: true))
+        #expect(throws: LaunchError.launchFailed("spawn failed")) { try m.start(gameID: UUID(), plan: plan()) }
+        #expect(m.running.isEmpty)
     }
 }

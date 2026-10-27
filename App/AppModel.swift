@@ -8,9 +8,12 @@ import Observation
 struct AppAlert: Identifiable {
     enum Fix: Equatable {
         case chooseExecutable
+        /// Point a referenced game at its moved folder. Never offered for managed games.
         case locateFolder
         /// Mount this subpath of the game folder as C: instead.
         case useFolderAsC(String)
+        /// Go back to mounting the whole game folder as C: (its `driveCRoot` subfolder is gone).
+        case resetCRoot
         case reinstall
     }
 
@@ -95,7 +98,7 @@ final class AppModel {
             let plan = try LaunchPlanner.plan(record, cDrive: cDrive, global: prefs.globalConfig, dosbox: dosbox, io: io)
             try sessions.start(gameID: id, plan: plan)
         } catch let error as LaunchError {
-            alert = Self.alert(for: error, gameID: id, executable: record.game.launch.executable)
+            alert = Self.alert(for: error, gameID: id, game: record.game)
         } catch {
             alert = AppAlert(title: "Can't start \(record.game.title)", message: error.localizedDescription)
         }
@@ -108,10 +111,21 @@ final class AppModel {
     func applyFix(_ fix: AppAlert.Fix, for id: UUID) {
         alert = nil
         switch fix {
-        case .chooseExecutable, .locateFolder:
+        case .chooseExecutable:
+            pendingFix = PendingFix(fix: fix, gameID: id)
+        case .locateFolder:
+            guard let record = store.record(id), case .referenced = record.game.source else { return }
             pendingFix = PendingFix(fix: fix, gameID: id)
         case .reinstall:
             break
+        case .resetCRoot:
+            guard var game = store.record(id)?.game, !game.launch.driveCRoot.isEmpty else { return }
+            // Keep the program pointing at the same file, now relative to the whole game folder.
+            if let exe = game.launch.executable, !exe.isEmpty {
+                game.launch.executable = game.launch.driveCRoot + "/" + exe
+            }
+            game.launch.driveCRoot = ""
+            save(game)
         case .useFolderAsC(let root):
             guard var game = store.record(id)?.game,
                   Self.isFolderPrefix(root, of: game.launch.executable) else { return }
@@ -120,11 +134,15 @@ final class AppModel {
             if let exe = game.launch.executable {
                 game.launch.executable = String(exe.dropFirst(root.count + 1))
             }
-            do {
-                try store.save(game)
-            } catch {
-                alert = AppAlert(title: "Can't save \(game.title)", message: error.localizedDescription)
-            }
+            save(game)
+        }
+    }
+
+    private func save(_ game: Game) {
+        do {
+            try store.save(game)
+        } catch {
+            alert = AppAlert(title: "Can't save \(game.title)", message: error.localizedDescription)
         }
     }
 
@@ -154,13 +172,14 @@ final class AppModel {
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
     }
 
-    static func alert(for error: LaunchError, gameID: UUID? = nil, executable: String? = nil) -> AppAlert {
-        var alert = makeAlert(for: error, executable: executable)
+    static func alert(for error: LaunchError, gameID: UUID? = nil, game: Game? = nil) -> AppAlert {
+        var alert = makeAlert(for: error, game: game)
         alert.gameID = gameID
         return alert
     }
 
-    private static func makeAlert(for error: LaunchError, executable: String?) -> AppAlert {
+    private static func makeAlert(for error: LaunchError, game: Game?) -> AppAlert {
+        let executable = game?.launch.executable
         switch error {
         case .dosboxMissing:
             return AppAlert(title: "DOSBox Staging is missing or damaged",
@@ -170,7 +189,22 @@ final class AppModel {
         case .executableMissing(let path):
             return AppAlert(title: "Program not found", message: "\(path) is no longer in the game folder.", fix: .chooseExecutable)
         case .sourceUnreachable(let path):
-            return AppAlert(title: "Game folder unavailable", message: "DOSCrate can't reach \(path).", fix: .locateFolder)
+            var isReferenced = false
+            if case .referenced = game?.source { isReferenced = true }
+            return AppAlert(title: "Game folder unavailable", message: "DOSCrate can't reach \(path).",
+                            fix: isReferenced ? .locateFolder : nil)
+        case .cRootMissing(let path):
+            if let root = game?.launch.driveCRoot, !root.isEmpty {
+                return AppAlert(title: "C: folder not found",
+                                message: "\"\(root)\", the folder used as C:, is no longer in the game folder (\(path)).",
+                                fix: .resetCRoot)
+            }
+            return AppAlert(title: "Game files not found", message: "DOSCrate can't find this game's files at \(path).")
+        case .mediaMissing(let path):
+            return AppAlert(title: "Disc image missing",
+                            message: "\((path as NSString).lastPathComponent) is no longer in the game's media folder.")
+        case .launchFailed(let detail):
+            return AppAlert(title: "DOSBox didn't start", message: detail)
         case .nonDOSPath(let component, let root):
             guard Self.isFolderPrefix(root, of: executable) else {
                 return AppAlert(title: "Name not usable in DOS",

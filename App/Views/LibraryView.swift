@@ -175,6 +175,7 @@ struct LibraryView: View {
             }
             game.launch.executable = String(chosen.dropFirst(root.count))
         case .locateFolder:
+            guard case .referenced = record.game.source else { return }
             panel.canChooseDirectories = true
             panel.canChooseFiles = false
             panel.prompt = "Use Folder"
@@ -185,7 +186,7 @@ struct LibraryView: View {
                 model.alert = AppAlert(title: "Can't use that folder", message: error.localizedDescription)
                 return
             }
-        case .useFolderAsC, .reinstall:
+        case .useFolderAsC, .resetCRoot, .reinstall:
             return
         }
         do {

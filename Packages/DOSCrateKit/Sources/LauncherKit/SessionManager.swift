@@ -29,19 +29,23 @@ public final class SessionManager {
         self.killGrace = killGrace
     }
 
+    /// Session logs kept per game, including the current one.
+    public static let keptLogs = 5
+
     public func start(gameID: UUID, plan: LaunchPlan) throws(LaunchError) {
         guard !running.contains(gameID) else { throw .alreadyRunning }
         let started = now()
         let logURL = plan.logsDirectory.appending(path: Self.logName(started), directoryHint: .notDirectory)
         let process: any RunningProcess
+        // Log housekeeping must never stop a launch: keep 4 old logs so the new one makes 5.
+        try? FileManager.default.createDirectory(at: plan.logsDirectory, withIntermediateDirectories: true)
+        try? LogRotation.prune(plan.logsDirectory, keep: Self.keptLogs - 1)
         do {
-            try FileManager.default.createDirectory(at: plan.logsDirectory, withIntermediateDirectories: true)
-            try LogRotation.prune(plan.logsDirectory, keep: 5)
             process = try runner.start(plan, logURL: logURL)
         } catch let e as LaunchError {
             throw e
         } catch {
-            throw .sourceUnreachable(path: plan.logsDirectory.path)
+            throw .launchFailed(error.localizedDescription)
         }
         running.insert(gameID)
         processes[gameID] = process

@@ -25,6 +25,21 @@ import LibraryKit
         #expect(plan.logsDirectory.path == f.crate.path + "/.cache/logs")
     }
 
+    @Test func noExecutableNeverPassesExit() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try FileManager.default.createDirectory(at: f.crate.appendingPathComponent("media"), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: f.crate.appendingPathComponent("media/d.iso"))
+        var r = f.record(executable: nil, exitWhenDone: true)
+        r.game.media = [MediaImage(relativePath: "media/d.iso", kind: .cdrom)]
+        let plan = try LaunchPlanner.plan(r, cDrive: Preflight.check(r, io: f.io, dosbox: f.dosbox),
+                                          global: GlobalConfig(), dosbox: f.dosbox, io: f.io)
+        #expect(!plan.arguments.contains("--exit"))
+        r.game.launch.executable = ""
+        let empty = try LaunchPlanner.plan(r, cDrive: Preflight.check(r, io: f.io, dosbox: f.dosbox),
+                                           global: GlobalConfig(), dosbox: f.dosbox, io: f.io)
+        #expect(!empty.arguments.contains("--exit"))
+    }
+
     @Test func emptyOverrideIsIgnored() throws {
         let f = try Fixture(); defer { f.cleanup() }
         try f.touch("GAME.EXE")

@@ -25,7 +25,12 @@ public enum Preflight {
         }
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: cDrive.path, isDirectory: &isDir), isDir.boolValue else {
-            throw .sourceUnreachable(path: cDrive.path)
+            // A referenced folder that resolved but is no longer a folder is still the source going missing;
+            // everything else is a missing `files/` or a `driveCRoot` that no longer exists.
+            if case .referenced(let path, _) = r.game.source, r.game.launch.driveCRoot.isEmpty {
+                throw .sourceUnreachable(path: path)
+            }
+            throw .cRootMissing(path: cDrive.path)
         }
         if cDrive.path.contains("\"") { throw .unsupportedPath(cDrive.path) }
 
@@ -49,7 +54,7 @@ public enum Preflight {
 
         for image in r.game.media {
             let url = mediaURL(image, in: r.crateURL)
-            guard fm.fileExists(atPath: url.path) else { throw .sourceUnreachable(path: url.path) }
+            guard fm.fileExists(atPath: url.path) else { throw .mediaMissing(path: url.path) }
             if url.path.contains("\"") { throw .unsupportedPath(url.path) }
         }
         return cDrive

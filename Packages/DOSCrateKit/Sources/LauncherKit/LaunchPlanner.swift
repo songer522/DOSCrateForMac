@@ -25,7 +25,8 @@ public enum LaunchPlanner {
         if let size = (try? fm.attributesOfItem(atPath: override.path))?[.size] as? NSNumber, size.intValue > 0 {
             args += ["--conf", override.path]
         }
-        if r.game.launch.exitWhenDone { args.append("--exit") }
+        // Without a program the session is a DOS prompt (e.g. installing from D:), so never quit after autoexec.
+        if r.game.launch.exitWhenDone, let exe = r.game.launch.executable, !exe.isEmpty { args.append("--exit") }
         return LaunchPlan(executable: dosbox, arguments: args, workingDirectory: r.crateURL,
                           environment: [:], configURL: conf, logsDirectory: logs)
     }
