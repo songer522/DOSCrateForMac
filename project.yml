@@ -1,0 +1,80 @@
+name: DOSCrate
+options:
+  bundleIdPrefix: com.songer522
+  deploymentTarget:
+    macOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: NO
+    # Silences Xcode's AppIntents "Metadata extraction skipped" warning, which would trip the warning gate.
+    LM_SKIP_METADATA_EXTRACTION: YES
+packages:
+  DOSCrateKit:
+    path: Packages/DOSCrateKit
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
+targets:
+  DOSCrate:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+        excludes: ["Resources/Licenses/**"] # copied by scripts/embed-staging.sh
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.songer522.DOSCrate
+        PRODUCT_NAME: DOSCrate
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/DOSCrate.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: NO
+        # Sparkle: empty in Debug (updates disabled); Release builds pass real values.
+        DOSCRATE_APPCAST_URL: ""
+        DOSCRATE_SPARKLE_KEY: ""
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+    dependencies:
+      - package: DOSCrateKit
+        product: LibraryKit
+      - package: DOSCrateKit
+        product: ConfigKit
+      - package: DOSCrateKit
+        product: ImportKit
+      - package: DOSCrateKit
+        product: LauncherKit
+      - package: Sparkle
+        product: Sparkle
+    postCompileScripts:
+      - name: Embed DOSBox Staging
+        script: "\"${SRCROOT}/scripts/embed-staging.sh\""
+        inputFiles:
+          - "$(SRCROOT)/Vendor/DOSBox Staging.app"
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/DOSBox Staging.app"
+        basedOnDependencyAnalysis: false
+  DOSCrateTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [AppTests]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.songer522.DOSCrateTests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: DOSCrate
+schemes:
+  DOSCrate:
+    build:
+      targets:
+        DOSCrate: all
+        DOSCrateTests: [test]
+    test:
+      targets: [DOSCrateTests]
