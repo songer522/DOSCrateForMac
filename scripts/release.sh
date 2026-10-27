@@ -13,6 +13,11 @@ if [ ${#missing[@]} -gt 0 ]; then
     exit 1
 fi
 
+if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+    echo "error: VERSION must be numeric dotted (e.g. 1.2.0), got '$VERSION'" >&2
+    exit 1
+fi
+
 cd "$(dirname "$0")/.."
 OUT="build/release"
 ARCHIVE="$OUT/DOSCrate.xcarchive"
@@ -30,6 +35,10 @@ sign() { codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID" "
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
+echo "==> Source tarball"
+curl -fL -o "$OUT/dosbox-staging-0.83.0-source.tar.gz" \
+    https://github.com/dosbox-staging/dosbox-staging/archive/refs/tags/v0.83.0.tar.gz
+
 scripts/fetch-staging.sh
 
 echo "==> Archive (Release)"
@@ -50,15 +59,29 @@ PLIST
 xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportPath "$EXPORT" -exportOptionsPlist "$OUT/ExportOptions.plist"
 
 echo "==> Re-sign inside-out"
-while IFS= read -r -d '' lib; do sign "$lib"; done \
-    < <(find "$STAGING_APP/Contents/MacOS/lib" -name '*.dylib' -print0)
+LIB_DIR="$STAGING_APP/Contents/MacOS/lib"
+if [ ! -d "$LIB_DIR" ]; then
+    echo "error: $LIB_DIR not found" >&2
+    exit 1
+fi
+signed=0
+while IFS= read -r -d '' lib; do sign "$lib"; signed=$((signed + 1)); done \
+    < <(find "$LIB_DIR" -name '*.dylib' -print0)
+if [ "$signed" -eq 0 ]; then
+    echo "error: no dylibs found under $LIB_DIR" >&2
+    exit 1
+fi
 sign "$STAGING_APP/Contents/MacOS/dosbox"
 sign "$STAGING_APP"
 
 # Sparkle nested helpers, innermost first (per Sparkle's sandboxing/codesign docs).
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
 for item in "XPCServices/Installer.xpc" "XPCServices/Downloader.xpc" "Autoupdate" "Updater.app"; do
-    if [ -e "$SPARKLE/$item" ]; then sign "$SPARKLE/$item"; fi
+    if [ -e "$SPARKLE/$item" ]; then
+        sign "$SPARKLE/$item"
+    else
+        echo "note: skipping missing Sparkle helper $item" >&2
+    fi
 done
 sign "$APP/Contents/Frameworks/Sparkle.framework"
 sign --entitlements App/DOSCrate.entitlements "$APP"
@@ -75,9 +98,5 @@ echo "==> Notarize"
 xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
 xcrun stapler staple "$DMG"
 spctl -a -t open --context context:primary-signature -vv "$DMG"
-
-echo "==> Source tarball"
-curl -fL -o "$OUT/dosbox-staging-0.83.0-source.tar.gz" \
-    https://github.com/dosbox-staging/dosbox-staging/archive/refs/tags/v0.83.0.tar.gz
 
 echo "Done: $DMG"
