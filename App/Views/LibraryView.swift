@@ -186,6 +186,12 @@ struct LibraryView: View {
         ToolbarItem {
             Button("Import", systemImage: "plus") { choosingImport = true }
         }
+        ToolbarItem {
+            SettingsLink {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .help("Settings")
+        }
     }
 
     private func sortButton(_ title: String, _ key: SortKey) -> some View {
