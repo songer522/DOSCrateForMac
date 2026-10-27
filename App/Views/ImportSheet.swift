@@ -30,6 +30,7 @@ final class ImportQueue {
     }
 
     private var waiting: [Item] = []
+    private var waitingPrompts: [BatchPrompt] = []
     private var batchEntries: [BatchEntry] = []
     private var batchTask: Task<Void, Never>?
     private(set) var current: Item?
@@ -49,7 +50,8 @@ final class ImportQueue {
         }
         switch preference {
         case .ask:
-            batchPrompt = BatchPrompt(urls: urls)
+            waitingPrompts.append(BatchPrompt(urls: urls))
+            if batchPrompt == nil { advanceBatchPrompt() }
             return nil
         case .copy:
             return enqueue(urls.map { BatchEntry(url: $0, mode: .copy) }, model: model)
@@ -61,15 +63,15 @@ final class ImportQueue {
     @discardableResult
     func confirmBatch(mode: ImportMode, remember: Bool = false, model: AppModel) -> Task<Void, Never>? {
         guard let prompt = batchPrompt else { return nil }
-        batchPrompt = nil
         if remember {
             model.prefs.importLocation = mode == .reference ? .reference : .copy
         }
+        advanceBatchPrompt()
         return enqueue(prompt.urls.map { BatchEntry(url: $0, mode: mode) }, model: model)
     }
 
     func cancelBatch() {
-        batchPrompt = nil
+        advanceBatchPrompt()
     }
 
     @discardableResult
@@ -87,13 +89,23 @@ final class ImportQueue {
 
     private func advance() { current = waiting.isEmpty ? nil : waiting.removeFirst() }
 
+    private func advanceBatchPrompt() {
+        batchPrompt = waitingPrompts.isEmpty ? nil : waitingPrompts.removeFirst()
+    }
+
     private func runBatch(model: AppModel) async {
         let importer = model.importer
         let library = model.store.library
         let hook = itemHook
         var firstID: UUID?
+        var selectedFirst = false
+        var dirtyCount = 0
+        var lastReload = ContinuousClock.now
         var failures: [String] = []
         var index = 0
+
+        model.store.isWatcherSuppressed = true
+        defer { model.store.isWatcherSuppressed = false }
 
         while index < batchEntries.count {
             let entry = batchEntries[index]
@@ -109,10 +121,17 @@ final class ImportQueue {
                         prepared, mode: mode, title: prepared.suggestedTitle, executable: executable, into: library
                     )
                 }.value
-                await model.store.reload()
-                if firstID == nil {
-                    firstID = record.id
-                    model.selection = record.id
+                if firstID == nil { firstID = record.id }
+                dirtyCount += 1
+                let now = ContinuousClock.now
+                if dirtyCount >= 10 || now - lastReload >= .seconds(1) {
+                    await model.store.reload()
+                    dirtyCount = 0
+                    lastReload = ContinuousClock.now
+                    if !selectedFirst, let firstID {
+                        model.selection = firstID
+                        selectedFirst = true
+                    }
                 }
             } catch {
                 failures.append("\(entry.url.lastPathComponent): \(importErrorMessage(error))")
@@ -120,6 +139,9 @@ final class ImportQueue {
             index += 1
         }
 
+        if dirtyCount > 0 {
+            await model.store.reload()
+        }
         batchEntries.removeAll()
         batchTask = nil
         progress = nil

@@ -50,6 +50,26 @@ struct LibraryView: View {
                 .navigationSplitViewColumnWidth(min: 160, ideal: 200)
         } detail: {
             content
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if let progress = model.imports.progress {
+                        VStack(spacing: 0) {
+                            Divider()
+                            HStack(spacing: 10) {
+                                ProgressView(value: Double(progress.current), total: Double(max(progress.total, 1)))
+                                    .progressViewStyle(.linear)
+                                    .frame(maxWidth: 180)
+                                Text(progress.label)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(.bar)
+                        }
+                    }
+                }
                 .navigationTitle("DOSCrate")
                 .searchable(text: $model.query.search)
                 .toolbar { toolbar }
@@ -92,9 +112,10 @@ struct LibraryView: View {
                 .id(item.id)
                 .interactiveDismissDisabled()
         }
-        .sheet(item: Binding(get: { model.imports.batchPrompt }, set: { if $0 == nil { model.imports.cancelBatch() } })) { prompt in
+        .sheet(item: Binding(get: { model.imports.batchPrompt }, set: { _ in })) { prompt in
             BatchImportSheet(model: model, prompt: prompt)
                 .id(prompt.id)
+                .interactiveDismissDisabled()
         }
         .sheet(item: $model.chooseProgram) { request in
             ChooseProgramSheet(model: model, request: request)
@@ -126,17 +147,6 @@ struct LibraryView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        if let progress = model.imports.progress {
-            ToolbarItem {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text(progress.label)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-        }
         ToolbarItem {
             Picker("View", selection: $showsGrid) {
                 Label("Grid", systemImage: "square.grid.2x2").tag(true)

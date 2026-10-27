@@ -334,4 +334,62 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         let duke = try #require(model.store.records.first { $0.game.title == "Duke" })
         if case .referenced = duke.game.source {} else { Issue.record("Expected Duke to be referenced") }
     }
+
+    @Test func batchOf25ItemsThrottlesReloadsAndSelectsFirstGame() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .copy)
+        model.store.startWatching()
+        defer { model.store.stopWatching() }
+
+        var reloadCount = 0
+        model.store.onReload = { reloadCount += 1 }
+
+        var urls: [URL] = []
+        for i in 1...25 {
+            let name = String(format: "game%02d", i)
+            let dir = root.appending(path: name, directoryHint: .isDirectory)
+            try touchFile(dir, "G\(i).EXE")
+            urls.append(dir)
+        }
+
+        let queue = ImportQueue()
+        await queue.add(urls, model: model)?.value
+
+        #expect(reloadCount <= 5)
+        #expect(model.store.records.count == 25)
+        let first = try #require(model.store.records.first { $0.game.title == "Game01" })
+        #expect(model.selection == first.id)
+    }
+
+    @Test func multipleAskBatchesQueuePromptsAndPreserveOthersOnConfirmOrCancel() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .ask)
+        let queue = ImportQueue()
+
+        let a = root.appending(path: "a", directoryHint: .isDirectory); try touchFile(a, "A.EXE")
+        let b = root.appending(path: "b", directoryHint: .isDirectory); try touchFile(b, "B.EXE")
+        let c = root.appending(path: "c", directoryHint: .isDirectory); try touchFile(c, "C.EXE")
+        let d = root.appending(path: "d", directoryHint: .isDirectory); try touchFile(d, "D.EXE")
+        let e = root.appending(path: "e", directoryHint: .isDirectory); try touchFile(e, "E.EXE")
+        let f = root.appending(path: "f", directoryHint: .isDirectory); try touchFile(f, "F.EXE")
+
+        queue.add([a, b], model: model)
+        queue.add([c, d], model: model)
+        queue.add([e, f], model: model)
+        #expect(queue.batchPrompt?.urls == [a, b])
+
+        let t1 = queue.confirmBatch(mode: .copy, model: model)
+        #expect(queue.batchPrompt?.urls == [c, d])
+
+        queue.cancelBatch()
+        #expect(queue.batchPrompt?.urls == [e, f])
+
+        let t3 = queue.confirmBatch(mode: .reference, model: model)
+        #expect(queue.batchPrompt == nil)
+
+        await t1?.value
+        await t3?.value
+
+        #expect(model.store.records.map(\.game.title) == ["A", "B", "E", "F"])
+    }
 }

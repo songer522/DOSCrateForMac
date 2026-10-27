@@ -6,6 +6,17 @@ import Observation
 public final class LibraryStore {
     public private(set) var records: [GameRecord] = []
     public var library: URL
+    /// Test hook called at the start of every `reload()`.
+    @ObservationIgnored public var onReload: (@MainActor () -> Void)?
+    /// While true, file-watcher events are ignored so a running batch import controls reload timing.
+    @ObservationIgnored public var isWatcherSuppressed = false {
+        didSet {
+            if isWatcherSuppressed {
+                debounce?.cancel()
+                debounce = nil
+            }
+        }
+    }
 
     @ObservationIgnored private let io: CrateIO
     @ObservationIgnored private let scan: @Sendable (URL) async -> [GameRecord]
@@ -26,6 +37,7 @@ public final class LibraryStore {
     }
 
     public func reload() async {
+        onReload?()
         generation += 1
         let started = generation
         let scanned = await scan(library)
@@ -100,11 +112,12 @@ public final class LibraryStore {
     }
 
     private func scheduleReload() {
+        guard !isWatcherSuppressed else { return }
         debounce?.cancel()
         debounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            await self?.reload()
+            guard !Task.isCancelled, let self, !self.isWatcherSuppressed else { return }
+            await self.reload()
         }
     }
 }
