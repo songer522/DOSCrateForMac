@@ -34,6 +34,7 @@ struct LibraryView: View {
     @Bindable var model: AppModel
     @AppStorage("libraryShowsGrid") private var showsGrid = true
     @State private var removing: UUID?
+    @State private var showsInspector = true
 
     private var records: [GameRecord] {
         model.query.apply(to: model.store.records, now: Date())
@@ -48,12 +49,15 @@ struct LibraryView: View {
                 .navigationTitle("DOSCrate")
                 .searchable(text: $model.query.search)
                 .toolbar { toolbar }
-                // The detail inspector (GameDetailView) arrives in Task 12.
-                .inspector(isPresented: .constant(model.selection != nil)) {
-                    if let record = model.selection.flatMap(model.store.record) {
-                        Text(record.game.title).font(.title2).padding()
-                            .inspectorColumnWidth(min: 260, ideal: 320, max: 480)
+                .inspector(isPresented: $showsInspector) {
+                    Group {
+                        if let record = model.selection.flatMap(model.store.record) {
+                            GameDetailView(model: model, record: record).id(record.id)
+                        } else {
+                            ContentUnavailableView("No Game Selected", systemImage: "gamecontroller")
+                        }
                     }
+                    .inspectorColumnWidth(min: 300, ideal: 360, max: 520)
                 }
         }
         .confirmationDialog("Remove this game?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
@@ -106,6 +110,9 @@ struct LibraryView: View {
                 sortButton("Last Played", .lastPlayed)
                 sortButton("Play Time", .playTime)
             }
+        }
+        ToolbarItem {
+            Button("Details", systemImage: "sidebar.trailing") { showsInspector.toggle() }
         }
         ToolbarItem {
             // Wired to the import sheet in Task 13.
