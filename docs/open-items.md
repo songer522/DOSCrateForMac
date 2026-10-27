@@ -32,10 +32,10 @@ From the final review, deferred as non-blocking:
 
 ## Deferred minors (low priority)
 
-- **Library:** lenient reload/watch edge cases, `cDriveURL` accepts `..`, unused `LibraryError.crateExists`, `LibraryStore.library` has no `didSet`, `FolderWatcher` is `@unchecked Sendable`; stale-bookmark refresh and `isDirectory` filter untested.
+- **Library:** `cDriveURL` accepts `..`, unused `LibraryError.crateExists`, `LibraryStore.library` has no `didSet`, `FolderWatcher` is `@unchecked Sendable`; stale-bookmark refresh and `isDirectory` filter untested.
 - **Sorting/filtering:** tag filter is case-sensitive; `titleKey` strips only an exact "The "; 30-day boundary, tie-break and filter+search combination untested.
 - **Config:** `ConfigDocument.set` is case-sensitive on keys; global raw `[autoexec]` lines run before the generated `mount c`; empty DOS path components are dropped silently.
 - **Importer:** no unzip size limit or cancel; `copyItem` blocks a cooperative thread; exists-check/move race throws instead of retrying; directory attributes and xattrs are lost on copy; backslash-to-slash in cue `FILE` names; symlinks dropped silently; case-only bin name variants on case-insensitive APFS; short-title reverse-prefix match is loose.
 - **Launch:** duplicated `DOSPathError`-to-`LaunchError` mapping in Preflight and LaunchPlanner; some Preflight branches untested; `isSame` uses `as AnyObject`; the escalation task is never cancelled and doubles on repeated stop; `SessionResult` lacks a public init; per-start `DateFormatter`; test temp dirs leak.
-- **UI:** the new game may be hidden by the active filter or search; ranking task reruns per keystroke; an external change during a pending save is lost (narrow); inspector `isPresented` was left `.constant` in places; sidebar rename partial failure still switches the filter; cover mtime is read in `body` each render.
-- **Build:** the Makefile warning gate only checks `xcodebuild` output, not `swift test` library targets (the Makefile greps both logs now, but the library targets are not warnings-as-errors); `make test` does not depend on `generate`; the checksum-mismatch path of `fetch-staging.sh` is untested.
+- **UI:** the new game may be hidden by the active filter or search; ranking task reruns per keystroke; an external change during a pending save is lost (narrow); sidebar rename partial failure still switches the filter; cover mtime is read in `body` each render.
+- **Build:** the Makefile warning gate only checks `xcodebuild` output, not `swift test` library targets; `make test` does not depend on `generate`; the checksum-mismatch path of `fetch-staging.sh` is untested.
