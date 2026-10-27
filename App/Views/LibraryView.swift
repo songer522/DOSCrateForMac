@@ -82,8 +82,9 @@ struct LibraryView: View {
                       allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { imports.add(urls) }
         }
-        .sheet(item: Binding(get: { imports.current }, set: { if $0 == nil { imports.finishCurrent() } })) { item in
+        .sheet(item: Binding(get: { imports.current }, set: { _ in })) { item in
             ImportSheet(model: model, url: item.url) { imports.finishCurrent() }
+                .id(item.id)
                 .interactiveDismissDisabled()
         }
         .onChange(of: model.pendingFix) { _, pending in

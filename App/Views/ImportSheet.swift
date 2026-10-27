@@ -73,7 +73,9 @@ struct ImportSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
+                Button("Cancel", role: .cancel, action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isCreating)
                 Button("Create", action: create)
                     .keyboardShortcut(.defaultAction)
                     .disabled(prepared == nil || isCreating || title.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -153,6 +155,7 @@ struct ImportSheet: View {
     }
 
     private func cancel() {
+        guard !isCreating else { return }
         if let prepared { model.importer.discard(prepared) }
         onFinish()
     }
