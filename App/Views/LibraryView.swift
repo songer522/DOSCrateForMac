@@ -52,21 +52,16 @@ struct LibraryView: View {
             content
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     if let progress = model.imports.progress {
-                        VStack(spacing: 0) {
-                            Divider()
-                            HStack(spacing: 10) {
-                                ProgressView(value: Double(progress.current), total: Double(max(progress.total, 1)))
-                                    .progressViewStyle(.linear)
-                                    .frame(maxWidth: 180)
-                                Text(progress.label)
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                Spacer()
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(.bar)
+                        statusBar {
+                            ProgressView(value: Double(progress.current), total: Double(max(progress.total, 1)))
+                                .progressViewStyle(.linear)
+                                .frame(maxWidth: 180)
+                            Text(progress.label)
+                        }
+                    } else if model.isScanningLibrary {
+                        statusBar {
+                            ProgressView().controlSize(.small)
+                            Text("Looking for games…")
                         }
                     }
                 }
@@ -125,6 +120,22 @@ struct LibraryView: View {
             guard let pending else { return }
             model.pendingFix = nil
             handle(pending)
+        }
+    }
+
+    private func statusBar(@ViewBuilder _ items: () -> some View) -> some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 10) {
+                items()
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.bar)
         }
     }
 

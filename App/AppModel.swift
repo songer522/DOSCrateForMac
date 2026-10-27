@@ -51,6 +51,8 @@ final class AppModel {
     var pendingFix: PendingFix?
     var chooseProgram: ChooseProgramRequest?
     private(set) var needsLibrarySetup: Bool
+    /// True while the first-run scan looks for games, before the batch import (and its progress) starts.
+    private(set) var isScanningLibrary = false
 
     let prefs: Preferences
     let store: LibraryStore
@@ -98,6 +100,8 @@ final class AppModel {
         store.library = url
         needsLibrarySetup = !Self.isDirectory(url)
         guard !needsLibrarySetup else { return nil }
+        // Show the spinner right away; the reload before the scan can take a while too.
+        if shouldScan { isScanningLibrary = true }
         return Task {
             await store.reload()
             store.startWatching()
@@ -117,6 +121,7 @@ final class AppModel {
             }
         }
         let entries = await Task.detached { Self.scanExistingFolder(url, referenced: referenced) }.value
+        isScanningLibrary = false
         guard !entries.isEmpty else { return }
         await imports.enqueue(entries, model: self)?.value
     }

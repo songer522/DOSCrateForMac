@@ -465,9 +465,12 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.needsLibrarySetup)
         #expect(model.prefs.importLocation == .ask)
 
-        await model.chooseLibrary(existingLib, create: false)?.value
+        let scan = model.chooseLibrary(existingLib, create: false)
+        #expect(model.isScanningLibrary)
+        await scan?.value
 
         #expect(!model.needsLibrarySetup)
+        #expect(!model.isScanningLibrary)
         #expect(model.imports.batchPrompt == nil)
         #expect(model.imports.progress == nil)
         #expect(model.alert == nil)
