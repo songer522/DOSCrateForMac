@@ -45,7 +45,14 @@ struct ChooseProgramRequest: Identifiable, Equatable {
 @MainActor @Observable
 final class AppModel {
     var query = LibraryQuery()
-    var selection: UUID?
+    /// Selected games. The inspector and single-game actions use `selection`, set when exactly one is selected.
+    var selectedIDs: Set<UUID> = []
+    var selection: UUID? {
+        get { selectedIDs.count == 1 ? selectedIDs.first : nil }
+        set { selectedIDs = newValue.map { [$0] } ?? [] }
+    }
+    /// True while `removeGames` is trashing.
+    private(set) var isRemoving = false
     var alert: AppAlert?
     var lastResult: [UUID: SessionResult] = [:]
     var pendingFix: PendingFix?
@@ -179,6 +186,25 @@ final class AppModel {
             }
         }
         return entries
+    }
+
+    /// Moves the games' crates to the Trash, and with `trashFolders` the folders kept-in-place games point at.
+    /// Running games are skipped; one alert lists what was skipped or failed.
+    func removeGames(_ ids: Set<UUID>, trashFolders: Bool) async {
+        let running = ids.filter { sessions.running.contains($0) }
+        isRemoving = true
+        let failures = await store.remove(Array(ids.subtracting(running)), trashFiles: trashFolders)
+        isRemoving = false
+        selectedIDs = selectedIDs.filter { store.record($0) != nil }
+        let skipped = running.compactMap { store.record($0)?.game.title }.sorted()
+            .map { "\($0): stop the game before removing it." }
+        let problems = skipped + failures
+        if !problems.isEmpty {
+            alert = AppAlert(
+                title: problems.count == 1 ? "Couldn't remove 1 game" : "Couldn't remove \(problems.count) games",
+                message: problems.joined(separator: "\n")
+            )
+        }
     }
 
     // MARK: Launching

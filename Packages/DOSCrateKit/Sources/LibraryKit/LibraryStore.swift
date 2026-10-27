@@ -77,6 +77,35 @@ public final class LibraryStore {
         records.removeAll { $0.id == id }
     }
 
+    /// Removes several games, trashing off the main actor. Returns a "Title: reason" line for each failure;
+    /// a game whose folder can't be trashed keeps its crate.
+    public func remove(_ ids: [UUID], trashFiles: Bool) async -> [String] {
+        let targets = ids.compactMap(record)
+        guard !targets.isEmpty else { return [] }
+        generation += 1
+        let io = self.io
+        let (removed, failures) = await Task.detached { () -> (Set<UUID>, [String]) in
+            let fm = FileManager.default
+            var removed = Set<UUID>()
+            var failures: [String] = []
+            for record in targets {
+                do {
+                    if trashFiles, let folder = try? io.referencedFolderURL(for: record) {
+                        try fm.trashItem(at: folder, resultingItemURL: nil)
+                    }
+                    try fm.trashItem(at: record.crateURL, resultingItemURL: nil)
+                    removed.insert(record.id)
+                } catch {
+                    failures.append("\(record.game.title): \(error.localizedDescription)")
+                }
+            }
+            return (removed, failures)
+        }.value
+        generation += 1
+        records.removeAll { removed.contains($0.id) }
+        return failures
+    }
+
     public func startWatching() {
         stopWatching()
         let library = self.library

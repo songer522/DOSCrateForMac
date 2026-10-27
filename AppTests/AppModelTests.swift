@@ -107,6 +107,45 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.store.record(id)?.game.stats.launchCount == 1)
     }
 
+    @Test func removeGamesSkipsRunningGameAndUpdatesSelection() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        let other = try io.makeCrate(title: "Other", in: model.store.library)
+        let otherGame = Game(title: "Other", source: .managed)
+        try io.save(otherGame, extra: [:], to: other)
+        await model.store.reload()
+
+        model.play(id)
+        #expect(model.sessions.running.contains(id))
+        model.selectedIDs = [id, otherGame.id]
+        #expect(model.selection == nil)
+
+        await model.removeGames([id, otherGame.id], trashFolders: false)
+
+        #expect(model.store.records.map(\.id) == [id])
+        #expect(model.selectedIDs == [id])
+        #expect(model.selection == id)
+        #expect(model.alert?.title == "Couldn't remove 1 game")
+        #expect(model.alert?.message.contains("Test Game") == true)
+        #expect(!model.isRemoving)
+        runner.processes[0].finish(0)
+        await waitUntil { !model.sessions.running.contains(id) }
+    }
+
+    @Test func batchRemovalMessageDescribesEachKind() {
+        let copied = GameRecord(game: Game(title: "A", source: .managed), crateURL: URL(filePath: "/tmp/A.doscrate"))
+        let kept = GameRecord(game: Game(title: "B", source: .referenced(path: "/tmp/B", bookmark: Data())),
+                              crateURL: URL(filePath: "/tmp/B.doscrate"))
+        let running = GameRecord(game: Game(title: "C", source: .managed), crateURL: URL(filePath: "/tmp/C.doscrate"))
+        let message = LibraryView.removalMessage(for: [copied, kept, running], running: [running.id])
+        #expect(message == "1 game copied into the library will be moved to the Trash with its files. "
+            + "1 game kept in place will be removed from the library. Its folder stays where it is, "
+            + "unless you also move it to the Trash. 1 game still running will be skipped.")
+        let two = LibraryView.removalMessage(for: [kept, kept], running: [])
+        #expect(two == "2 games kept in place will be removed from the library. Their folders stay where they are, "
+            + "unless you also move them to the Trash.")
+    }
+
     @Test func playRunsPendingWriteBeforeLaunchingOnce() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])

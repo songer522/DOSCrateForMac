@@ -146,6 +146,35 @@ struct LibraryStoreTests {
         #expect(!FileManager.default.fileExists(atPath: source.path))
     }
 
+    @Test func removeSeveralKeepsReferencedFoldersUnlessAskedAndReportsFailures() async throws {
+        let (lib, _) = try makeLibrary(titles: ["Keen", "Doom"])
+        let (refCrate, source) = try makeReferenced(in: lib)
+        let (refCrate2, source2) = try makeReferenced(in: lib)
+        defer {
+            for url in [lib, source, source2] { try? FileManager.default.removeItem(at: url) }
+        }
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        let keen = try #require(store.records.first { $0.game.title == "Keen" })
+        let refs = store.records.filter { if case .referenced = $0.game.source { true } else { false } }
+        #expect(refs.count == 2)
+        let ref1 = try #require(refs.first { $0.crateURL.standardizedFileURL == refCrate.standardizedFileURL })
+        let ref2 = try #require(refs.first { $0.crateURL.standardizedFileURL == refCrate2.standardizedFileURL })
+
+        // Without trashFiles: crates go, the referenced folder stays; an unknown id is ignored.
+        let failures = await store.remove([keen.id, ref1.id, UUID()], trashFiles: false)
+        #expect(failures.isEmpty)
+        #expect(store.records.map(\.game.title).sorted() == ["Doom", "Ref"])
+        #expect(!FileManager.default.fileExists(atPath: refCrate.path))
+        #expect(FileManager.default.fileExists(atPath: source.appending(path: "GAME.EXE").path))
+
+        // With trashFiles the referenced folder goes too.
+        let more = await store.remove([ref2.id], trashFiles: true)
+        #expect(more.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: source2.path))
+        #expect(store.records.map(\.game.title) == ["Doom"])
+    }
+
     @Test func scanStartedBeforeASaveCannotOverwriteIt() async throws {
         let (lib, _) = try makeLibrary(titles: ["Keen"])
         defer { try? FileManager.default.removeItem(at: lib) }
