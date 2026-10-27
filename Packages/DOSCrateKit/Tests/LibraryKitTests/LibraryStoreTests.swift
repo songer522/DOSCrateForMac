@@ -162,8 +162,13 @@ struct LibraryStoreTests {
         let ref2 = try #require(refs.first { $0.crateURL.standardizedFileURL == refCrate2.standardizedFileURL })
 
         // Without trashFiles: crates go, the referenced folder stays; an unknown id is ignored.
-        let failures = await store.remove([keen.id, ref1.id, UUID()], trashFiles: false)
+        var steps: [String] = []
+        let failures = await store.remove([keen.id, ref1.id, UUID()], trashFiles: false) { done, total in
+            steps.append("\(done)/\(total)")
+        }
         #expect(failures.isEmpty)
+        #expect(steps == ["2/2"])
+        #expect(!store.isWatcherSuppressed)
         #expect(store.records.map(\.game.title).sorted() == ["Doom", "Ref"])
         #expect(!FileManager.default.fileExists(atPath: refCrate.path))
         #expect(FileManager.default.fileExists(atPath: source.appending(path: "GAME.EXE").path))

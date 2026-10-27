@@ -51,8 +51,9 @@ final class AppModel {
         get { selectedIDs.count == 1 ? selectedIDs.first : nil }
         set { selectedIDs = newValue.map { [$0] } ?? [] }
     }
-    /// True while `removeGames` is trashing.
-    private(set) var isRemoving = false
+    /// (done, total) while `removeGames` is trashing.
+    private(set) var removalProgress: (done: Int, total: Int)?
+    var isRemoving: Bool { removalProgress != nil }
     var alert: AppAlert?
     var lastResult: [UUID: SessionResult] = [:]
     var pendingFix: PendingFix?
@@ -192,9 +193,12 @@ final class AppModel {
     /// Running games are skipped; one alert lists what was skipped or failed.
     func removeGames(_ ids: Set<UUID>, trashFolders: Bool) async {
         let running = ids.filter { sessions.running.contains($0) }
-        isRemoving = true
-        let failures = await store.remove(Array(ids.subtracting(running)), trashFiles: trashFolders)
-        isRemoving = false
+        let targets = Array(ids.subtracting(running))
+        removalProgress = (0, targets.count)
+        let failures = await store.remove(targets, trashFiles: trashFolders) { [weak self] done, total in
+            self?.removalProgress = (done, total)
+        }
+        removalProgress = nil
         selectedIDs = selectedIDs.filter { store.record($0) != nil }
         let skipped = running.compactMap { store.record($0)?.game.title }.sorted()
             .map { "\($0): stop the game before removing it." }

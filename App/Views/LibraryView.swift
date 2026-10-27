@@ -71,6 +71,13 @@ struct LibraryView: View {
                             ProgressView().controlSize(.small)
                             Text("Checking for duplicates…")
                         }
+                    } else if let removal = model.removalProgress {
+                        statusBar(cancellable: false) {
+                            ProgressView(value: Double(removal.done), total: Double(max(removal.total, 1)))
+                                .progressViewStyle(.linear)
+                                .frame(maxWidth: 180)
+                            Text("Removing \(removal.done) of \(removal.total)…")
+                        }
                     }
                 }
                 .navigationTitle("DOSCrate")
@@ -148,7 +155,7 @@ struct LibraryView: View {
         }
     }
 
-    private func statusBar(@ViewBuilder _ items: () -> some View) -> some View {
+    private func statusBar(cancellable: Bool = true, @ViewBuilder _ items: () -> some View) -> some View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 10) {
@@ -157,8 +164,10 @@ struct LibraryView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 Spacer()
-                Button("Cancel") { model.cancelImport() }
-                    .controlSize(.small)
+                if cancellable {
+                    Button("Cancel") { model.cancelImport() }
+                        .controlSize(.small)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

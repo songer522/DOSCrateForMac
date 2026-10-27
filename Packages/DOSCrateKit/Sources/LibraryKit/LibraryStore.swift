@@ -77,32 +77,47 @@ public final class LibraryStore {
         records.removeAll { $0.id == id }
     }
 
-    /// Removes several games, trashing off the main actor. Returns a "Title: reason" line for each failure;
+    /// Removes several games, trashing off the main actor in small chunks so the library shrinks as it goes.
+    /// `onProgress` gets (done, total) after each chunk. Returns a "Title: reason" line for each failure;
     /// a game whose folder can't be trashed keeps its crate.
-    public func remove(_ ids: [UUID], trashFiles: Bool) async -> [String] {
+    public func remove(
+        _ ids: [UUID], trashFiles: Bool, onProgress: (@MainActor (Int, Int) -> Void)? = nil
+    ) async -> [String] {
         let targets = ids.compactMap(record)
         guard !targets.isEmpty else { return [] }
-        generation += 1
+        // Each trashed crate would otherwise trigger a full rescan of the library.
+        let wasSuppressed = isWatcherSuppressed
+        isWatcherSuppressed = true
+        defer { isWatcherSuppressed = wasSuppressed }
         let io = self.io
-        let (removed, failures) = await Task.detached { () -> (Set<UUID>, [String]) in
-            let fm = FileManager.default
-            var removed = Set<UUID>()
-            var failures: [String] = []
-            for record in targets {
-                do {
-                    if trashFiles, let folder = try? io.referencedFolderURL(for: record) {
-                        try fm.trashItem(at: folder, resultingItemURL: nil)
+        var failures: [String] = []
+        var done = 0
+        for start in stride(from: 0, to: targets.count, by: 20) {
+            let chunk = Array(targets[start..<min(start + 20, targets.count)])
+            generation += 1
+            let (removed, chunkFailures) = await Task.detached { () -> (Set<UUID>, [String]) in
+                let fm = FileManager.default
+                var removed = Set<UUID>()
+                var failures: [String] = []
+                for record in chunk {
+                    do {
+                        if trashFiles, let folder = try? io.referencedFolderURL(for: record) {
+                            try fm.trashItem(at: folder, resultingItemURL: nil)
+                        }
+                        try fm.trashItem(at: record.crateURL, resultingItemURL: nil)
+                        removed.insert(record.id)
+                    } catch {
+                        failures.append("\(record.game.title): \(error.localizedDescription)")
                     }
-                    try fm.trashItem(at: record.crateURL, resultingItemURL: nil)
-                    removed.insert(record.id)
-                } catch {
-                    failures.append("\(record.game.title): \(error.localizedDescription)")
                 }
-            }
-            return (removed, failures)
-        }.value
-        generation += 1
-        records.removeAll { removed.contains($0.id) }
+                return (removed, failures)
+            }.value
+            generation += 1
+            records.removeAll { removed.contains($0.id) }
+            failures += chunkFailures
+            done += chunk.count
+            onProgress?(done, targets.count)
+        }
         return failures
     }
 
