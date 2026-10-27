@@ -21,9 +21,8 @@ struct DOSCrateApp: App {
                 if model.needsLibrarySetup {
                     FirstRunView(model: model)
                 } else {
-                    // Replaced by LibraryView in Task 11.
-                    Text("DOSCrate")
-                        .frame(minWidth: 400, minHeight: 300)
+                    LibraryView(model: model)
+                        .frame(minWidth: 700, minHeight: 450)
                 }
             }
             .task {
