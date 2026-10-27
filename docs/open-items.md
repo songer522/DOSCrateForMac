@@ -29,6 +29,12 @@ From the PR #4 review (duplicate handling), deferred:
 - A game can be launched while a batch is replacing it. The "already running" check happens before the copy starts, so Play during a long copy lets `Importer.replace` swap the files under the running game. Fix: track the IDs being replaced in `ImportQueue` and refuse Play for them until the replace finishes.
 - Replacing a kept-in-place game with another kept-in-place folder doesn't carry its saves into the new folder, because DOSCrate never writes into a kept-in-place folder. The old folder still has them.
 
+From PR #5 (multi-select and batch remove):
+
+- Grid ⌘-click, ⇧-click and ⌘A are covered by no automated test; only the removal logic is. ⌘A in the grid works only once the grid has focus, after a click on a game.
+- Clicking empty space in the grid doesn't clear the selection.
+- Batch removal can't be cancelled once it starts.
+
 ## Deviations from the spec
 
 - Broken `game.json` files are renamed `game.json.<timestamp>.broken`, not `game.json.broken`, so an earlier one is never overwritten. A `game.json` with `schemaVersion > 1`, or with values this version can't decode, is opened read-only and never renamed or rewritten.
