@@ -10,7 +10,9 @@ struct AdvancedTab: View {
     let game: Game
 
     @State private var text = ""
+    @State private var loadedText = ""
     @State private var loaded = false
+    @State private var unreadable = false
     @State private var writeTask: Task<Void, Never>?
 
     private let io = CrateIO()
@@ -21,6 +23,11 @@ struct AdvancedTab: View {
                 TextEditor(text: $text)
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 140)
+                    .disabled(unreadable)
+                if unreadable {
+                    Text("override.conf isn't valid UTF-8 text, so it can't be edited here.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Link("DOSBox Staging documentation", destination: URL(string: "https://dosbox-staging.github.io/")!)
             }
             Section("Generated config") {
@@ -33,7 +40,14 @@ struct AdvancedTab: View {
         .formStyle(.grouped)
         .task {
             let url = io.overrideURL(record.crateURL)
-            text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            if FileManager.default.fileExists(atPath: url.path) {
+                if let existing = try? String(contentsOf: url, encoding: .utf8) {
+                    text = existing
+                } else {
+                    unreadable = true
+                }
+            }
+            loadedText = text
             loaded = true
         }
         .onChange(of: text) { _, _ in if loaded { scheduleWrite() } }
@@ -57,6 +71,7 @@ struct AdvancedTab: View {
 
     private func write() {
         writeTask = nil
+        guard !unreadable, text != loadedText else { return }
         let url = io.overrideURL(record.crateURL)
         do {
             if text.isEmpty {
@@ -64,6 +79,7 @@ struct AdvancedTab: View {
             } else {
                 try Data(text.utf8).write(to: url, options: .atomic)
             }
+            loadedText = text
         } catch {
             model.alert = AppAlert(title: "Can't save override.conf", message: error.localizedDescription)
         }

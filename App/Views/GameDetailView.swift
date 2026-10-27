@@ -16,6 +16,8 @@ struct GameDetailView: View {
 
     @State private var draft: Game
     @State private var saveTask: Task<Void, Never>?
+    /// Media files whose entries were removed; trashed only once the removal is saved.
+    @State private var removedMedia: [String] = []
     @State private var tab = Tab.info
 
     init(model: AppModel, record: GameRecord) {
@@ -36,14 +38,14 @@ struct GameDetailView: View {
             .padding(.horizontal)
             switch tab {
             case .info: InfoTab(game: $draft)
-            case .settings: SettingsTab(record: record, game: $draft, onError: showError)
+            case .settings: SettingsTab(record: record, game: $draft, onError: showError) { removedMedia.append($0.relativePath) }
             case .advanced: AdvancedTab(model: model, record: record, game: draft)
             }
         }
         .onChange(of: draft) { _, _ in scheduleSave() }
         .onChange(of: record.game) { _, new in
             // Pick up changes made elsewhere (fixes, play stats) unless an edit is waiting to be saved.
-            if saveTask == nil, draft != new { draft = new }
+            if saveTask == nil, Self.shouldAdopt(stored: new, over: draft) { draft = new }
         }
         .onDisappear { if saveTask != nil { flush() } }
     }
@@ -53,7 +55,8 @@ struct GameDetailView: View {
     }
 
     private func scheduleSave() {
-        guard let current = model.store.record(draft.id)?.game, Self.merged(draft, into: current) != current else { return }
+        guard let current = model.store.record(draft.id)?.game,
+              Self.merged(draft, into: current) != current || !removedMedia.isEmpty else { return }
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(for: .milliseconds(500))
@@ -66,12 +69,33 @@ struct GameDetailView: View {
         saveTask = nil
         guard let current = model.store.record(draft.id)?.game else { return }
         let game = Self.merged(draft, into: current)
-        guard game != current else { return }
-        do {
-            try model.store.save(game)
-        } catch {
-            showError("Can't save \(game.title)", error.localizedDescription)
+        if game != current {
+            do {
+                try model.store.save(game)
+            } catch {
+                showError("Can't save \(game.title)", error.localizedDescription)
+                return
+            }
         }
+        trashRemovedMedia(keeping: game.media)
+    }
+
+    private func trashRemovedMedia(keeping media: [MediaImage]) {
+        let paths = removedMedia
+        removedMedia = []
+        for path in paths where !media.contains(where: { $0.relativePath == path }) {
+            do {
+                try FileManager.default.trashItem(at: record.crateURL.appending(path: path), resultingItemURL: nil)
+            } catch {
+                showError("Can't move \((path as NSString).lastPathComponent) to the Trash", error.localizedDescription)
+            }
+        }
+    }
+
+    /// Whether a stored game that differs from the draft should replace it. Differences the save itself
+    /// causes (a trimmed title) must not, or they would undo what the user is typing.
+    static func shouldAdopt(stored: Game, over draft: Game) -> Bool {
+        draft != stored && merged(draft, into: stored) != stored
     }
 
     /// The editable fields of `draft` laid over the stored game, so play stats, favorite and source are never overwritten.

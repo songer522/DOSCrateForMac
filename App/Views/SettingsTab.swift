@@ -86,7 +86,14 @@ struct PresetSection: View {
 
 struct CPUSection: View {
     @Binding var settings: GameSettings
-    @State private var lastFixed = 3000
+    @State private var lastFixed: Int
+
+    init(settings: Binding<GameSettings>) {
+        self._settings = settings
+        var seed = 3000
+        if case .fixed(let n) = settings.wrappedValue.cycles { seed = n }
+        self._lastFixed = State(initialValue: seed)
+    }
 
     private var mode: Binding<CyclesMode> {
         Binding(get: { CyclesMode(settings.cycles) },
@@ -175,10 +182,12 @@ struct DrivesSection: View {
     let record: GameRecord
     @Binding var game: Game
     var onError: (String, String) -> Void
+    /// Called when an entry is removed; its file is trashed by the owner once the change is saved.
+    var onRemoved: (MediaImage) -> Void
 
     var body: some View {
         Section("Drives") {
-            ForEach(Array(game.media.enumerated()), id: \.offset) { index, image in
+            ForEach(Array(game.media.enumerated()), id: \.element.relativePath) { index, image in
                 HStack {
                     Image(systemName: image.kind == .cdrom ? "opticaldisc" : "externaldrive")
                     Text((image.relativePath as NSString).lastPathComponent).lineLimit(1).truncationMode(.middle)
@@ -202,29 +211,34 @@ struct DrivesSection: View {
         panel.allowedContentTypes = ["iso", "img", "ima"].compactMap { UTType(filenameExtension: $0) }
         panel.prompt = "Add"
         guard panel.runModal() == .OK, let source = panel.url else { return }
-        let fm = FileManager.default
         let media = record.crateURL.appending(path: "media", directoryHint: .isDirectory)
-        do {
-            try fm.createDirectory(at: media, withIntermediateDirectories: true)
-            var name = source.lastPathComponent
-            var n = 2
-            while fm.fileExists(atPath: media.appending(path: name).path) {
-                name = source.deletingPathExtension().lastPathComponent + " \(n)." + source.pathExtension
-                n += 1
+        Task {
+            do {
+                let name = try await Task.detached { try Self.copy(source, into: media) }.value
+                let kind: MediaKind = source.pathExtension.lowercased() == "iso" ? .cdrom : .floppy
+                game.media.append(MediaImage(relativePath: "media/" + name, kind: kind))
+            } catch {
+                onError("Can't add \(source.lastPathComponent)", error.localizedDescription)
             }
-            try fm.copyItem(at: source, to: media.appending(path: name))
-            let kind: MediaKind = source.pathExtension.lowercased() == "iso" ? .cdrom : .floppy
-            game.media.append(MediaImage(relativePath: "media/" + name, kind: kind))
-        } catch {
-            onError("Can't add \(source.lastPathComponent)", error.localizedDescription)
         }
     }
 
-    private func remove(at index: Int) {
-        let image = game.media.remove(at: index)
-        if !game.media.contains(where: { $0.relativePath == image.relativePath }) {
-            try? FileManager.default.trashItem(at: record.crateURL.appending(path: image.relativePath), resultingItemURL: nil)
+    /// Copies into `media`, choosing an unused name; returns the name used.
+    private nonisolated static func copy(_ source: URL, into media: URL) throws -> String {
+        let fm = FileManager.default
+        try fm.createDirectory(at: media, withIntermediateDirectories: true)
+        var name = source.lastPathComponent
+        var n = 2
+        while fm.fileExists(atPath: media.appending(path: name).path) {
+            name = source.deletingPathExtension().lastPathComponent + " \(n)." + source.pathExtension
+            n += 1
         }
+        try fm.copyItem(at: source, to: media.appending(path: name))
+        return name
+    }
+
+    private func remove(at index: Int) {
+        onRemoved(game.media.remove(at: index))
     }
 }
 
@@ -305,11 +319,12 @@ struct SettingsTab: View {
     let record: GameRecord
     @Binding var game: Game
     var onError: (String, String) -> Void
+    var onRemovedMedia: (MediaImage) -> Void
 
     var body: some View {
         Form {
             CuratedSettingsSections(settings: $game.settings)
-            DrivesSection(record: record, game: $game, onError: onError)
+            DrivesSection(record: record, game: $game, onError: onError, onRemoved: onRemovedMedia)
             StartupSection(record: record, game: $game)
         }
         .formStyle(.grouped)

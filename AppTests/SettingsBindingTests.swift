@@ -42,3 +42,21 @@ struct SettingsBindingTests {
         #expect(CyclesMode.fixed.cycles(fixed: 50) == .fixed(100))
     }
 }
+
+@MainActor
+struct DetailDraftTests {
+    @Test func trimmedStoredTitleDoesNotOverwriteTypingDraft() {
+        let stored = Game(title: "Lost", source: .managed)
+        var draft = stored
+        draft.title = "Lost "
+        #expect(GameDetailView.merged(draft, into: stored) == stored)
+        #expect(!GameDetailView.shouldAdopt(stored: stored, over: draft))
+    }
+
+    @Test func externalChangeIsAdopted() {
+        let draft = Game(title: "Lost", source: .managed)
+        var stored = draft
+        stored.launch.executable = "LOST.EXE"
+        #expect(GameDetailView.shouldAdopt(stored: stored, over: draft))
+    }
+}
