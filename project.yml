@@ -1,0 +1,69 @@
+name: DOSCrate
+options:
+  bundleIdPrefix: com.songer522
+  deploymentTarget:
+    macOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: NO
+    LM_SKIP_METADATA_EXTRACTION: YES
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+packages:
+  DOSCrateKit:
+    path: Packages/DOSCrateKit
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
+targets:
+  DOSCrate:
+    type: application
+    platform: macOS
+    sources: [App]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.songer522.DOSCrate
+        PRODUCT_NAME: DOSCrate
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/DOSCrate.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+    dependencies:
+      - package: DOSCrateKit
+        product: LibraryKit
+      - package: DOSCrateKit
+        product: ConfigKit
+      - package: DOSCrateKit
+        product: ImportKit
+      - package: DOSCrateKit
+        product: LauncherKit
+      - package: Sparkle
+        product: Sparkle
+    preBuildScripts:
+      - name: Bundle DOSBox Staging (placeholder, filled in Task 2)
+        script: "echo \"DOSBox Staging bundling not yet implemented\""
+        basedOnDependencyAnalysis: false
+  DOSCrateTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [AppTests]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.songer522.DOSCrateTests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: DOSCrate
+schemes:
+  DOSCrate:
+    build:
+      targets:
+        DOSCrate: all
+        DOSCrateTests: [test]
+    test:
+      targets: [DOSCrateTests]

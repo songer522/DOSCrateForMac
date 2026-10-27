@@ -1,0 +1,6 @@
+Vendor/
+build/
+.build/
+DOSCrate.xcodeproj/
+DerivedData/
+*.dmg
