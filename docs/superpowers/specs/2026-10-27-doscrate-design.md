@@ -163,8 +163,12 @@ cd <exe dir>
 <preCommands>
 <exe> <arguments>
 <postCommands>
-exit                                       # if exitWhenDone
 ```
+
+**Revision (2026-10-27, during planning):**
+- "Exit when done" uses the `--exit` CLI flag, not an `exit` line, so that an `[autoexec]` in `override.conf` still runs; Staging concatenates autoexec sections in order.
+- DOS-side paths must be 8.3, because Staging's shell rejects quoted long names. A non-8.3 executable path fails preflight with a "Use this folder as C:" fix, using `launch.driveCRoot`.
+- Disc and floppy images are stored in the crate's `media/` folder.
 
 **Command line:**
 
