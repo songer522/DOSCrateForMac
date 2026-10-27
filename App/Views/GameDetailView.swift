@@ -63,12 +63,8 @@ struct GameDetailView: View {
         return false
     }
 
-    /// Saves a pending edit first, so the launch uses what the inspector shows.
+    /// `model.play` runs the registered draft save first, so the launch uses what the inspector shows.
     private func play() {
-        if saveTask != nil {
-            saveTask?.cancel()
-            flush()
-        }
         model.play(record.id)
     }
 
@@ -85,10 +81,16 @@ struct GameDetailView: View {
             guard !Task.isCancelled else { return }
             flush()
         }
+        // A launch from the grid, list or context menu may come before the debounce fires.
+        model.setPendingWrite(draft.id, owner: "draft") {
+            saveTask?.cancel()
+            flush()
+        }
     }
 
     private func flush() {
         saveTask = nil
+        model.setPendingWrite(draft.id, owner: "draft", nil)
         guard let current = model.store.record(draft.id)?.game else { return }
         let game = Self.merged(draft, into: current)
         if game != current {

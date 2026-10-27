@@ -52,7 +52,7 @@ final class AppModel {
     @ObservationIgnored private let io = CrateIO()
     @ObservationIgnored private let verifyDosbox: @MainActor (URL) throws -> Void
     /// Debounced editor writes not yet on disk, keyed by game; `play` runs them first.
-    @ObservationIgnored private var pendingWrites: [UUID: @MainActor () -> Void] = [:]
+    @ObservationIgnored private var pendingWrites: [UUID: [String: @MainActor () -> Void]] = [:]
 
     init(prefs: Preferences, store: LibraryStore, sessions: SessionManager, importer: Importer, dosbox: URL,
          verifyDosbox: @escaping @MainActor (URL) throws -> Void = { try StagingLocator.verify($0) }) {
@@ -94,12 +94,16 @@ final class AppModel {
 
     // MARK: Launching
 
-    func setPendingWrite(_ id: UUID, _ write: (@MainActor () -> Void)?) {
-        pendingWrites[id] = write
+    /// Registers (or with nil clears) a write that must finish before `id` launches. Each owner
+    /// ("draft", "override", ...) has its own slot, so independent editors don't replace each other.
+    func setPendingWrite(_ id: UUID, owner: String, _ write: (@MainActor () -> Void)?) {
+        pendingWrites[id, default: [:]][owner] = write
+        if pendingWrites[id]?.isEmpty == true { pendingWrites[id] = nil }
     }
 
     func play(_ id: UUID) {
-        pendingWrites.removeValue(forKey: id)?()
+        let writes = pendingWrites.removeValue(forKey: id) ?? [:]
+        for write in writes.values { write() }
         guard let record = store.record(id) else { return }
         do {
             try verifyDosbox(dosbox)

@@ -68,7 +68,7 @@ struct AdvancedTab: View {
             write()
         }
         // Play may come before the debounce fires; let it write the text first.
-        model.setPendingWrite(record.id) { [writeTask] in
+        model.setPendingWrite(record.id, owner: "override") { [writeTask] in
             writeTask?.cancel()
             write()
         }
@@ -76,7 +76,7 @@ struct AdvancedTab: View {
 
     private func write() {
         writeTask = nil
-        model.setPendingWrite(record.id, nil)
+        model.setPendingWrite(record.id, owner: "override", nil)
         guard !unreadable, text != loadedText else { return }
         let url = io.overrideURL(record.crateURL)
         do {

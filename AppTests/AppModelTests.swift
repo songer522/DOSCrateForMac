@@ -111,7 +111,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
         var launchedBeforeWrite: [Bool] = []
-        model.setPendingWrite(id) { launchedBeforeWrite.append(!self.runner.processes.isEmpty) }
+        model.setPendingWrite(id, owner: "a") { launchedBeforeWrite.append(!self.runner.processes.isEmpty) }
         model.play(id)
         #expect(launchedBeforeWrite == [false])
         #expect(model.sessions.running.contains(id))
@@ -119,6 +119,28 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         await waitUntil { !model.sessions.running.contains(id) }
         model.play(id)
         #expect(launchedBeforeWrite == [false])
+    }
+
+    @Test func playRunsEveryOwnersPendingWriteAndSkipsClearedOnes() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        var ran: [String] = []
+        model.setPendingWrite(id, owner: "draft") { ran.append("draft") }
+        model.setPendingWrite(id, owner: "override") { ran.append("override") }
+        model.setPendingWrite(id, owner: "cleared") { ran.append("cleared") }
+        model.setPendingWrite(id, owner: "cleared", nil)
+        model.play(id)
+        #expect(Set(ran) == ["draft", "override"] && ran.count == 2)
+        #expect(model.sessions.running.contains(id))
+    }
+
+    @Test func playDoesNotRunAnotherGamesPendingWrites() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        var ran = false
+        model.setPendingWrite(UUID(), owner: "draft") { ran = true }
+        model.play(id)
+        #expect(!ran)
     }
 
     @Test func playNonDOSPathRaisesAlertWithUseFolderFix() async throws {
