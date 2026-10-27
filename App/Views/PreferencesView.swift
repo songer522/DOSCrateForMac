@@ -57,6 +57,9 @@ private struct GeneralPreferences: View {
             Picker("Default preset", selection: $prefs.defaultPreset) {
                 ForEach(Preset.allCases, id: \.self) { Text($0.displayName).tag($0) }
             }
+            Picker("When importing", selection: $prefs.importLocation) {
+                ForEach(ImportLocationPreference.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            }
         }
         .formStyle(.grouped)
     }

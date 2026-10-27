@@ -56,6 +56,7 @@ final class AppModel {
     let store: LibraryStore
     let sessions: SessionManager
     let importer: Importer
+    let imports = ImportQueue()
 
     @ObservationIgnored private let dosbox: URL
     @ObservationIgnored private let io = CrateIO()
@@ -82,23 +83,93 @@ final class AppModel {
 
     // MARK: Library
 
-    func chooseLibrary(_ url: URL, create: Bool) {
+    @discardableResult
+    func chooseLibrary(_ url: URL, create: Bool) -> Task<Void, Never>? {
+        let shouldScan = needsLibrarySetup && !create
         if create {
             do {
                 try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             } catch {
                 alert = AppAlert(title: "Can't create the library folder", message: error.localizedDescription)
-                return
+                return nil
             }
         }
         prefs.libraryPath = url.path
         store.library = url
         needsLibrarySetup = !Self.isDirectory(url)
-        guard !needsLibrarySetup else { return }
-        Task {
+        guard !needsLibrarySetup else { return nil }
+        return Task {
             await store.reload()
             store.startWatching()
+            if shouldScan {
+                await importExistingLibraryContents(at: url)
+            }
         }
+    }
+
+    private func importExistingLibraryContents(at url: URL) async {
+        var referenced = Set<String>()
+        for record in store.records {
+            if let folder = try? io.referencedFolderURL(for: record) {
+                referenced.insert(Self.canonicalPath(folder))
+            } else if case .referenced(let path, _) = record.game.source {
+                referenced.insert(Self.canonicalPath(URL(filePath: path)))
+            }
+        }
+        let entries = await Task.detached { Self.scanExistingFolder(url, referenced: referenced) }.value
+        guard !entries.isEmpty else { return }
+        await imports.enqueue(entries, model: self)?.value
+    }
+
+    nonisolated private static func scanExistingFolder(_ url: URL, referenced: Set<String>) -> [ImportQueue.BatchEntry] {
+        let fm = FileManager.default
+        guard let children = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        let visible = children.filter {
+            let name = $0.lastPathComponent
+            return !name.hasPrefix(".") && !name.hasPrefix("._")
+        }.sorted {
+            let order = $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent)
+            return order == .orderedSame ? $0.path < $1.path : order == .orderedAscending
+        }
+
+        let cueBases = Set(
+            visible.filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
+                    && $0.pathExtension.lowercased() == "cue"
+            }.map { $0.deletingPathExtension().lastPathComponent.lowercased() }
+        )
+
+        let allowedFiles: Set<String> = ["zip", "iso", "cue", "img", "ima"]
+        var entries: [ImportQueue.BatchEntry] = []
+
+        for child in visible {
+            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true { continue }
+            let ext = child.pathExtension.lowercased()
+            if values?.isDirectory == true {
+                if ext == CrateIO.crateExtension { continue }
+                if referenced.contains(canonicalPath(child)) { continue }
+                let candidates = (try? ExecutableRanker.rank(root: child, title: child.lastPathComponent)) ?? []
+                if !candidates.isEmpty {
+                    entries.append(.init(url: child, mode: .reference))
+                }
+            } else if allowedFiles.contains(ext) {
+                if ext == "iso", cueBases.contains(child.deletingPathExtension().lastPathComponent.lowercased()) {
+                    continue
+                }
+                entries.append(.init(url: child, mode: .copy))
+            }
+        }
+        return entries
+    }
+
+    nonisolated private static func canonicalPath(_ url: URL) -> String {
+        url.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     // MARK: Launching

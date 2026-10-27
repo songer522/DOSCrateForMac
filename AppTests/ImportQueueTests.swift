@@ -28,7 +28,7 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
 @Suite struct ImportQueueTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "importqueue-\(UUID().uuidString)")
 
-    func makeModel(stagingParent: URL? = nil) async throws -> AppModel {
+    func makeModel(stagingParent: URL? = nil, importLocation: ImportLocationPreference = .copy) async throws -> AppModel {
         let fm = FileManager.default
         let lib = root.appending(path: "Library")
         try fm.createDirectory(at: lib, withIntermediateDirectories: true)
@@ -36,6 +36,7 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         try Data("#!/bin/sh\n".utf8).write(to: dosbox)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dosbox.path)
         let prefs = Preferences(defaults: UserDefaults(suiteName: "doscrate-iq-\(UUID().uuidString)")!)
+        prefs.importLocation = importLocation
         let store = LibraryStore(library: lib)
         await store.reload()
         let importer = stagingParent.map { Importer(stagingParent: $0) } ?? Importer()
@@ -195,7 +196,10 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
             await MainActor.run {
                 if let label = queue.progress?.label { observedLabels.append(label) }
                 if url == g2 {
-                    secondTask = queue.add([g3, bad2], model: model)
+                    model.prefs.importLocation = .ask
+                    #expect(queue.add([g3, bad2], model: model) == nil)
+                    #expect(queue.batchPrompt?.urls == [g3, bad2])
+                    secondTask = queue.confirmBatch(mode: .reference, remember: false, model: model)
                     if let label = queue.progress?.label { observedLabels.append(label) }
                     queue.add([single], model: model)
                 }
@@ -219,6 +223,10 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         #expect(queue.progress == nil)
         #expect(queue.current?.url == single)
         #expect(model.store.records.map(\.game.title) == ["Alpha", "Beta", "Gamma"])
+        #expect(model.store.records.first { $0.game.title == "Alpha" }?.game.source == .managed)
+        if case .referenced = model.store.records.first(where: { $0.game.title == "Gamma" })?.game.source {} else {
+            Issue.record("Expected Gamma from second batch to be referenced")
+        }
         #expect(model.selection == model.store.records.first { $0.game.title == "Alpha" }?.id)
 
         let alert = try #require(model.alert)
@@ -227,5 +235,103 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
             "fail2.7z: \(importErrorMessage(ImportError.unsupportedType("7z")))",
         ].joined(separator: "\n")
         #expect(alert.message == expected)
+    }
+
+    @Test func preferenceDefaultIsAskAndSingleItemSheetDefaultFollowsPreference() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = UserDefaults(suiteName: "doscrate-pref-default-\(UUID().uuidString)")!
+        let freshPrefs = Preferences(defaults: defaults)
+        #expect(freshPrefs.importLocation == .ask)
+        #expect(freshPrefs.importLocation.defaultMode == .copy)
+
+        let model = try await makeModel(importLocation: .ask)
+        let queue = ImportQueue()
+        let a = URL(filePath: "/tmp/a.zip")
+
+        queue.add([a], model: model)
+        #expect(queue.current?.defaultMode == .copy)
+        queue.finishCurrent()
+
+        model.prefs.importLocation = .reference
+        queue.add([a], model: model)
+        #expect(queue.current?.defaultMode == .reference)
+        queue.finishCurrent()
+
+        model.prefs.importLocation = .copy
+        queue.add([a], model: model)
+        #expect(queue.current?.defaultMode == .copy)
+        queue.finishCurrent()
+    }
+
+    @Test func batchWithAskPresentsPromptImportsNothingUntilConfirmedAndCancelImportsNothing() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .ask)
+        let queue = ImportQueue()
+
+        let one = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(one, "KEEN1.EXE")
+        let two = root.appending(path: "doom", directoryHint: .isDirectory)
+        try touchFile(two, "DOOM.EXE")
+
+        let task = queue.add([one, two], model: model)
+        #expect(task == nil)
+        #expect(queue.current == nil)
+        #expect(queue.progress == nil)
+        #expect(queue.batchPrompt?.urls == [one, two])
+        #expect(queue.batchPrompt?.title == "Import 2 items")
+        #expect(model.store.records.isEmpty)
+
+        queue.cancelBatch()
+        #expect(queue.batchPrompt == nil)
+        #expect(queue.progress == nil)
+        #expect(model.store.records.isEmpty)
+    }
+
+    @Test func batchConfirmKeepInPlaceReferencesFoldersCopiesZipAndRemembersChoice() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .ask)
+        let queue = ImportQueue()
+
+        let folder = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(folder, "KEEN1.EXE")
+
+        let wolfTree = root.appending(path: "wolf-tree", directoryHint: .isDirectory)
+        try touchFile(wolfTree, "WOLF3D.EXE")
+        let wolfZip = try makeZip(wolfTree, to: "wolf.zip", in: root)
+
+        let disc = try touchFile(root, "myst.iso")
+
+        queue.add([folder, wolfZip, disc], model: model)
+        #expect(queue.batchPrompt?.title == "Import 3 items")
+        #expect(model.store.records.isEmpty)
+
+        await queue.confirmBatch(mode: .reference, remember: true, model: model)?.value
+        #expect(queue.batchPrompt == nil)
+        #expect(queue.progress == nil)
+        #expect(model.alert == nil)
+        #expect(model.prefs.importLocation == .reference)
+        #expect(model.store.records.count == 3)
+
+        let keen = try #require(model.store.records.first { $0.game.title == "Keen" })
+        if case .referenced = keen.game.source {} else { Issue.record("Expected Keen to be referenced") }
+
+        let wolf = try #require(model.store.records.first { $0.game.title == "Wolf" })
+        #expect(wolf.game.source == .managed)
+
+        let myst = try #require(model.store.records.first { $0.game.title == "Myst" })
+        #expect(myst.game.source == .managed)
+
+        // With the preference now remembered as .reference, the next batch imports directly without a prompt.
+        let extra1 = root.appending(path: "duke", directoryHint: .isDirectory)
+        try touchFile(extra1, "DUKE.EXE")
+        let extra2 = root.appending(path: "quake", directoryHint: .isDirectory)
+        try touchFile(extra2, "QUAKE.EXE")
+
+        let nextTask = queue.add([extra1, extra2], model: model)
+        #expect(queue.batchPrompt == nil)
+        await nextTask?.value
+
+        let duke = try #require(model.store.records.first { $0.game.title == "Duke" })
+        if case .referenced = duke.game.source {} else { Issue.record("Expected Duke to be referenced") }
     }
 }

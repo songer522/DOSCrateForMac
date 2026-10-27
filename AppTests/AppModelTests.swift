@@ -289,12 +289,15 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         let defaults = UserDefaults(suiteName: "doscrate-prefs-\(UUID().uuidString)")!
         let a = Preferences(defaults: defaults)
         #expect(a.libraryPath.hasSuffix("Documents/DOSCrate Library"))
+        #expect(a.importLocation == .ask)
         a.defaultPreset = .pc486
+        a.importLocation = .reference
         a.globalOverrides = GameSettings(fullscreen: true)
         a.rawGlobalOverrides = "[sdl]\n"
         a.soundfontPath = "/sf.sf2"
         let b = Preferences(defaults: defaults)
         #expect(b.defaultPreset == .pc486)
+        #expect(b.importLocation == .reference)
         #expect(b.globalOverrides.fullscreen == true)
         let cfg = b.globalConfig
         #expect(cfg.rawOverrides == "[sdl]\n")
@@ -402,5 +405,113 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         model.chooseAnotherProgram()
         #expect(model.chooseProgram == nil)
         #expect(model.pendingFix == PendingFix(fix: .chooseExecutable, gameID: id))
+    }
+
+    @Test func firstRunExistingFolderScanImportsFoldersReferencedAndArchivesCopiedWithoutDuplicates() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let existingLib = root.appending(path: "ExistingLib", directoryHint: .isDirectory)
+        try fm.createDirectory(at: existingLib, withIntermediateDirectories: true)
+
+        @discardableResult
+        func write(_ dir: URL, _ path: String, _ text: String = "x") throws -> URL {
+            let url = dir.appending(path: path, directoryHint: .notDirectory)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: url)
+            return url
+        }
+
+        // Subfolder already referenced by an existing crate in the library.
+        let alreadyRef = existingLib.appending(path: "already_ref", directoryHint: .isDirectory)
+        try write(alreadyRef, "REF.EXE")
+        let existingCrate = try io.makeCrate(title: "Existing", in: existingLib)
+        var existingGame = Game(
+            title: "Existing",
+            source: .referenced(path: alreadyRef.path, bookmark: try CrateIO.makeBookmark(for: alreadyRef))
+        )
+        existingGame.launch.executable = "REF.EXE"
+        try io.save(existingGame, extra: [:], to: existingCrate)
+
+        // Two game subfolders (one with 1 candidate, one with 2 candidates).
+        let keen = existingLib.appending(path: "keen", directoryHint: .isDirectory)
+        try write(keen, "KEEN1.EXE")
+        let doom = existingLib.appending(path: "doom", directoryHint: .isDirectory)
+        try write(doom, "DOOM.EXE")
+        try write(doom, "SETUP.EXE")
+
+        // One subfolder without DOS programs, plus hidden/AppleDouble entries.
+        let emptySub = existingLib.appending(path: "empty_sub", directoryHint: .isDirectory)
+        try write(emptySub, "README.TXT")
+        try write(existingLib, ".hidden/HIDE.EXE")
+        try write(existingLib, "._ghost.zip")
+
+        // A zip archive (built outside existingLib, then placed inside existingLib).
+        let wolfSrc = root.appending(path: "wolf-src", directoryHint: .isDirectory)
+        try write(wolfSrc, "WOLF3D.EXE")
+        let wolfZip = existingLib.appending(path: "wolf.zip", directoryHint: .notDirectory)
+        let ditto = Process()
+        ditto.executableURL = URL(filePath: "/usr/bin/ditto")
+        ditto.arguments = ["-c", "-k", wolfSrc.path, wolfZip.path]
+        try ditto.run()
+        ditto.waitUntilExit()
+        #expect(ditto.terminationStatus == 0)
+
+        // A cue+bin pair and a same-name iso (only the cue must be imported).
+        try write(existingLib, "track1.bin")
+        try write(existingLib, "disc.cue", "FILE \"track1.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n")
+        try write(existingLib, "disc.iso")
+
+        let (model, _) = try await makeModel(executable: nil, libraryExists: false)
+        #expect(model.needsLibrarySetup)
+        #expect(model.prefs.importLocation == .ask)
+
+        await model.chooseLibrary(existingLib, create: false)?.value
+
+        #expect(!model.needsLibrarySetup)
+        #expect(model.imports.batchPrompt == nil)
+        #expect(model.imports.progress == nil)
+        #expect(model.alert == nil)
+        #expect(model.store.records.map(\.game.title) == ["Disc", "Doom", "Existing", "Keen", "Wolf"])
+
+        let keenRec = try #require(model.store.records.first { $0.game.title == "Keen" })
+        if case .referenced = keenRec.game.source {} else { Issue.record("Expected Keen to be referenced") }
+        #expect(keenRec.game.launch.executable == "KEEN1.EXE")
+
+        let doomRec = try #require(model.store.records.first { $0.game.title == "Doom" })
+        if case .referenced = doomRec.game.source {} else { Issue.record("Expected Doom to be referenced") }
+        #expect(doomRec.game.launch.executable == nil)
+
+        let wolfRec = try #require(model.store.records.first { $0.game.title == "Wolf" })
+        #expect(wolfRec.game.source == .managed)
+        #expect(wolfRec.game.launch.executable == "WOLF3D.EXE")
+
+        let discRec = try #require(model.store.records.first { $0.game.title == "Disc" })
+        #expect(discRec.game.source == .managed)
+        #expect(discRec.game.media == [MediaImage(relativePath: "media/disc.cue", kind: .cdrom)])
+        #expect(model.selection == discRec.id)
+    }
+
+    @Test func chooseLibraryWithCreateTrueOrAfterFirstRunDoesNotScan() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let newLib = root.appending(path: "NewLib", directoryHint: .isDirectory)
+        let keen = newLib.appending(path: "keen", directoryHint: .isDirectory)
+        try fm.createDirectory(at: keen, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: keen.appending(path: "KEEN1.EXE"))
+
+        let (model, _) = try await makeModel(executable: nil, libraryExists: false)
+        #expect(model.needsLibrarySetup)
+        await model.chooseLibrary(newLib, create: true)?.value
+        #expect(!model.needsLibrarySetup)
+        #expect(model.store.records.isEmpty)
+
+        // Switching to another existing folder after first run does not scan either.
+        let laterLib = root.appending(path: "LaterLib", directoryHint: .isDirectory)
+        let doom = laterLib.appending(path: "doom", directoryHint: .isDirectory)
+        try fm.createDirectory(at: doom, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: doom.appending(path: "DOOM.EXE"))
+
+        await model.chooseLibrary(laterLib, create: false)?.value
+        #expect(model.store.records.isEmpty)
     }
 }

@@ -38,7 +38,6 @@ struct LibraryView: View {
     @AppStorage("libraryShowsGrid") private var showsGrid = true
     @State private var removing: UUID?
     @State private var showsInspector = true
-    @State private var imports = ImportQueue()
     @State private var choosingImport = false
 
     private var records: [GameRecord] {
@@ -81,17 +80,21 @@ struct LibraryView: View {
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
             guard !files.isEmpty else { return false }
-            imports.add(files, model: model)
+            model.imports.add(files, model: model)
             return true
         }
         .fileImporter(isPresented: $choosingImport, allowedContentTypes: ImportQueue.contentTypes,
                       allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { imports.add(urls, model: model) }
+            if case .success(let urls) = result { model.imports.add(urls, model: model) }
         }
-        .sheet(item: Binding(get: { imports.current }, set: { _ in })) { item in
-            ImportSheet(model: model, url: item.url) { imports.finishCurrent() }
+        .sheet(item: Binding(get: { model.imports.current }, set: { _ in })) { item in
+            ImportSheet(model: model, url: item.url, defaultMode: item.defaultMode) { model.imports.finishCurrent() }
                 .id(item.id)
                 .interactiveDismissDisabled()
+        }
+        .sheet(item: Binding(get: { model.imports.batchPrompt }, set: { if $0 == nil { model.imports.cancelBatch() } })) { prompt in
+            BatchImportSheet(model: model, prompt: prompt)
+                .id(prompt.id)
         }
         .sheet(item: $model.chooseProgram) { request in
             ChooseProgramSheet(model: model, request: request)
@@ -123,7 +126,7 @@ struct LibraryView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        if let progress = imports.progress {
+        if let progress = model.imports.progress {
             ToolbarItem {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)

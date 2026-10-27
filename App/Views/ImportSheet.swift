@@ -9,6 +9,18 @@ final class ImportQueue {
     struct Item: Identifiable {
         let id = UUID()
         let url: URL
+        let defaultMode: ImportMode
+    }
+
+    struct BatchPrompt: Identifiable, Equatable {
+        let id = UUID()
+        var urls: [URL]
+        var title: String { "Import \(urls.count) items" }
+    }
+
+    struct BatchEntry: Equatable, Sendable {
+        var url: URL
+        var mode: ImportMode
     }
 
     struct Progress: Equatable {
@@ -17,10 +29,11 @@ final class ImportQueue {
         var label: String { "Importing \(current) of \(total)…" }
     }
 
-    private var waiting: [URL] = []
-    private var batchURLs: [URL] = []
+    private var waiting: [Item] = []
+    private var batchEntries: [BatchEntry] = []
     private var batchTask: Task<Void, Never>?
     private(set) var current: Item?
+    private(set) var batchPrompt: BatchPrompt?
     private(set) var progress: Progress?
     /// Test hook called inside each batch item's detached task before preparing the item.
     var itemHook: (@Sendable (URL) async -> Void)?
@@ -28,13 +41,42 @@ final class ImportQueue {
     @discardableResult
     func add(_ urls: [URL], model: AppModel) -> Task<Void, Never>? {
         guard !urls.isEmpty else { return nil }
+        let preference = model.prefs.importLocation
         if urls.count == 1 {
-            waiting.append(urls[0])
+            waiting.append(Item(url: urls[0], defaultMode: preference.defaultMode))
             if current == nil { advance() }
             return nil
         }
-        batchURLs.append(contentsOf: urls)
-        progress = Progress(current: progress?.current ?? 1, total: batchURLs.count)
+        switch preference {
+        case .ask:
+            batchPrompt = BatchPrompt(urls: urls)
+            return nil
+        case .copy:
+            return enqueue(urls.map { BatchEntry(url: $0, mode: .copy) }, model: model)
+        case .reference:
+            return enqueue(urls.map { BatchEntry(url: $0, mode: .reference) }, model: model)
+        }
+    }
+
+    @discardableResult
+    func confirmBatch(mode: ImportMode, remember: Bool = false, model: AppModel) -> Task<Void, Never>? {
+        guard let prompt = batchPrompt else { return nil }
+        batchPrompt = nil
+        if remember {
+            model.prefs.importLocation = mode == .reference ? .reference : .copy
+        }
+        return enqueue(prompt.urls.map { BatchEntry(url: $0, mode: mode) }, model: model)
+    }
+
+    func cancelBatch() {
+        batchPrompt = nil
+    }
+
+    @discardableResult
+    func enqueue(_ entries: [BatchEntry], model: AppModel) -> Task<Void, Never>? {
+        guard !entries.isEmpty else { return nil }
+        batchEntries.append(contentsOf: entries)
+        progress = Progress(current: progress?.current ?? 1, total: batchEntries.count)
         if batchTask == nil {
             batchTask = Task { await runBatch(model: model) }
         }
@@ -43,7 +85,7 @@ final class ImportQueue {
 
     func finishCurrent() { advance() }
 
-    private func advance() { current = waiting.isEmpty ? nil : Item(url: waiting.removeFirst()) }
+    private func advance() { current = waiting.isEmpty ? nil : waiting.removeFirst() }
 
     private func runBatch(model: AppModel) async {
         let importer = model.importer
@@ -53,17 +95,18 @@ final class ImportQueue {
         var failures: [String] = []
         var index = 0
 
-        while index < batchURLs.count {
-            let url = batchURLs[index]
-            progress = Progress(current: index + 1, total: batchURLs.count)
+        while index < batchEntries.count {
+            let entry = batchEntries[index]
+            progress = Progress(current: index + 1, total: batchEntries.count)
             do {
                 let record = try await Task.detached {
-                    await hook?(url)
-                    let prepared = try await importer.prepare(url)
+                    await hook?(entry.url)
+                    let prepared = try await importer.prepare(entry.url)
                     defer { importer.discard(prepared) }
+                    let mode = prepared.allowsReference ? entry.mode : .copy
                     let executable = prepared.candidates.count == 1 ? prepared.candidates[0].relativePath : nil
                     return try await importer.commit(
-                        prepared, mode: .copy, title: prepared.suggestedTitle, executable: executable, into: library
+                        prepared, mode: mode, title: prepared.suggestedTitle, executable: executable, into: library
                     )
                 }.value
                 await model.store.reload()
@@ -72,12 +115,12 @@ final class ImportQueue {
                     model.selection = record.id
                 }
             } catch {
-                failures.append("\(url.lastPathComponent): \(importErrorMessage(error))")
+                failures.append("\(entry.url.lastPathComponent): \(importErrorMessage(error))")
             }
             index += 1
         }
 
-        batchURLs.removeAll()
+        batchEntries.removeAll()
         batchTask = nil
         progress = nil
         if let firstID { model.selection = firstID }
@@ -117,11 +160,18 @@ struct ImportSheet: View {
     let onFinish: () -> Void
 
     @State private var prepared: PreparedImport?
-    @State private var mode = ImportMode.copy
+    @State private var mode: ImportMode
     @State private var title = ""
     @State private var executable: String?
     @State private var error: String?
     @State private var isCreating = false
+
+    init(model: AppModel, url: URL, defaultMode: ImportMode? = nil, onFinish: @escaping () -> Void) {
+        self.model = model
+        self.url = url
+        self.onFinish = onFinish
+        self._mode = State(initialValue: defaultMode ?? model.prefs.importLocation.defaultMode)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -187,6 +237,7 @@ struct ImportSheet: View {
                 return
             }
             prepared = result
+            if !result.allowsReference { mode = .copy }
             title = result.suggestedTitle
             executable = result.candidates.first?.relativePath
         } catch {
@@ -224,6 +275,42 @@ struct ImportSheet: View {
         guard !isCreating else { return }
         if let prepared { model.importer.discard(prepared) }
         onFinish()
+    }
+}
+
+struct BatchImportSheet: View {
+    let model: AppModel
+    let prompt: ImportQueue.BatchPrompt
+
+    @State private var mode = ImportMode.copy
+    @State private var remember = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(prompt.title).font(.headline)
+            Picker("Location", selection: $mode) {
+                Text("Copy into library").tag(ImportMode.copy)
+                Text("Keep in place").tag(ImportMode.reference)
+            }
+            .pickerStyle(.radioGroup)
+            Text("Zips and disc images are always copied.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Remember my choice", isOn: $remember)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) {
+                    model.imports.cancelBatch()
+                }
+                .keyboardShortcut(.cancelAction)
+                Button("Import") {
+                    model.imports.confirmBatch(mode: mode, remember: remember, model: model)
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 400)
     }
 }
 
