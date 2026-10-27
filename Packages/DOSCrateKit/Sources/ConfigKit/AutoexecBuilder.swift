@@ -7,9 +7,9 @@ public enum AutoexecBuilder {
         var cds: [String] = []
         for (url, kind) in media where kind == .cdrom { cds.append(try quoted(url.path)) }
         if !cds.isEmpty { out.append("imgmount d \(cds.joined(separator: " ")) -t iso") }
-        for (url, kind) in media where kind == .floppy {
-            out.append("imgmount a \(try quoted(url.path)) -t floppy")
-        }
+        var floppies: [String] = []
+        for (url, kind) in media where kind == .floppy { floppies.append(try quoted(url.path)) }
+        if !floppies.isEmpty { out.append("imgmount a \(floppies.joined(separator: " ")) -t floppy") }
         out.append("c:")
         if let exe = launch.executable, !exe.isEmpty {
             let dos = try DOSPath.dosPath(relative: exe)

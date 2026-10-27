@@ -43,6 +43,14 @@ private func lines(_ l: LaunchSpec, c: String = "/tmp/Keen", media: [(URL, Media
     #expect(l[3] == "c:")
 }
 
+@Test func multipleFloppiesShareOneImgmount() throws {
+    let media: [(URL, MediaKind)] = [
+        (URL(fileURLWithPath: "/m/disk1.img"), .floppy), (URL(fileURLWithPath: "/m/disk2.img"), .floppy),
+    ]
+    let l = try lines(LaunchSpec(executable: "INSTALL.EXE"), media: media)
+    #expect(l.filter { $0.hasPrefix("imgmount a") } == ["imgmount a \"/m/disk1.img\" \"/m/disk2.img\" -t floppy"])
+}
+
 @Test func argumentsAndPrePostCommandsOrdered() throws {
     let l = try lines(LaunchSpec(executable: "GAME/G.EXE", arguments: " /v ", preCommands: ["set X=1"], postCommands: ["echo done"]))
     #expect(Array(l.dropFirst()) == ["c:", "cd \\GAME", "set X=1", "G.EXE /v", "echo done"])

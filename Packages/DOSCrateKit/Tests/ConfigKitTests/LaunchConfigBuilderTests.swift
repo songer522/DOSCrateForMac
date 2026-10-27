@@ -29,3 +29,16 @@ private func build(preset: Preset?, memoryMB: Int?, defaultPreset: Preset) throw
     let d = try build(preset: nil, memoryMB: nil, defaultPreset: .auto)
     #expect(d.autoexec == ["mount c \"/tmp/g\"", "c:", "A.EXE"])
 }
+
+@Test func isoAndFloppyMediaInAutoexec() throws {
+    var game = Game(title: "T", source: .managed)
+    game.launch = LaunchSpec(executable: "A.EXE")
+    let media: [(URL, MediaKind)] = [
+        (URL(fileURLWithPath: "/c/media/disc.iso"), .cdrom), (URL(fileURLWithPath: "/c/media/boot.img"), .floppy),
+    ]
+    let d = try LaunchConfigBuilder.build(game: game, cDrive: URL(fileURLWithPath: "/tmp/g"), media: media, global: GlobalConfig())
+    #expect(d.autoexec == [
+        "mount c \"/tmp/g\"", "imgmount d \"/c/media/disc.iso\" -t iso",
+        "imgmount a \"/c/media/boot.img\" -t floppy", "c:", "A.EXE",
+    ])
+}
