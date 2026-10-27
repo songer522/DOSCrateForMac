@@ -53,6 +53,7 @@ final class AppModel {
     private(set) var needsLibrarySetup: Bool
     /// True while the first-run scan looks for games, before the batch import (and its progress) starts.
     private(set) var isScanningLibrary = false
+    @ObservationIgnored private var scanCancelled = false
 
     let prefs: Preferences
     let store: LibraryStore
@@ -111,6 +112,16 @@ final class AppModel {
         }
     }
 
+    /// Stops the first-run scan, or the running batch import after its current game.
+    func cancelImport() {
+        if isScanningLibrary {
+            scanCancelled = true
+            isScanningLibrary = false
+        } else {
+            imports.cancelBatchImport()
+        }
+    }
+
     private func importExistingLibraryContents(at url: URL) async {
         var referenced = Set<String>()
         for record in store.records {
@@ -121,8 +132,10 @@ final class AppModel {
             }
         }
         let entries = await Task.detached { Self.scanExistingFolder(url, referenced: referenced) }.value
+        let cancelled = scanCancelled
         isScanningLibrary = false
-        guard !entries.isEmpty else { return }
+        scanCancelled = false
+        guard !cancelled, !entries.isEmpty else { return }
         await imports.enqueue(entries, model: self)?.value
     }
 

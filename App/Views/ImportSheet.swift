@@ -36,6 +36,8 @@ final class ImportQueue {
     private(set) var current: Item?
     private(set) var batchPrompt: BatchPrompt?
     private(set) var progress: Progress?
+    /// Index in `batchEntries` of the item the running batch is importing.
+    private var batchIndex = 0
     /// Test hook called inside each batch item's detached task before preparing the item.
     var itemHook: (@Sendable (URL) async -> Void)?
 
@@ -85,6 +87,13 @@ final class ImportQueue {
         return batchTask
     }
 
+    /// Stops the running batch after the item in progress; games already imported stay in the library.
+    func cancelBatchImport() {
+        guard batchTask != nil, batchIndex + 1 < batchEntries.count else { return }
+        batchEntries.removeSubrange((batchIndex + 1)...)
+        progress = Progress(current: batchIndex + 1, total: batchEntries.count)
+    }
+
     func finishCurrent() { advance() }
 
     private func advance() { current = waiting.isEmpty ? nil : waiting.removeFirst() }
@@ -102,14 +111,14 @@ final class ImportQueue {
         var dirtyCount = 0
         var lastReload = ContinuousClock.now
         var failures: [String] = []
-        var index = 0
+        batchIndex = 0
 
         model.store.isWatcherSuppressed = true
         defer { model.store.isWatcherSuppressed = false }
 
-        while index < batchEntries.count {
-            let entry = batchEntries[index]
-            progress = Progress(current: index + 1, total: batchEntries.count)
+        while batchIndex < batchEntries.count {
+            let entry = batchEntries[batchIndex]
+            progress = Progress(current: batchIndex + 1, total: batchEntries.count)
             do {
                 let record = try await Task.detached {
                     await hook?(entry.url)
@@ -136,7 +145,7 @@ final class ImportQueue {
             } catch {
                 failures.append("\(entry.url.lastPathComponent): \(importErrorMessage(error))")
             }
-            index += 1
+            batchIndex += 1
         }
 
         if dirtyCount > 0 {

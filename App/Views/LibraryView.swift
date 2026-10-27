@@ -132,6 +132,8 @@ struct LibraryView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 Spacer()
+                Button("Cancel") { model.cancelImport() }
+                    .controlSize(.small)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

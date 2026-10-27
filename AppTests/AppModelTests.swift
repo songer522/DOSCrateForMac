@@ -407,6 +407,23 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.pendingFix == PendingFix(fix: .chooseExecutable, gameID: id))
     }
 
+    @Test func cancellingFirstRunScanImportsNothing() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let existingLib = root.appending(path: "ExistingLib", directoryHint: .isDirectory)
+        let exe = existingLib.appending(path: "keen/KEEN1.EXE", directoryHint: .notDirectory)
+        try FileManager.default.createDirectory(at: exe.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: exe)
+
+        let (model, _) = try await makeModel(executable: nil, libraryExists: false)
+        let scan = model.chooseLibrary(existingLib, create: false)
+        model.cancelImport()
+        #expect(!model.isScanningLibrary)
+        await scan?.value
+
+        #expect(model.store.records.isEmpty)
+        #expect(model.imports.progress == nil)
+    }
+
     @Test func firstRunExistingFolderScanImportsFoldersReferencedAndArchivesCopiedWithoutDuplicates() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let fm = FileManager.default

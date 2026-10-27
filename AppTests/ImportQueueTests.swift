@@ -361,6 +361,34 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         #expect(model.selection == first.id)
     }
 
+    @Test func cancelStopsBatchAfterCurrentItemAndKeepsImportedGames() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .copy)
+
+        var urls: [URL] = []
+        for i in 1...6 {
+            let dir = root.appending(path: "game\(i)", directoryHint: .isDirectory)
+            try touchFile(dir, "G\(i).EXE")
+            urls.append(dir)
+        }
+
+        let queue = model.imports
+        queue.itemHook = { url in
+            if url.lastPathComponent == "game2" {
+                await MainActor.run { model.cancelImport() }
+            }
+        }
+        await queue.add(urls, model: model)?.value
+
+        #expect(model.store.records.map(\.game.title).sorted() == ["Game1", "Game2"])
+        #expect(queue.progress == nil)
+
+        // The queue still works after a cancel.
+        queue.itemHook = nil
+        await queue.add(Array(urls[4...]), model: model)?.value
+        #expect(model.store.records.count == 4)
+    }
+
     @Test func multipleAskBatchesQueuePromptsAndPreserveOthersOnConfirmOrCancel() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let model = try await makeModel(importLocation: .ask)
