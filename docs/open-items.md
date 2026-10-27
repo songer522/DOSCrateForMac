@@ -11,6 +11,17 @@ State as of the merge of PR #1 (`d07a896`, 2026-10-27). The code, tests (`make g
 - **Appcast generation and EdDSA signing** (spec §7) are not in `release.sh`.
 - **Manual test checklist** (`docs/manual-test-checklist.md`) has not been walked on a Mac. Several UI paths were never exercised by hand: right-click selection on macOS, the import and detail-view manual steps, drag-and-drop.
 
+## Planned features
+
+- **Controller support.** DOSBox Staging 0.83.0 has no controller settings UI. It offers `joysticktype` (the default `auto` emulates a PC joystick), the Ctrl+F1 mapper (one global mapper file) and about 186 per-game Xbox maps in `Resources/mapperfiles/xbox/`, loaded with `mapperfile = xbox/<game>.map`. DOSCrate uses none of it, and most DOS games only read the keyboard. Plan, to be designed first:
+  - A built-in default map that DOSCrate writes and passes as `mapperfile`: d-pad and left stick → arrow keys, A → Ctrl, B → Alt, X → Space, Y → Enter, Start → Esc.
+  - Staging's bundled map for a game when one exists.
+  - A Controller tab in the inspector: a key, or "Joystick", for each button.
+  - A global default in Settings.
+
+  Open questions: the mapper file format (SDL scancodes, undocumented), and key bindings clashing with joystick emulation in games that support a joystick.
+  **Testing:** simulator (unit tests for map generation and `mapperfile` in the launch config); device probe first (map a few buttons in Staging's mapper on the Mac with each controller and read the saved file, to learn how buttons, axes and hats are written; check whether the Steam Controller shows up to SDL without Steam running); then device test on the Mac with a Steam Controller, a PS5 DualSense and an Xbox controller.
+
 ## Known gaps
 
 From the final review, deferred as non-blocking:
