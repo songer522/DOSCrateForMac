@@ -711,7 +711,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(runner.processes.count == 1)
     }
 
-    @Test func playTimeoutShowsAlertClearsStartingAndIgnoresLateCompletion() async throws {
+    @Test func playTimeoutShowsAlertKeepsStartingUntilWorkEndsAndIgnoresLateCompletion() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let release = DispatchSemaphore(value: 0)
         let state = OSAllocatedUnfairLock(initialState: (armed: false, entered: false))
@@ -731,7 +731,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.startingIDs == [id])
         await waitUntil { state.withLock { $0.entered } }
 
-        await waitUntil { model.startingIDs.isEmpty }
+        await waitUntil { model.alert != nil }
         #expect(model.sessions.running.isEmpty)
         #expect(runner.processes.isEmpty)
         let alert = try #require(model.alert)
@@ -739,9 +739,18 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(alert.message.contains("library volume"))
         #expect(alert.message.contains("isn't responding"))
 
+        // The expired attempt may still write launch files into the crate, so the game stays
+        // starting: no second Play and no removal until that work ends.
         model.alert = nil
+        #expect(model.startingIDs == [id])
+        #expect(model.play(id) == nil)
+        model.removeGame(id, trashFiles: true)
+        #expect(model.store.record(id) != nil)
+        model.alert = nil
+
         release.signal()
         await first?.value
+        #expect(model.startingIDs.isEmpty)
         #expect(model.sessions.running.isEmpty)
         #expect(runner.processes.isEmpty)
         #expect(model.alert == nil)

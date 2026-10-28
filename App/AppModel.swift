@@ -313,24 +313,26 @@ final class AppModel {
         }
     }
 
+    /// Expires the attempt but keeps the game starting: its background work may still write launch files
+    /// into the crate, so Play and removal stay blocked until `finishPlay` sees that work end.
     private func launchTimedOut(id: UUID, token: UUID, title: String) {
         guard startTokens[id] == token else { return }
         startTokens[id] = nil
-        startingIDs.remove(id)
         guard !pendingRemovalIDs.contains(id), store.record(id) != nil else { return }
         alert = AppAlert(
             title: "Can't start \(title)",
-            message: "This game's library volume isn't responding. Check the drive, then try again."
+            message: "This game's library volume isn't responding. Check the drive; you can play it again once the drive responds."
         )
     }
 
     private func finishPlay(id: UUID, token: UUID, record: GameRecord, outcome: PreparedLaunch) {
+        // Play is refused while a game is starting, so this is the only attempt for `id`, expired or not.
+        startingIDs.remove(id)
         guard startTokens[id] == token else {
             outcome.discard()
             return
         }
         startTokens[id] = nil
-        startingIDs.remove(id)
         guard !pendingRemovalIDs.contains(id), store.record(id) != nil else {
             outcome.discard()
             return
