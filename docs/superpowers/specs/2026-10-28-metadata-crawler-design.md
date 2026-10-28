@@ -79,7 +79,8 @@ This replaces the "online metadata and cover scraping comes later" non-goal in `
 
 - Info tab: the description goes below the metadata fields in a multi-line text field (editable, saved like `notes`). A small "From LaunchBox" caption with the fetch date shows when `metadataSource` is set.
 - A new **Art** strip below the cover shows thumbnails of the back, disc and logo art and the screenshots that exist. Clicking one opens it in Quick Look (`QLPreviewPanel`). The strip is hidden when there's no extra art.
-- Everything is styled for both themes, through the existing `Theme` building blocks in DOS.
+- Everything is styled for both themes, through the existing `Theme` building blocks in DOS. Every new view, including sheets (`FindMetadataSheet`, `UnmatchedMetadataSheet`, and in-sheet replace/error panels) and loading spinners (`RetroSpinner`), ships with a DOS version; the Settings window and system dialogs (file pickers, menu bar) stay native.
+- Applying a match saves the text fields and `metadataSource` immediately and downloads art in a background task per game (writing `cover.png` first and skipping PNG re-encoding when source bytes are already PNG), showing a loading spinner on the cover and Art strip while art downloads.
 
 ### 3.7 Credit
 

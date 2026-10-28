@@ -11,6 +11,7 @@ Add a theme choice to DOSCrate. **Standard** is today's UI, unchanged. **DOS**, 
 | Question | Decision |
 |---|---|
 | How deep | Skin the **library window** only. Menu bar, Settings window, import sheets, alerts, confirmation dialogs and file pickers stay native. Owner follow-up (2026-10-28): in DOS the library window also gets its own blue title bar with a [-] box that quits DOSCrate (like ⌘Q); the native title bar and traffic lights are hidden, and come back in Standard. |
+| New UI | Every new view, including sheets and in-sheet confirmations, ships with a DOS version built from `App/Theme/` (`RetroPanel`, `RetroBevel`, `RetroButtonStyle`, `RetroFont`, `RetroPalette`). The Settings window and system dialogs (file pickers, menu bar) stay native. |
 | Font | Bundle a freely licensed VGA bitmap-style font: **PxPlus IBM VGA 8x16** from the int10h Ultimate Oldschool PC Font Pack (CC BY-SA 4.0), credited in the Licenses window. |
 | Icons | **Pixelated SF Symbols**: drawn small in flat retro colors, scaled up with nearest-neighbor. No new art. |
 | Architecture | Approach 1: theme tokens plus a second library layout for DOS (below). |
