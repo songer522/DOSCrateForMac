@@ -13,14 +13,8 @@ State as of the merge of PR #1 (`d07a896`, 2026-10-27). The code, tests (`make g
 
 ## Planned features
 
-- **Controller support.** DOSBox Staging 0.83.0 has no controller settings UI. It offers `joysticktype` (the default `auto` emulates a PC joystick), the Ctrl+F1 mapper (one global mapper file) and about 186 per-game Xbox maps in `Resources/mapperfiles/xbox/`, loaded with `mapperfile = xbox/<game>.map`. DOSCrate uses none of it, and most DOS games only read the keyboard. Plan, to be designed first:
-  - A built-in default map that DOSCrate writes and passes as `mapperfile`: d-pad and left stick → arrow keys, A → Ctrl, B → Alt, X → Space, Y → Enter, Start → Esc.
-  - Staging's bundled map for a game when one exists.
-  - A Controller tab in the inspector: a key, or "Joystick", for each button.
-  - A global default in Settings.
-
-  Open questions: the mapper file format (SDL scancodes, undocumented), and key bindings clashing with joystick emulation in games that support a joystick.
-  **Testing:** simulator (unit tests for map generation and `mapperfile` in the launch config); device probe first (map a few buttons in Staging's mapper on the Mac with each controller and read the saved file, to learn how buttons, axes and hats are written; check whether the Steam Controller shows up to SDL without Steam running); then device test on the Mac with a Steam Controller, a PS5 DualSense and an Xbox controller.
+- **Controller support.** Slice A (gamepad → keyboard keys with a default map, a per-model layout table, a Settings switch) is specified in `docs/superpowers/specs/2026-10-27-controller-support-design.md`, with the 2026-10-27 device probe results. Later slices: PC-joystick emulation per game (slice C) and a per-game Controller tab. The Switch 2 Pro controller is out of scope (Staging's SDL can't open it on macOS).
+  **Testing:** simulator (unit tests for layout selection, map generation and `mapperfile` in the launch config); device test on the Mac with an Xbox (USB and Bluetooth), a PS5 DualSense (USB and Bluetooth) and the Steam Controller (puck), stick-up first.
 
 ## Known gaps
 
