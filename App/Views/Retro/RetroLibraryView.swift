@@ -1,5 +1,74 @@
+import AppKit
 import LibraryKit
 import SwiftUI
+
+struct RetroWindowChrome: NSViewRepresentable {
+    let isRetro: Bool
+
+    @MainActor
+    static func apply(isRetro: Bool, to window: NSWindow) {
+        window.titleVisibility = isRetro ? .hidden : .visible
+        window.titlebarAppearsTransparent = isRetro
+        if isRetro {
+            window.styleMask.insert(.fullSizeContentView)
+        } else {
+            window.styleMask.remove(.fullSizeContentView)
+        }
+        for button: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(button)?.isHidden = isRetro
+        }
+    }
+
+    func makeNSView(context: Context) -> ChromeView {
+        let view = ChromeView()
+        view.isRetro = isRetro
+        return view
+    }
+
+    func updateNSView(_ nsView: ChromeView, context: Context) {
+        nsView.isRetro = isRetro
+        nsView.apply()
+    }
+
+    final class ChromeView: NSView {
+        var isRetro = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+        }
+
+        @MainActor
+        func apply() {
+            guard let window else { return }
+            RetroWindowChrome.apply(isRetro: isRetro, to: window)
+        }
+    }
+}
+
+private struct RetroControlBoxButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        let offset: CGFloat = configuration.isPressed ? 1 : 0
+        ZStack {
+            Rectangle()
+                .fill(RetroPalette.bevelDark)
+                .frame(width: 12, height: 4)
+                .offset(x: 1 + offset, y: 1 + offset)
+            Rectangle()
+                .fill(RetroPalette.highlightText)
+                .frame(width: 12, height: 4)
+                .overlay {
+                    Rectangle()
+                        .strokeBorder(RetroPalette.shadow, lineWidth: 1)
+                }
+                .offset(x: offset, y: offset)
+        }
+        .frame(width: 24, height: 24)
+        .background(RetroPalette.panel)
+        .retroBevel(configuration.isPressed ? .sunken : .raised)
+        .contentShape(Rectangle())
+    }
+}
 
 struct RetroLibraryView: View {
     @Bindable var model: AppModel
@@ -8,6 +77,7 @@ struct RetroLibraryView: View {
     @Binding var showsGrid: Bool
     @Binding var showsInspector: Bool
     @Binding var choosingImport: Bool
+    var onClose: () -> Void = { NSApplication.shared.terminate(nil) }
 
     static func playTarget(
         selected: Set<UUID>,
@@ -33,6 +103,7 @@ struct RetroLibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            windowTitleBar
             buttonBar
             HStack(spacing: 0) {
                 RetroSidebar(model: model)
@@ -48,8 +119,41 @@ struct RetroLibraryView: View {
             RetroStatusBar(model: model)
         }
         .background(RetroPalette.desktop)
+        .ignoresSafeArea(.container, edges: .top)
         .navigationTitle("DOSCrate")
         .toolbar(.hidden, for: .windowToolbar)
+    }
+
+    private var windowTitleBar: some View {
+        ZStack(alignment: .leading) {
+            Text("DOSCrate")
+                .font(RetroFont.font())
+                .foregroundStyle(RetroPalette.highlightText)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
+                .background(RetroPalette.highlight)
+                .contentShape(Rectangle())
+                .gesture(WindowDragGesture())
+
+            HStack(spacing: 0) {
+                Button(action: onClose) {
+                    EmptyView()
+                }
+                .buttonStyle(RetroControlBoxButtonStyle())
+                .help("Quit DOSCrate")
+                .accessibilityLabel("Quit DOSCrate")
+
+                Rectangle()
+                    .fill(RetroPalette.shadow)
+                    .frame(width: 1, height: 24)
+            }
+        }
+        .frame(height: 24)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(RetroPalette.shadow)
+                .frame(height: 1)
+        }
     }
 
     private var buttonBar: some View {

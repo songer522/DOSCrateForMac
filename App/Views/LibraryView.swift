@@ -75,6 +75,7 @@ struct LibraryView: View {
                 )
             }
         }
+        .background(RetroWindowChrome(isRetro: model.prefs.appTheme == .dos))
         .modifier(LibraryActions(model: model, records: records, removing: $removing,
                                  removingMany: $removingMany, choosingImport: $choosingImport))
     }

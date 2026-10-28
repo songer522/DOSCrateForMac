@@ -97,4 +97,60 @@ struct RetroLibraryTests {
         hosting.rootView = makeView([], false)
         hosting.layoutSubtreeIfNeeded()
     }
+
+    @Test func windowChromeTogglesRetroAndStandard() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        RetroWindowChrome.apply(isRetro: true, to: window)
+        #expect(window.titleVisibility == .hidden)
+        #expect(window.titlebarAppearsTransparent)
+        #expect(window.styleMask.contains(.fullSizeContentView))
+        #expect(window.standardWindowButton(.closeButton)?.isHidden == true)
+        #expect(window.standardWindowButton(.miniaturizeButton)?.isHidden == true)
+        #expect(window.standardWindowButton(.zoomButton)?.isHidden == true)
+
+        RetroWindowChrome.apply(isRetro: false, to: window)
+        #expect(window.titleVisibility == .visible)
+        #expect(!window.titlebarAppearsTransparent)
+        #expect(!window.styleMask.contains(.fullSizeContentView))
+        #expect(window.standardWindowButton(.closeButton)?.isHidden == false)
+        #expect(window.standardWindowButton(.miniaturizeButton)?.isHidden == false)
+        #expect(window.standardWindowButton(.zoomButton)?.isHidden == false)
+    }
+
+    @Test func closeActionCallbackIsWiredOnRetroLibraryView() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "retrolib-close-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let defaults = UserDefaults(suiteName: "doscrate-retro-close-\(UUID().uuidString)")!
+        let prefs = Preferences(defaults: defaults)
+        let store = LibraryStore(library: root)
+        let model = AppModel(
+            prefs: prefs,
+            store: store,
+            sessions: SessionManager(runner: FakeRunner()),
+            importer: Importer(),
+            dosbox: root.appending(path: "dosbox"),
+            verifyDosbox: { _ in }
+        )
+        let commands = LibraryCommands(model: model, records: [], removing: .constant(nil), removingMany: .constant(nil))
+        var didClose = false
+        let view = RetroLibraryView(
+            model: model,
+            records: [],
+            commands: commands,
+            showsGrid: .constant(true),
+            showsInspector: .constant(true),
+            choosingImport: .constant(false),
+            onClose: { didClose = true }
+        )
+        view.onClose()
+        #expect(didClose)
+    }
 }
