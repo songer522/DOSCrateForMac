@@ -28,6 +28,8 @@ From the final review, deferred as non-blocking:
 - The Updates toggle copies `automaticallyChecksForUpdates` into `@State` once and can go stale. "Check for Updates…" is hidden, not disabled, when `canCheckForUpdates` is false. Sparkle should also require a non-empty `SUPublicEDKey` (the release script already requires both variables).
 - The DMG has an Applications symlink now, but only the DMG is stapled, and the Staging source tarball is verified by checksum while the LGPL tarballs are not.
 - iCloud "Optimize Storage" can evict files from the default `~/Documents/DOSCrate Library`. iCloud is out of scope (spec §9); worth a release-notes caveat.
+- `Vendor/DOSBox Staging.app` carries a `com.apple.quarantine` flag from `scripts/fetch-staging.sh`, so launching it directly (as the 2026-10-27 controller probe did) runs it from an App Translocation path. Check whether `embed-staging.sh` copies the flag into the app bundle; if so, strip it after fetching (`xattr -dr com.apple.quarantine`) so the embedded copy matches the notarized release.
+  **Testing:** simulator (none); device probe: `xattr -l` on `Vendor/` and on the built app's embedded Staging after `make vendor` and a build.
 
 From the PR #4 review (duplicate handling), deferred:
 
