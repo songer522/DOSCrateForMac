@@ -13,7 +13,7 @@ State as of the merge of PR #1 (`d07a896`, 2026-10-27). The code, tests (`make g
 
 ## Planned features
 
-- **Controller support, later slices.** Slice A shipped on `songer522/controller-support` (gamepad → keyboard keys, per-model layouts, Settings switch; device test passed 2026-10-28). Still planned: PC-joystick emulation per game (slice C, trigger axes are recorded in the spec §2 table) and a per-game Controller tab. The Switch 2 Pro controller stays out of scope (Staging's SDL can't open it on macOS).
+- **Controller support, later slices.** Slice A merged in PR #7 (`d16200f`: gamepad → keyboard keys, per-model layouts, Settings switch, library bar indicator; device test passed 2026-10-28). Still planned: PC-joystick emulation per game (slice C, trigger axes are recorded in the spec §2 table) and a per-game Controller tab. The Switch 2 Pro controller stays out of scope (Staging's SDL can't open it on macOS).
   **Testing:** simulator (layout and config tests); device test on the Mac with the controllers in the manual checklist's Controllers section.
 
 ## Known gaps
@@ -21,7 +21,8 @@ State as of the merge of PR #1 (`d07a896`, 2026-10-27). The code, tests (`make g
 From the final review, deferred as non-blocking:
 
 - Quitting DOSCrate does not end running DOSBox processes; their play time is lost. Changing the library mid-session loses stats the same way.
-- The code-signature check on DOSBox (`SecStaticCodeCheckValidity`) runs on the main thread, at launch and on every Play.
+- The code-signature check on DOSBox (`SecStaticCodeCheckValidity`) still runs on the main thread at app launch (`AppModel.init`); the Play-time check now runs off the main thread.
+  **Testing:** simulator (`AppModelTests` init and off-main Play verification tests).
 - Import can fail on non-APFS or network libraries (`.itemReplacementDirectory`). Fall back to a hidden temp folder inside the library.
 - Spec gaps: no "Edit" item in the context menu (§4.1), the placeholder cover doesn't show the year (§4.1), no extra folder mounts under Drives (§4.2).
 - Adding media can leave an orphan file in `media/` if the selection changes during the async copy.
@@ -30,8 +31,8 @@ From the final review, deferred as non-blocking:
 - iCloud "Optimize Storage" can evict files from the default `~/Documents/DOSCrate Library`. iCloud is out of scope (spec §9); worth a release-notes caveat.
 - `Vendor/DOSBox Staging.app` carries a `com.apple.quarantine` flag from `scripts/fetch-staging.sh`, so launching it directly (as the 2026-10-27 controller probe did) runs it from an App Translocation path. Check whether `embed-staging.sh` copies the flag into the app bundle; if so, strip it after fetching (`xattr -dr com.apple.quarantine`) so the embedded copy matches the notarized release.
   **Testing:** simulator (none); device probe: `xattr -l` on `Vendor/` and on the built app's embedded Staging after `make vendor` and a build.
-- Launch files (`launch.conf`, `controller.map`) are written on the main thread at Play. In the 2026-10-28 controller test, the exFAT SD card volume hung (a plain `ls` hung too, and macOS's `UVFSService` was stuck), and DOSCrate beachballed until the card was recovered. Play should write off the main thread and fail with a message if the library volume doesn't respond. The cause of the volume hang is unknown; it didn't recur on the retry.
-  **Testing:** simulator (a planner test with a blocking file writer); device probe: reproduce with a hung or very slow volume if possible.
+- Play now runs DOSBox verification, preflight, launch planning (`launch.conf`, `controller.map`) and session log setup off the main thread, and times out with an alert if the library volume doesn't respond. Still on the main thread: flushing pending inspector edits (`pendingWrites`, `game.json` / `override.conf`) before Play. Also, a hung kernel `open()` on an unresponsive volume cannot be cancelled, so a timed-out Play leaves one background thread stuck until the volume recovers (its late completion is ignored).
+  **Testing:** simulator (`AppModelTests` blocking-verifier and timeout tests); device probe: Play from an external drive and, if possible, a hung or very slow volume.
 - The controller switch applies at Play; it doesn't change a game that's already running (Staging reads the mapper file once at startup). By design; the Settings caption doesn't say so.
   **Testing:** none (documented in the manual checklist).
 
