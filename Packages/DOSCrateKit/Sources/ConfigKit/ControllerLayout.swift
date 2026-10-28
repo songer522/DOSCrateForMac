@@ -31,10 +31,10 @@ public enum ControllerLayout: String, Sendable, CaseIterable {
         case (.xboxUSB, .dpadRight): "stick_0 button 10"
         case (_, .stickLeft): "stick_0 axis 0 0"
         case (_, .stickRight): "stick_0 axis 0 1"
-        case (.standard, .stickUp), (.steam, .stickUp): "stick_0 axis 1 0"
-        case (.standard, .stickDown), (.steam, .stickDown): "stick_0 axis 1 1"
-        case (.xboxUSB, .stickUp): "stick_0 axis 1 1"
-        case (.xboxUSB, .stickDown): "stick_0 axis 1 0"
+        case (.standard, .stickUp): "stick_0 axis 1 0"
+        case (.standard, .stickDown): "stick_0 axis 1 1"
+        case (.steam, .stickUp), (.xboxUSB, .stickUp): "stick_0 axis 1 1"
+        case (.steam, .stickDown), (.xboxUSB, .stickDown): "stick_0 axis 1 0"
         }
     }
 }

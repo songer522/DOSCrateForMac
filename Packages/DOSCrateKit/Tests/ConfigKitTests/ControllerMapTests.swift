@@ -12,6 +12,7 @@ import Testing
         #expect(l.binding(.a) == "stick_0 button 4"); #expect(l.binding(.x) == "stick_0 button 9")
         #expect(l.binding(.y) == "stick_0 button 10"); #expect(l.binding(.start) == "stick_0 button 7")
         #expect(l.binding(.dpadUp) == "stick_0 button 14"); #expect(l.binding(.dpadDown) == "stick_0 button 11")
+        #expect(l.binding(.stickUp) == "stick_0 axis 1 1"); #expect(l.binding(.stickDown) == "stick_0 axis 1 0")
     }
     @Test func xboxUSBBindings() {
         let l = ControllerLayout.xboxUSB
