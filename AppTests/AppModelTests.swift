@@ -753,7 +753,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(runner.processes.count == 1)
     }
 
-    @Test func playRemovedWhileStartingDoesNotStartSession() async throws {
+    @Test func removingAGameThatIsStartingIsRefused() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let release = DispatchSemaphore(value: 0)
         let state = OSAllocatedUnfairLock(initialState: (armed: false, entered: false))
@@ -771,14 +771,22 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.startingIDs == [id])
         await waitUntil { state.withLock { $0.entered } }
 
+        // The background start may still write into the crate, so removal must wait for it.
         model.removeGame(id, trashFiles: true)
-        #expect(model.store.record(id) == nil)
+        #expect(model.store.record(id) != nil)
+        #expect(model.alert?.title == "Can't remove Test Game")
+        model.alert = nil
+
+        await model.removeGames([id], trashFolders: true)
+        #expect(model.store.record(id) != nil)
+        #expect(model.alert?.title == "Couldn't remove 1 game")
+        model.alert = nil
 
         release.signal()
         await task?.value
         #expect(model.startingIDs.isEmpty)
-        #expect(model.sessions.running.isEmpty)
-        #expect(runner.processes.isEmpty)
-        #expect(model.alert == nil)
+        #expect(model.sessions.running.contains(id))
+        runner.processes[0].finish(0)
+        await waitUntil { !model.sessions.running.contains(id) }
     }
 }

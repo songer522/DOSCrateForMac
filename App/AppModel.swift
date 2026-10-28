@@ -199,9 +199,9 @@ final class AppModel {
     }
 
     /// Moves the games' crates to the Trash, and with `trashFolders` the folders kept-in-place games point at.
-    /// Running games are skipped; one alert lists what was skipped or failed.
+    /// Running and starting games are skipped; one alert lists what was skipped or failed.
     func removeGames(_ ids: Set<UUID>, trashFolders: Bool) async {
-        let running = ids.filter { sessions.running.contains($0) }
+        let running = ids.filter(isActive)
         let targets = Array(ids.subtracting(running))
         pendingRemovalIDs.formUnion(targets)
         defer { pendingRemovalIDs.subtract(targets) }
@@ -222,10 +222,10 @@ final class AppModel {
         }
     }
 
-    /// Removes one game; see `LibraryStore.remove(_:trashFiles:)`. A running game shows an alert instead.
+    /// Removes one game; see `LibraryStore.remove(_:trashFiles:)`. A running or starting game shows an alert instead.
     func removeGame(_ id: UUID, trashFiles: Bool) {
         guard let record = store.record(id) else { return }
-        guard !sessions.running.contains(id) else {
+        guard !isActive(id) else {
             alert = AppAlert(title: "Can't remove \(record.game.title)", message: "Stop the game before removing it.")
             return
         }
@@ -235,6 +235,11 @@ final class AppModel {
         } catch {
             alert = AppAlert(title: "Can't remove \(record.game.title)", message: error.localizedDescription)
         }
+    }
+
+    /// Running, or starting: a start still in progress may write into the crate, so it can't be removed yet.
+    func isActive(_ id: UUID) -> Bool {
+        sessions.running.contains(id) || startingIDs.contains(id)
     }
 
     // MARK: Launching
