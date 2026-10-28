@@ -57,7 +57,8 @@ struct AdvancedTab: View {
     private var preview: String {
         var r = record
         r.game = game
-        return LaunchPlanner.generatedConfigPreview(r, global: model.prefs.globalConfig, io: io)
+        let global = model.prefs.launchConfig(gamepads: GamepadDetector.snapshot())
+        return LaunchPlanner.generatedConfigPreview(r, global: global, io: io)
     }
 
     private func scheduleWrite() {

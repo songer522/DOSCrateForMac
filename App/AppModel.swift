@@ -70,6 +70,7 @@ final class AppModel {
     let sessions: SessionManager
     let importer: Importer
     let imports = ImportQueue()
+    let gamepads = GamepadMonitor()
 
     @ObservationIgnored private let dosbox: URL
     @ObservationIgnored private let io = CrateIO()
@@ -246,7 +247,8 @@ final class AppModel {
         do {
             try verifyDosbox(dosbox)
             let cDrive = try Preflight.check(record, io: io, dosbox: dosbox)
-            let plan = try LaunchPlanner.plan(record, cDrive: cDrive, global: prefs.globalConfig, dosbox: dosbox, io: io)
+            let global = prefs.launchConfig(gamepads: GamepadDetector.snapshot())
+            let plan = try LaunchPlanner.plan(record, cDrive: cDrive, global: global, dosbox: dosbox, io: io)
             try sessions.start(gameID: id, plan: plan)
         } catch let error as LaunchError {
             if error == .executableNotSet, presentChooseProgram(for: record) { return }

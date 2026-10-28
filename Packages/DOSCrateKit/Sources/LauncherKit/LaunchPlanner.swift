@@ -13,10 +13,17 @@ public struct LaunchPlan: Equatable, Sendable {
 
 public enum LaunchPlanner {
     public static func plan(_ r: GameRecord, cDrive: URL, global: GlobalConfig, dosbox: URL, io: CrateIO) throws -> LaunchPlan {
-        let text = try render(r, cDrive: cDrive, global: global)
         let fm = FileManager.default
         let logs = io.logsURL(r.crateURL)
         try fm.createDirectory(at: logs, withIntermediateDirectories: true)
+        var controllerMap: URL?
+        if let layout = global.controllerLayout {
+            let map = io.cacheURL(r.crateURL).appending(path: "controller.map", directoryHint: .notDirectory)
+            if (try? Data(ControllerMap.render(layout).utf8).write(to: map, options: .atomic)) != nil {
+                controllerMap = map
+            }
+        }
+        let text = try render(r, cDrive: cDrive, global: global, controllerMap: controllerMap)
         let conf = io.cacheURL(r.crateURL).appending(path: "launch.conf", directoryHint: .notDirectory)
         try Data(text.utf8).write(to: conf, options: .atomic)
 
@@ -32,17 +39,20 @@ public enum LaunchPlanner {
     }
 
     public static func generatedConfigPreview(_ r: GameRecord, global: GlobalConfig, io: CrateIO) -> String {
+        let controllerMap = global.controllerLayout == nil ? nil
+            : io.cacheURL(r.crateURL).appending(path: "controller.map", directoryHint: .notDirectory)
         do {
-            return try render(r, cDrive: io.cDriveURL(for: r), global: global)
+            return try render(r, cDrive: io.cDriveURL(for: r), global: global, controllerMap: controllerMap)
         } catch {
             return "# error: \(error)"
         }
     }
 
-    private static func render(_ r: GameRecord, cDrive: URL, global: GlobalConfig) throws -> String {
+    private static func render(_ r: GameRecord, cDrive: URL, global: GlobalConfig, controllerMap: URL?) throws -> String {
         let media = r.game.media.map { (Preflight.mediaURL($0, in: r.crateURL), $0.kind) }
         do {
-            return try LaunchConfigBuilder.build(game: r.game, cDrive: cDrive, media: media, global: global).render()
+            return try LaunchConfigBuilder.build(game: r.game, cDrive: cDrive, media: media, global: global,
+                                                 controllerMap: controllerMap).render()
         } catch DOSPathError.notDOSName(let component, let parent) {
             let root = parent.isEmpty ? component : parent + "/" + component
             throw LaunchError.nonDOSPath(component: component, suggestedCRoot: root)

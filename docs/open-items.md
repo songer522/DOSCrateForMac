@@ -13,14 +13,8 @@ State as of the merge of PR #1 (`d07a896`, 2026-10-27). The code, tests (`make g
 
 ## Planned features
 
-- **Controller support.** DOSBox Staging 0.83.0 has no controller settings UI. It offers `joysticktype` (the default `auto` emulates a PC joystick), the Ctrl+F1 mapper (one global mapper file) and about 186 per-game Xbox maps in `Resources/mapperfiles/xbox/`, loaded with `mapperfile = xbox/<game>.map`. DOSCrate uses none of it, and most DOS games only read the keyboard. Plan, to be designed first:
-  - A built-in default map that DOSCrate writes and passes as `mapperfile`: d-pad and left stick → arrow keys, A → Ctrl, B → Alt, X → Space, Y → Enter, Start → Esc.
-  - Staging's bundled map for a game when one exists.
-  - A Controller tab in the inspector: a key, or "Joystick", for each button.
-  - A global default in Settings.
-
-  Open questions: the mapper file format (SDL scancodes, undocumented), and key bindings clashing with joystick emulation in games that support a joystick.
-  **Testing:** simulator (unit tests for map generation and `mapperfile` in the launch config); device probe first (map a few buttons in Staging's mapper on the Mac with each controller and read the saved file, to learn how buttons, axes and hats are written; check whether the Steam Controller shows up to SDL without Steam running); then device test on the Mac with a Steam Controller, a PS5 DualSense and an Xbox controller.
+- **Controller support, later slices.** Slice A shipped on `songer522/controller-support` (gamepad → keyboard keys, per-model layouts, Settings switch; device test passed 2026-10-28). Still planned: PC-joystick emulation per game (slice C, trigger axes are recorded in the spec §2 table) and a per-game Controller tab. The Switch 2 Pro controller stays out of scope (Staging's SDL can't open it on macOS).
+  **Testing:** simulator (layout and config tests); device test on the Mac with the controllers in the manual checklist's Controllers section.
 
 ## Known gaps
 
@@ -34,6 +28,12 @@ From the final review, deferred as non-blocking:
 - The Updates toggle copies `automaticallyChecksForUpdates` into `@State` once and can go stale. "Check for Updates…" is hidden, not disabled, when `canCheckForUpdates` is false. Sparkle should also require a non-empty `SUPublicEDKey` (the release script already requires both variables).
 - The DMG has an Applications symlink now, but only the DMG is stapled, and the Staging source tarball is verified by checksum while the LGPL tarballs are not.
 - iCloud "Optimize Storage" can evict files from the default `~/Documents/DOSCrate Library`. iCloud is out of scope (spec §9); worth a release-notes caveat.
+- `Vendor/DOSBox Staging.app` carries a `com.apple.quarantine` flag from `scripts/fetch-staging.sh`, so launching it directly (as the 2026-10-27 controller probe did) runs it from an App Translocation path. Check whether `embed-staging.sh` copies the flag into the app bundle; if so, strip it after fetching (`xattr -dr com.apple.quarantine`) so the embedded copy matches the notarized release.
+  **Testing:** simulator (none); device probe: `xattr -l` on `Vendor/` and on the built app's embedded Staging after `make vendor` and a build.
+- Launch files (`launch.conf`, `controller.map`) are written on the main thread at Play. In the 2026-10-28 controller test, the exFAT SD card volume hung (a plain `ls` hung too, and macOS's `UVFSService` was stuck), and DOSCrate beachballed until the card was recovered. Play should write off the main thread and fail with a message if the library volume doesn't respond. The cause of the volume hang is unknown; it didn't recur on the retry.
+  **Testing:** simulator (a planner test with a blocking file writer); device probe: reproduce with a hung or very slow volume if possible.
+- The controller switch applies at Play; it doesn't change a game that's already running (Staging reads the mapper file once at startup). By design; the Settings caption doesn't say so.
+  **Testing:** none (documented in the manual checklist).
 
 From the PR #4 review (duplicate handling), deferred:
 

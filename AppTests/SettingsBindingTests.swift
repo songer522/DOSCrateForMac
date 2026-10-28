@@ -1,4 +1,6 @@
+import ConfigKit
 import Foundation
+import LauncherKit
 import LibraryKit
 import SwiftUI
 import Testing
@@ -40,6 +42,20 @@ struct SettingsBindingTests {
         #expect(CyclesMode.preset.cycles(fixed: 2000) == nil)
         #expect(CyclesMode.max.cycles(fixed: 2000) == .max)
         #expect(CyclesMode.fixed.cycles(fixed: 50) == .fixed(100))
+    }
+
+    @Test func useControllersDefaultsOnAndPersists() {
+        let d = UserDefaults(suiteName: #function)!; d.removePersistentDomain(forName: #function)
+        let p = Preferences(defaults: d); #expect(p.useControllers)
+        p.useControllers = false; #expect(!Preferences(defaults: d).useControllers)
+    }
+
+    @Test func launchConfigRespectsSwitch() {
+        let d = UserDefaults(suiteName: #function)!; d.removePersistentDomain(forName: #function)
+        let p = Preferences(defaults: d)
+        let pad = GamepadInfo(vendorID: 0x054c, productID: 0x0ce6, transport: "USB", product: "DualSense Wireless Controller", usagePage: 1, usage: 5)
+        #expect(p.launchConfig(gamepads: [pad]).controllerLayout == .standard)
+        p.useControllers = false; #expect(p.launchConfig(gamepads: [pad]).controllerLayout == nil)
     }
 }
 

@@ -13,6 +13,18 @@ Run before each release, on the release build.
 - [ ] Licenses window opens and lists DOSCrate, Sparkle and DOSBox Staging licenses.
 - [ ] Notarized DMG installs and launches on a clean user account with Gatekeeper on.
 
+## Controllers
+
+With Settings → "Use game controllers" on, connect one controller at a time and press Play on a keyboard game: Xbox (USB and Bluetooth), PS5 DualSense (USB and Bluetooth), Steam Controller (puck).
+
+- [ ] Left stick up and down move the right way (check this first).
+- [ ] D-pad and left stick send the arrow keys; A, B, X, Y and Start send Left Ctrl, Left Alt, Space, Enter and Esc.
+- [ ] The keyboard still works alongside the controller.
+- [ ] A game from a library path with a space (e.g. `/Volumes/MicroSD 1TB/dos`) launches with the controller working.
+- [ ] With the switch off, the controller does nothing in a newly launched game. Changing the switch doesn't affect a game that's already running; it applies at the next Play.
+- [ ] With a Switch 2 Pro (cable) and an Xbox both connected, the Xbox works and the Switch 2 Pro does nothing.
+- [ ] The library's bottom bar shows the connected controller (the one Play maps, "+N" for more) and updates within a second on connect and disconnect. A wired Xbox shows as "Xbox Controller", a Switch 2 Pro alone as "Pro Controller — not supported", and the name is dimmed with "(off)" when the switch is off.
+
 ## Manual check
 
 - [ ] Drop 3+ items at once with "When importing" set to Ask (default): one "Import N items" sheet appears (not per-item sheets), Cancel imports nothing, and confirming with "Keep in place" + "Remember my choice" imports folders in place, copies zips/disc images, updates the preference, shows toolbar progress ("Importing X of N…"), and selects the first imported game.

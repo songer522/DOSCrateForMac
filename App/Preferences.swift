@@ -1,6 +1,7 @@
 import ConfigKit
 import Foundation
 import ImportKit
+import LauncherKit
 import LibraryKit
 import Observation
 
@@ -32,6 +33,7 @@ final class Preferences {
         static let rawGlobalOverrides = "rawGlobalOverrides"
         static let soundfontPath = "soundfontPath"
         static let mt32RomDir = "mt32RomDir"
+        static let useControllers = "useControllers"
     }
 
     static var defaultLibraryURL: URL {
@@ -52,6 +54,7 @@ final class Preferences {
     var rawGlobalOverrides: String { didSet { defaults.set(rawGlobalOverrides, forKey: Key.rawGlobalOverrides) } }
     var soundfontPath: String { didSet { defaults.set(soundfontPath, forKey: Key.soundfontPath) } }
     var mt32RomDir: String { didSet { defaults.set(mt32RomDir, forKey: Key.mt32RomDir) } }
+    var useControllers: Bool { didSet { defaults.set(useControllers, forKey: Key.useControllers) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -63,6 +66,7 @@ final class Preferences {
         rawGlobalOverrides = defaults.string(forKey: Key.rawGlobalOverrides) ?? ""
         soundfontPath = defaults.string(forKey: Key.soundfontPath) ?? ""
         mt32RomDir = defaults.string(forKey: Key.mt32RomDir) ?? ""
+        useControllers = defaults.object(forKey: Key.useControllers) as? Bool ?? true
     }
 
     var libraryURL: URL { URL(filePath: libraryPath, directoryHint: .isDirectory) }
@@ -72,5 +76,11 @@ final class Preferences {
             defaultPreset: defaultPreset, overrides: globalOverrides, rawOverrides: rawGlobalOverrides,
             env: ConfigEnvironment(soundfontPath: soundfontPath.isEmpty ? nil : soundfontPath,
                                    mt32RomDir: mt32RomDir.isEmpty ? nil : mt32RomDir))
+    }
+
+    func launchConfig(gamepads: [GamepadInfo]) -> GlobalConfig {
+        var c = globalConfig
+        c.controllerLayout = useControllers ? LayoutSelector.select(gamepads) : nil
+        return c
     }
 }

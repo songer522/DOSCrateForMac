@@ -1,4 +1,5 @@
 import AppKit
+import LauncherKit
 import LibraryKit
 import SwiftUI
 
@@ -48,6 +49,10 @@ struct LibraryView: View {
         model.query.apply(to: model.store.records, now: Date())
     }
 
+    private var controllerStatus: ControllerStatus? {
+        ControllerStatus.make(model.gamepads.devices, enabled: model.prefs.useControllers)
+    }
+
     var body: some View {
         NavigationSplitView {
             SidebarView(model: model)
@@ -79,6 +84,8 @@ struct LibraryView: View {
                                 .frame(maxWidth: 180)
                             Text("Removing \(removal.done) of \(removal.total)…")
                         }
+                    } else if controllerStatus != nil {
+                        statusBar(cancellable: false) {}
                     }
                 }
                 .navigationTitle("DOSCrate")
@@ -165,6 +172,12 @@ struct LibraryView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 Spacer()
+                if let status = controllerStatus {
+                    Label(status.label, systemImage: "gamecontroller")
+                        .font(.callout)
+                        .foregroundStyle(status.enabled ? .secondary : .tertiary)
+                        .monospacedDigit()
+                }
                 if cancellable {
                     Button("Cancel") { model.cancelImport() }
                         .controlSize(.small)
