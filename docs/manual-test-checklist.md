@@ -36,3 +36,12 @@ With Settings → "Use game controllers" on, connect one controller at a time an
 - [ ] Cancel in the "Choose program" sheet changes nothing and does not launch the game.
 - [ ] Confirming in the "Choose program" sheet saves the executable and launches; pressing Play a second time launches directly without prompting.
 - [ ] Dropping a batch containing a failing item imports the rest and lists the failing item once in the summary alert at the end.
+
+## Themes
+
+- [ ] Fresh install: DOS theme by default; grid and list both readable; pixel font crisp (not blurry); selection outline; context menu actions; double-click Play; Delete key removal with the same dialog; drag-and-drop import and Import… with progress and Cancel in the status bar; collection rename/remove; inspector controls are retro in DOS (pickers, segmented controls, Info/Settings/Advanced tabs, Play/Stop button, flat beveled sections) while staying native in Standard and in the Settings window; inspector edits save.
+- [ ] Switch to Standard in Settings: library window restyles immediately to native macOS UI; selection, filter, search, sort, grid/list and inspector state kept.
+- [ ] Switch themes while a game runs and while an import runs: nothing interrupted.
+- [ ] Light and dark mode: DOS palette unchanged.
+- [ ] Licenses window lists the font license.
+- [ ] Switch back to DOS: identical to step 1.

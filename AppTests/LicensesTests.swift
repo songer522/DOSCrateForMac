@@ -30,4 +30,10 @@ struct LicensesTests {
         #expect(names.contains("DOSCrate-MIT.txt"))
         #expect(names.contains("Sparkle-LICENSE.txt"))
     }
+
+    @Test func licensesIncludeTheFont() {
+        let names = LicenseFile.all(in: licensesURL).map(\.name)
+        #expect(names.contains { $0.contains("Fonts/PxPlus-IBM-VGA") })
+        #expect(LicensesView.notice.contains("PxPlus IBM VGA"))
+    }
 }

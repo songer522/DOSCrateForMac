@@ -55,15 +55,16 @@ struct GameGridView: View {
     }
 
     private func toggle(_ id: UUID) {
-        if model.selectedIDs.contains(id) { model.selectedIDs.remove(id) } else { model.selectedIDs.insert(id) }
+        model.selectedIDs = GridSelection.toggle(id, in: model.selectedIDs)
         anchor = id
         isFocused = true
     }
 
     private func extend(to id: UUID) {
         isFocused = true
-        guard let anchor, let from = records.firstIndex(where: { $0.id == anchor }),
-              let to = records.firstIndex(where: { $0.id == id }) else { return selectOnly(id) }
-        model.selectedIDs = Set(records[min(from, to)...max(from, to)].map(\.id))
+        guard let selected = GridSelection.extend(from: anchor, to: id, in: records.map(\.id)) else {
+            return selectOnly(id)
+        }
+        model.selectedIDs = selected
     }
 }

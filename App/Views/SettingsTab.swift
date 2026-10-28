@@ -51,11 +51,7 @@ struct OptionalPicker<T: Hashable>: View {
     }
 
     var body: some View {
-        Picker(title, selection: $selection) {
-            Text("Preset default").tag(T?.none)
-            Divider()
-            ForEach(options, id: \.self) { Text(label($0)).tag(T?.some($0)) }
-        }
+        ThemedPicker(title, selection: $selection, options: options, label: label)
     }
 }
 
@@ -80,7 +76,7 @@ struct CuratedSettingsSections: View {
 struct PresetSection: View {
     @Binding var settings: GameSettings
     var body: some View {
-        Section("Preset") {
+        ThemedSection("Preset") {
             OptionalPicker("Machine preset", selection: $settings.preset, options: Preset.allCases, label: \.displayName)
         }
     }
@@ -115,13 +111,10 @@ struct CPUSection: View {
     }
 
     var body: some View {
-        Section("CPU") {
-            Picker("Cycles", selection: mode) {
-                ForEach(CyclesMode.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
+        ThemedSection("CPU") {
+            ThemedSegmented("Cycles", selection: mode, options: CyclesMode.allCases, label: \.rawValue)
             if CyclesMode(settings.cycles) == .fixed {
-                TextField("Fixed cycles", value: fixedValue, format: .number.grouping(.never))
+                ThemedNumberField(title: "Fixed cycles", value: fixedValue)
                     .help("100 to 500000")
             }
             OptionalPicker("Core", selection: $settings.core, options: CPUCore.allCases, label: \.displayName)
@@ -133,7 +126,7 @@ struct MemorySection: View {
     static let sizes = [1, 2, 4, 8, 16, 32, 64]
     @Binding var settings: GameSettings
     var body: some View {
-        Section("Memory") {
+        ThemedSection("Memory") {
             OptionalPicker("Memory size", selection: $settings.memoryMB, options: Self.sizes) { "\($0) MB" }
         }
     }
@@ -143,7 +136,7 @@ struct GraphicsSection: View {
     static let shaders = ["crt-auto", "crt-auto-machine", "crt-auto-arcade", "sharp", "bilinear", "nearest"]
     @Binding var settings: GameSettings
     var body: some View {
-        Section("Graphics") {
+        ThemedSection("Graphics") {
             OptionalPicker("Machine", selection: $settings.machine, options: Machine.allCases, label: \.displayName)
             OptionalPicker("Shader", selection: $settings.shader, options: Self.shaders) { $0 }
             OptionalPicker("Aspect", selection: $settings.aspect, options: Aspect.allCases, label: \.displayName)
@@ -155,7 +148,7 @@ struct GraphicsSection: View {
 struct SoundSection: View {
     @Binding var settings: GameSettings
     var body: some View {
-        Section("Sound") {
+        ThemedSection("Sound") {
             OptionalPicker("Sound card", selection: $settings.soundCard, options: SoundCard.allCases, label: \.displayName)
             OptionalPicker("MIDI", selection: $settings.midi, options: MIDIMode.allCases, label: \.displayName)
         }
@@ -171,9 +164,9 @@ struct InputSection: View {
     }
 
     var body: some View {
-        Section("Input") {
+        ThemedSection("Input") {
             OptionalPicker("Mouse capture", selection: $settings.mouseCapture, options: MouseCapture.allCases, label: \.displayName)
-            TextField("Keyboard layout", text: layout, prompt: Text("auto"))
+            ThemedTextField(title: "Keyboard layout", text: layout, prompt: "auto")
         }
     }
 }
@@ -186,25 +179,59 @@ struct DrivesSection: View {
     var onError: (String, String) -> Void
     /// Called when an entry is removed; its file is trashed by the owner once the change is saved.
     var onRemoved: (MediaImage) -> Void
+    @Environment(\.retroTheme) private var retroTheme
 
     var body: some View {
-        Section("Drives") {
+        ThemedSection("Drives") {
             ForEach(Array(game.media.enumerated()), id: \.element.relativePath) { index, image in
-                HStack {
-                    Image(systemName: image.kind == .cdrom ? "opticaldisc" : "externaldrive")
-                    Text((image.relativePath as NSString).lastPathComponent).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    Button("Move Up", systemImage: "chevron.up") { game.media.swapAt(index, index - 1) }
-                        .disabled(index == 0)
-                    Button("Move Down", systemImage: "chevron.down") { game.media.swapAt(index, index + 1) }
-                        .disabled(index == game.media.count - 1)
-                    Button("Remove", systemImage: "minus.circle") { remove(at: index) }
+                if retroTheme {
+                    HStack(spacing: 6) {
+                        PixelSymbol(image.kind == .cdrom ? "opticaldisc" : "externaldrive",
+                                    color: RetroPalette.desktop,
+                                    pointSize: 16,
+                                    scale: 1)
+                        Text((image.relativePath as NSString).lastPathComponent)
+                            .font(RetroFont.font())
+                            .foregroundStyle(RetroPalette.shadow)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button("▲") { game.media.swapAt(index, index - 1) }
+                            .buttonStyle(RetroButtonStyle())
+                            .disabled(index == 0)
+                        Button("▼") { game.media.swapAt(index, index + 1) }
+                            .buttonStyle(RetroButtonStyle())
+                            .disabled(index == game.media.count - 1)
+                        Button("−") { remove(at: index) }
+                            .buttonStyle(RetroButtonStyle())
+                    }
+                } else {
+                    HStack {
+                        Image(systemName: image.kind == .cdrom ? "opticaldisc" : "externaldrive")
+                        Text((image.relativePath as NSString).lastPathComponent).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button("Move Up", systemImage: "chevron.up") { game.media.swapAt(index, index - 1) }
+                            .disabled(index == 0)
+                        Button("Move Down", systemImage: "chevron.down") { game.media.swapAt(index, index + 1) }
+                            .disabled(index == game.media.count - 1)
+                        Button("Remove", systemImage: "minus.circle") { remove(at: index) }
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
                 }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
             }
-            Button("Add Disc or Floppy Image…", systemImage: "plus", action: add)
-            TextField("C: root subfolder", text: $game.launch.driveCRoot, prompt: Text("(game folder)"))
+            if retroTheme {
+                Button(action: add) {
+                    HStack(spacing: 6) {
+                        PixelSymbol("plus", color: RetroPalette.green, pointSize: 16, scale: 1)
+                        Text("Add Disc or Floppy Image…")
+                    }
+                }
+                .buttonStyle(RetroButtonStyle())
+            } else {
+                Button("Add Disc or Floppy Image…", systemImage: "plus", action: add)
+            }
+            ThemedTextField(title: "C: root subfolder", text: $game.launch.driveCRoot, prompt: "(game folder)")
         }
     }
 
@@ -249,9 +276,9 @@ struct StartupSection: View {
     @Binding var game: Game
 
     var body: some View {
-        Section("Startup") {
+        ThemedSection("Startup") {
             ExecutablePicker(record: record, game: game, executable: $game.launch.executable)
-            TextField("Arguments", text: $game.launch.arguments)
+            ThemedTextField(title: "Arguments", text: $game.launch.arguments)
             CommandsEditor(title: "Before the game", commands: $game.launch.preCommands)
             CommandsEditor(title: "After the game", commands: $game.launch.postCommands)
             Toggle("Quit DOSBox when game exits", isOn: $game.launch.exitWhenDone)
@@ -274,10 +301,14 @@ struct ExecutablePicker: View {
     }
 
     var body: some View {
-        Picker("Program", selection: $executable) {
-            Text("None").tag(String?.none)
-            ForEach(options, id: \.self) { Text($0).tag(String?.some($0)) }
-        }
+        ThemedPicker(
+            "Program",
+            selection: $executable,
+            nilLabel: "None",
+            showsDividerAfterNil: false,
+            options: options,
+            label: { $0 }
+        )
         .task(id: Key(root: game.launch.driveCRoot, title: game.title)) {
             var r = record
             r.game = game
@@ -295,6 +326,7 @@ struct CommandsEditor: View {
     let title: String
     @Binding var commands: [String]
     @State private var text: String
+    @Environment(\.retroTheme) private var retroTheme
 
     init(title: String, commands: Binding<[String]>) {
         self.title = title
@@ -303,12 +335,23 @@ struct CommandsEditor: View {
     }
 
     var body: some View {
-        LabeledContent(title) {
-            TextEditor(text: $text)
-                .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 54)
-                .scrollContentBackground(.hidden)
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 4))
+        ThemedLabeledRow(title) {
+            if retroTheme {
+                TextEditor(text: $text)
+                    .font(RetroFont.font())
+                    .foregroundStyle(RetroPalette.shadow)
+                    .frame(minHeight: 54)
+                    .scrollContentBackground(.hidden)
+                    .padding(4)
+                    .background(RetroPalette.bevelLight)
+                    .retroBevel(.sunken)
+            } else {
+                TextEditor(text: $text)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 54)
+                    .scrollContentBackground(.hidden)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 4))
+            }
         }
         .onChange(of: text) { _, new in
             let lines = new.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -324,11 +367,10 @@ struct SettingsTab: View {
     var onRemovedMedia: (MediaImage) -> Void
 
     var body: some View {
-        Form {
+        ThemedForm {
             CuratedSettingsSections(settings: $game.settings)
             DrivesSection(record: record, game: $game, onError: onError, onRemoved: onRemovedMedia)
             StartupSection(record: record, game: $game)
         }
-        .formStyle(.grouped)
     }
 }

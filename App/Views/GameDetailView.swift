@@ -6,7 +6,7 @@ import SwiftUI
 /// The inspector for one game. Edits go to a draft that is saved 500 ms after the last change.
 /// Create it with `.id(record.id)` so the draft resets when the selection changes.
 struct GameDetailView: View {
-    private enum Tab: String, CaseIterable, Identifiable {
+    enum Tab: String, CaseIterable, Identifiable {
         case info = "Info", settings = "Settings", advanced = "Advanced"
         var id: Self { self }
     }
@@ -18,12 +18,14 @@ struct GameDetailView: View {
     @State private var saveTask: Task<Void, Never>?
     /// Media files whose entries were removed; trashed only once the removal is saved.
     @State private var removedMedia: [String] = []
-    @State private var tab = Tab.info
+    @State private var tab: Tab
+    @Environment(\.retroTheme) private var retroTheme
 
-    init(model: AppModel, record: GameRecord) {
+    init(model: AppModel, record: GameRecord, initialTab: Tab = .info) {
         self.model = model
         self.record = record
         self._draft = State(initialValue: record.game)
+        self._tab = State(initialValue: initialTab)
     }
 
     var body: some View {
@@ -31,16 +33,15 @@ struct GameDetailView: View {
             GameHeader(model: model, record: record, onPlay: play)
                 .padding()
             if case .readOnly(let reason) = record.status {
-                Text(reason).font(.callout).foregroundStyle(.secondary)
+                Text(reason)
+                    .font(retroTheme ? RetroFont.font() : .callout)
+                    .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal).padding(.bottom, 8)
             }
-            Picker("Section", selection: $tab) {
-                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal)
+            ThemedSegmented("Section", showsTitle: false, selection: $tab, options: Tab.allCases, label: \.rawValue)
+                .padding(.horizontal)
+                .padding(.bottom, retroTheme ? 8 : 0)
             Group {
                 switch tab {
                 case .info: InfoTab(game: $draft)
@@ -146,6 +147,7 @@ private struct GameHeader: View {
     let onPlay: () -> Void
     @State private var coverRevision = 0
     @State private var dropTargeted = false
+    @Environment(\.retroTheme) private var retroTheme
 
     private var running: Bool { model.sessions.running.contains(record.id) }
     private var starting: Bool { model.startingIDs.contains(record.id) }
@@ -153,43 +155,114 @@ private struct GameHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
-                CoverView(record: record, isRunning: running, isStarting: starting)
-                    .id(coverRevision)
-                    .frame(width: 90)
-                    .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 3) } }
-                    .dropDestination(for: URL.self) { urls, _ in setCover(from: urls) } isTargeted: { dropTargeted = $0 }
+                coverBox
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(record.game.title).font(.title2.bold()).lineLimit(2)
-                    Text(playTime).font(.callout).foregroundStyle(.secondary)
-                    Text(lastPlayed).font(.callout).foregroundStyle(.secondary)
-                    if running {
-                        Button("Stop", systemImage: "stop.fill") { model.stop(record.id) }
-                    } else if starting {
-                        Button(action: onPlay) {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text("Starting…")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(true)
-                    } else {
-                        Button("Play", systemImage: "play.fill", action: onPlay)
-                            .buttonStyle(.borderedProminent)
-                            .disabled(model.pendingRemovalIDs.contains(record.id))
-                    }
+                    Text(record.game.title)
+                        .font(retroTheme ? RetroFont.font() : .title2.bold())
+                        .foregroundStyle(retroTheme ? RetroPalette.shadow : .primary)
+                        .lineLimit(2)
+                    Text(playTime)
+                        .font(retroTheme ? RetroFont.font() : .callout)
+                        .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
+                    Text(lastPlayed)
+                        .font(retroTheme ? RetroFont.font() : .callout)
+                        .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
+                    actionButton
                 }
                 Spacer(minLength: 0)
             }
             if let result = model.lastResult[record.id], result.unexpected {
-                HStack {
-                    Label("Exited unexpectedly", systemImage: "exclamationmark.triangle.fill")
-                    Spacer()
-                    Button("View Log") { openLog(result.logURL) }
-                }
-                .padding(8)
-                .background(.orange.opacity(0.2), in: RoundedRectangle(cornerRadius: 6))
+                unexpectedExitBanner(logURL: result.logURL)
             }
+        }
+    }
+
+    @ViewBuilder private var coverBox: some View {
+        let base = CoverView(record: record, isRunning: !retroTheme && running, isStarting: !retroTheme && starting)
+            .id(coverRevision)
+            .frame(width: 90)
+        if retroTheme {
+            base
+                .retroBevel(.sunken)
+                .overlay {
+                    if dropTargeted {
+                        Rectangle()
+                            .strokeBorder(RetroPalette.highlight, style: StrokeStyle(lineWidth: 2, dash: [2, 2]))
+                    }
+                }
+                .dropDestination(for: URL.self) { urls, _ in setCover(from: urls) } isTargeted: { dropTargeted = $0 }
+        } else {
+            base
+                .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 3) } }
+                .dropDestination(for: URL.self) { urls, _ in setCover(from: urls) } isTargeted: { dropTargeted = $0 }
+        }
+    }
+
+    @ViewBuilder private var actionButton: some View {
+        if retroTheme {
+            if running {
+                Button { model.stop(record.id) } label: {
+                    HStack(spacing: 6) {
+                        PixelSymbol("stop.fill", color: RetroPalette.red, pointSize: 16, scale: 1)
+                        Text("Stop")
+                    }
+                }
+                .buttonStyle(RetroButtonStyle())
+            } else if starting {
+                Button("Starting…", action: onPlay)
+                    .buttonStyle(RetroButtonStyle())
+                    .disabled(true)
+            } else {
+                let disabled = model.pendingRemovalIDs.contains(record.id)
+                Button(action: onPlay) {
+                    HStack(spacing: 6) {
+                        PixelSymbol("play.fill", color: disabled ? RetroPalette.bevelDark : RetroPalette.green, pointSize: 16, scale: 1)
+                        Text("Play")
+                    }
+                }
+                .buttonStyle(RetroButtonStyle())
+                .disabled(disabled)
+            }
+        } else if running {
+            Button("Stop", systemImage: "stop.fill") { model.stop(record.id) }
+        } else if starting {
+            Button(action: onPlay) {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Starting…")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(true)
+        } else {
+            Button("Play", systemImage: "play.fill", action: onPlay)
+                .buttonStyle(.borderedProminent)
+                .disabled(model.pendingRemovalIDs.contains(record.id))
+        }
+    }
+
+    @ViewBuilder private func unexpectedExitBanner(logURL: URL) -> some View {
+        if retroTheme {
+            HStack {
+                PixelSymbol("exclamationmark.triangle.fill", color: RetroPalette.red, pointSize: 16, scale: 1)
+                Text("Exited unexpectedly")
+                    .font(RetroFont.font())
+                    .foregroundStyle(RetroPalette.shadow)
+                Spacer()
+                Button("View Log") { openLog(logURL) }
+                    .buttonStyle(RetroButtonStyle())
+            }
+            .padding(8)
+            .background(RetroPalette.yellow)
+            .retroBevel(.sunken)
+        } else {
+            HStack {
+                Label("Exited unexpectedly", systemImage: "exclamationmark.triangle.fill")
+                Spacer()
+                Button("View Log") { openLog(logURL) }
+            }
+            .padding(8)
+            .background(.orange.opacity(0.2), in: RoundedRectangle(cornerRadius: 6))
         }
     }
 

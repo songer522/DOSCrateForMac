@@ -14,30 +14,51 @@ struct AdvancedTab: View {
     @State private var loaded = false
     @State private var unreadable = false
     @State private var writeTask: Task<Void, Never>?
+    @Environment(\.retroTheme) private var retroTheme
 
     private let io = CrateIO()
 
     var body: some View {
-        Form {
-            Section("Override (override.conf)") {
-                TextEditor(text: $text)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 140)
-                    .disabled(unreadable)
+        ThemedForm {
+            ThemedSection("Override (override.conf)") {
+                if retroTheme {
+                    TextEditor(text: $text)
+                        .font(RetroFont.font())
+                        .foregroundStyle(RetroPalette.shadow)
+                        .scrollContentBackground(.hidden)
+                        .padding(4)
+                        .frame(minHeight: 140)
+                        .background(RetroPalette.bevelLight)
+                        .retroBevel(.sunken)
+                        .disabled(unreadable)
+                } else {
+                    TextEditor(text: $text)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 140)
+                        .disabled(unreadable)
+                }
                 if unreadable {
                     Text("override.conf isn't valid UTF-8 text, so it can't be edited here.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(retroTheme ? RetroFont.font() : .caption)
+                        .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
                 }
-                Link("DOSBox Staging documentation", destination: URL(string: "https://dosbox-staging.github.io/")!)
+                if retroTheme {
+                    Link("DOSBox Staging documentation", destination: URL(string: "https://dosbox-staging.github.io/")!)
+                        .font(RetroFont.font())
+                        .foregroundStyle(RetroPalette.desktop)
+                        .underline()
+                } else {
+                    Link("DOSBox Staging documentation", destination: URL(string: "https://dosbox-staging.github.io/")!)
+                }
             }
-            Section("Generated config") {
+            ThemedSection("Generated config") {
                 Text(preview)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(retroTheme ? RetroFont.font() : .system(.caption, design: .monospaced))
+                    .foregroundStyle(retroTheme ? RetroPalette.shadow : .primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .formStyle(.grouped)
         .task {
             let url = io.overrideURL(record.crateURL)
             if FileManager.default.fileExists(atPath: url.path) {

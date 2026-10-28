@@ -54,6 +54,9 @@ private struct GeneralPreferences: View {
         @Bindable var prefs = model.prefs
         Form {
             PathRow(title: "Library location", path: prefs.libraryPath, onChoose: chooseLibrary)
+            Picker("Theme", selection: $prefs.appTheme) {
+                ForEach(AppTheme.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            }
             Picker("Default preset", selection: $prefs.defaultPreset) {
                 ForEach(Preset.allCases, id: \.self) { Text($0.displayName).tag($0) }
             }

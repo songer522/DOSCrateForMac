@@ -13,6 +13,7 @@ struct DOSCrateApp: App {
     private let appcastURL = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? ""
 
     init() {
+        RetroFont.register()
         updaterController = SPUStandardUpdaterController(
             startingUpdater: !appcastURL.isEmpty, updaterDelegate: nil, userDriverDelegate: nil)
         let prefs = Preferences()
