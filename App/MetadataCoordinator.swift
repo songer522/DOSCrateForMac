@@ -82,6 +82,7 @@ final class MetadataCoordinator {
 
     var phase: LaunchBoxIndexStore.Phase = .idle
     var lastUpdated: Date?
+    private(set) var unmatched: [UUID] = []
 
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var failedQueueIDs: Set<UUID> = []
@@ -95,16 +96,50 @@ final class MetadataCoordinator {
         }
     }
 
+    static func unmatchedStatusText(count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count == 1
+            ? "1 game without a LaunchBox match"
+            : "\(count) games without a LaunchBox match"
+    }
+
+    var unmatchedStatusText: String? {
+        switch phase {
+        case .idle, .ready:
+            Self.unmatchedStatusText(count: unmatched.count)
+        case .downloading, .building, .failed:
+            nil
+        }
+    }
+
+    var showsUnmatchedReview: Bool {
+        unmatchedStatusText != nil
+    }
+
     var statusText: String? {
         switch phase {
         case .idle, .ready:
-            nil
+            unmatchedStatusText
         case .downloading(let fraction):
             "Downloading LaunchBox data… \(Int((min(1.0, max(0.0, fraction)) * 100).rounded()))%"
         case .building:
             "Building LaunchBox index…"
         case .failed:
             "LaunchBox data unavailable"
+        }
+    }
+
+    func dismissUnmatched() {
+        unmatched.removeAll()
+    }
+
+    func removeUnmatched(_ id: UUID) {
+        unmatched.removeAll { $0 == id }
+    }
+
+    private func addUnmatched(_ id: UUID) {
+        if !unmatched.contains(id) {
+            unmatched.append(id)
         }
     }
 
@@ -209,6 +244,7 @@ final class MetadataCoordinator {
         let updatedGame = MetadataApplier.apply(patch, to: latestRecord.game, mode: mode, now: Date())
         do {
             try model.store.save(updatedGame)
+            removeUnmatched(id)
         } catch {
             return .cancelled
         }
@@ -247,6 +283,7 @@ final class MetadataCoordinator {
         else { return }
 
         guard let matched = TitleMatcher.autoMatch(for: currentRecord.game.title, in: records) else {
+            addUnmatched(id)
             return
         }
 

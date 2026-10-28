@@ -129,6 +129,9 @@ struct LibraryView: View {
                             if Self.showsMetadataRetry(for: model) {
                                 Button("Retry") { model.metadata.retry() }
                                     .controlSize(.small)
+                            } else if Self.showsUnmatchedReview(for: model) {
+                                Button("Review") { model.showingUnmatchedMetadata = true }
+                                    .controlSize(.small)
                             }
                         }
                     } else if controllerStatus != nil {
@@ -258,6 +261,15 @@ struct LibraryView: View {
             return true
         }
         return false
+    }
+
+    static func showsUnmatchedReview(for model: AppModel) -> Bool {
+        guard model.imports.progress == nil,
+              !model.isScanningLibrary,
+              !model.imports.isCheckingDuplicates,
+              model.removalProgress == nil
+        else { return false }
+        return model.metadata.showsUnmatchedReview
     }
 
     /// What removal does, worded per source: a managed game's files live in its crate, so they always go with it.

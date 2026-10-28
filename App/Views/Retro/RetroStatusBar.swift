@@ -36,6 +36,9 @@ struct RetroStatusBar: View {
                 if Self.showsMetadataRetry(for: model) {
                     Button("Retry") { model.metadata.retry() }
                         .buttonStyle(RetroButtonStyle(kind: .text))
+                } else if Self.showsUnmatchedReview(for: model) {
+                    Button("Review") { model.showingUnmatchedMetadata = true }
+                        .buttonStyle(RetroButtonStyle(kind: .text))
                 }
             }
         } else if controllerStatus != nil {
@@ -49,6 +52,10 @@ struct RetroStatusBar: View {
 
     static func showsMetadataRetry(for model: AppModel) -> Bool {
         LibraryView.showsMetadataRetry(for: model)
+    }
+
+    static func showsUnmatchedReview(for model: AppModel) -> Bool {
+        LibraryView.showsUnmatchedReview(for: model)
     }
 
     private func bar(cancellable: Bool, @ViewBuilder _ items: () -> some View) -> some View {

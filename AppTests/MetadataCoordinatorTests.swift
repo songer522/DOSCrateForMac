@@ -346,4 +346,82 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         coord.phase = .failed("boom")
         #expect(coord.statusText == "LaunchBox data unavailable")
     }
+
+    @Test func unmatchedAddedWhenAutoMatchFails() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Aladin")
+
+        model.metadata.importedGame(id)
+        await waitUntil { provider.ensureReadyCalls == 1 && model.metadata.unmatched == [id] }
+        #expect(model.metadata.unmatched == [id])
+
+        // Re-importing the same unmatched game does not duplicate its ID
+        model.metadata.importedGame(id)
+        await waitUntil { provider.ensureReadyCalls == 2 }
+        #expect(model.metadata.unmatched == [id])
+    }
+
+    @Test func unmatchedClearedWhenMatchApplied() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Aladin")
+
+        model.metadata.importedGame(id)
+        await waitUntil { model.metadata.unmatched == [id] }
+
+        let outcome = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        #expect(outcome == .applied(artFailed: false))
+        #expect(model.metadata.unmatched.isEmpty)
+    }
+
+    @Test func unmatchedClearedOnRemove() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Aladin")
+
+        model.metadata.importedGame(id)
+        await waitUntil { model.metadata.unmatched == [id] }
+
+        model.removeGame(id, trashFiles: true)
+        #expect(model.metadata.unmatched.isEmpty)
+    }
+
+    @Test func unmatchedStatusTextSingularPlural() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id1) = try await makeEnv(title: "Aladin")
+
+        let lib = root.appending(path: "Library", directoryHint: .isDirectory)
+        let crate2 = try io.makeCrate(title: "1000m", in: lib)
+        var game2 = Game(title: "1000m", source: .managed)
+        game2.launch.executable = "GAME.EXE"
+        try io.save(game2, extra: [:], to: crate2)
+        await model.store.reload()
+
+        model.metadata.importedGame(id1)
+        await waitUntil { model.metadata.unmatched == [id1] }
+        #expect(LibraryView.statusBarLeadingText(for: model) == "1 game without a LaunchBox match")
+        #expect(RetroStatusBar.leadingText(for: model) == "1 game without a LaunchBox match")
+        #expect(LibraryView.showsUnmatchedReview(for: model) == true)
+
+        model.metadata.importedGame(game2.id)
+        await waitUntil { model.metadata.unmatched.count == 2 }
+        #expect(LibraryView.statusBarLeadingText(for: model) == "2 games without a LaunchBox match")
+        #expect(RetroStatusBar.leadingText(for: model) == "2 games without a LaunchBox match")
+
+        // While downloading or building, download/build status takes precedence over unmatched notice
+        model.metadata.phase = .downloading(0.5)
+        #expect(LibraryView.statusBarLeadingText(for: model) == "Downloading LaunchBox data… 50%")
+        #expect(LibraryView.showsUnmatchedReview(for: model) == false)
+    }
+
+    @Test func dismissAllClears() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Aladin")
+
+        model.metadata.importedGame(id)
+        await waitUntil { model.metadata.unmatched == [id] }
+
+        model.metadata.dismissUnmatched()
+        #expect(model.metadata.unmatched.isEmpty)
+        #expect(LibraryView.statusBarLeadingText(for: model) == nil)
+        #expect(LibraryView.showsUnmatchedReview(for: model) == false)
+    }
 }

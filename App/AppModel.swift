@@ -63,6 +63,7 @@ final class AppModel {
     var pendingFix: PendingFix?
     var chooseProgram: ChooseProgramRequest?
     var findMetadataFor: UUID?
+    var showingUnmatchedMetadata = false
     private(set) var needsLibrarySetup: Bool
     /// True while the first-run scan looks for games, before the batch import (and its progress) starts.
     private(set) var isScanningLibrary = false
@@ -226,6 +227,9 @@ final class AppModel {
         }
         removalProgress = nil
         selectedIDs = selectedIDs.filter { store.record($0) != nil }
+        for id in targets where store.record(id) == nil {
+            metadata.removeUnmatched(id)
+        }
         let skipped = running.compactMap { store.record($0)?.game.title }.sorted()
             .map { "\($0): stop the game before removing it." }
         let problems = skipped + failures
@@ -248,6 +252,7 @@ final class AppModel {
         do {
             try store.remove(id, trashFiles: trashFiles)
             selectedIDs.remove(id)
+            metadata.removeUnmatched(id)
         } catch {
             alert = AppAlert(title: "Can't remove \(record.game.title)", message: error.localizedDescription)
         }
