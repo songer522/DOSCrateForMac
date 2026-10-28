@@ -23,10 +23,23 @@ enum ImportLocationPreference: String, CaseIterable, Sendable {
     }
 }
 
+enum AppTheme: String, CaseIterable, Sendable {
+    case standard
+    case dos
+
+    var displayName: String {
+        switch self {
+        case .standard: "Standard"
+        case .dos: "DOS"
+        }
+    }
+}
+
 @MainActor @Observable
 final class Preferences {
     enum Key {
         static let libraryPath = "libraryPath"
+        static let appTheme = "appTheme"
         static let defaultPreset = "defaultPreset"
         static let importLocation = "importLocation"
         static let globalOverrides = "globalOverrides"
@@ -44,6 +57,7 @@ final class Preferences {
     @ObservationIgnored private let defaults: UserDefaults
 
     var libraryPath: String { didSet { defaults.set(libraryPath, forKey: Key.libraryPath) } }
+    var appTheme: AppTheme { didSet { defaults.set(appTheme.rawValue, forKey: Key.appTheme) } }
     var defaultPreset: Preset { didSet { defaults.set(defaultPreset.rawValue, forKey: Key.defaultPreset) } }
     var importLocation: ImportLocationPreference {
         didSet { defaults.set(importLocation.rawValue, forKey: Key.importLocation) }
@@ -59,6 +73,7 @@ final class Preferences {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         libraryPath = defaults.string(forKey: Key.libraryPath) ?? Self.defaultLibraryURL.path
+        appTheme = defaults.string(forKey: Key.appTheme).flatMap(AppTheme.init(rawValue:)) ?? .standard
         defaultPreset = defaults.string(forKey: Key.defaultPreset).flatMap(Preset.init(rawValue:)) ?? .auto
         importLocation = defaults.string(forKey: Key.importLocation).flatMap(ImportLocationPreference.init(rawValue:)) ?? .ask
         globalOverrides = defaults.data(forKey: Key.globalOverrides)
