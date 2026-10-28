@@ -115,8 +115,13 @@ final class MetadataCoordinator {
     private(set) var lastOutcome: [UUID: ApplyOutcome] = [:]
     var artErrorMessage: String?
 
+    private struct ArtTaskEntry {
+        let token: UUID
+        let task: Task<Void, Never>
+    }
+
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
-    @ObservationIgnored private var artTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var artTasks: [UUID: ArtTaskEntry] = [:]
     @ObservationIgnored private var pendingStoreIDs: [UUID] = []
     @ObservationIgnored private var failedQueueIDs: Set<UUID> = []
     @ObservationIgnored private var findMissingTask: Task<Void, Never>?
@@ -282,7 +287,7 @@ final class MetadataCoordinator {
         pendingStoreIDs.removeAll { $0 == id }
         tasks[id]?.cancel()
         tasks[id] = nil
-        artTasks[id]?.cancel()
+        artTasks[id]?.task.cancel()
         artTasks[id] = nil
         artLoading.remove(id)
         applyingIDs.remove(id)
@@ -351,8 +356,9 @@ final class MetadataCoordinator {
         applyingIDs.insert(id)
         defer { applyingIDs.remove(id) }
 
-        artTasks[id]?.cancel()
+        artTasks[id]?.task.cancel()
         artTasks[id] = nil
+        artLoading.remove(id)
 
         let patch = MetadataApplier.patch(from: record)
         let crateURL = latestRecord.crateURL
@@ -400,19 +406,21 @@ final class MetadataCoordinator {
             return .applied(artFailed: false)
         }
 
+        let token = UUID()
         lastOutcome[id] = nil
         artLoading.insert(id)
         let artTask = Task { [weak self] in
             guard let self else { return }
-            await self.runBackgroundArt(pendingArt, for: id, crateURL: crateURL, mode: mode)
+            await self.runBackgroundArt(pendingArt, for: id, token: token, crateURL: crateURL, mode: mode)
         }
-        artTasks[id] = artTask
+        artTasks[id] = ArtTaskEntry(token: token, task: artTask)
         return .applied(artFailed: false)
     }
 
     private func runBackgroundArt(
         _ art: [ArtKind: URL],
         for id: UUID,
+        token: UUID,
         crateURL: URL,
         mode: ApplyMode
     ) async {
@@ -420,11 +428,13 @@ final class MetadataCoordinator {
         let start = clock.now
         let result = await provider.download(art, into: crateURL, mode: mode) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.artRevision[id, default: 0] += 1
+                guard let self, self.artTasks[id]?.token == token else { return }
+                self.artRevision[id, default: 0] += 1
             }
         }
         Self.logger.debug("background art download for \(id, privacy: .public) took \(clock.now - start, privacy: .public)")
 
+        guard artTasks[id]?.token == token else { return }
         artTasks[id] = nil
         artLoading.remove(id)
         guard !Task.isCancelled else {
@@ -487,6 +497,6 @@ final class MetadataCoordinator {
         }
 
         _ = await apply(matched, to: id, mode: .fillEmpty)
-        await artTasks[id]?.value
+        await artTasks[id]?.task.value
     }
 }

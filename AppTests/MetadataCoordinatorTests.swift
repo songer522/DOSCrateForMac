@@ -705,4 +705,136 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         #expect(byTitle["Hexen"]?.year == 1995)
         #expect(byTitle["Hexen"]?.developer == "Raven Software")
     }
+
+    @Test func replacedArtTaskDoesNotClearNewTaskState() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Doom")
+
+        let gate1Entered = Gate()
+        let gate1Release = Gate()
+        let gate2Entered = Gate()
+        let gate2Release = Gate()
+        let callCounter = Counter()
+
+        provider.downloadGate = { _ in
+            let n = callCounter.increment()
+            if n == 1 {
+                gate1Entered.open()
+                await gate1Release.wait()
+            } else {
+                gate2Entered.open()
+                await gate2Release.wait()
+            }
+        }
+
+        _ = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        await gate1Entered.wait()
+        #expect(model.metadata.artLoading.contains(id))
+
+        // Replace with a second apply while the first art task is still in flight.
+        _ = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        await gate2Entered.wait()
+
+        // Let the cancelled first art task exit its download call.
+        gate1Release.open()
+        try await Task.sleep(for: .milliseconds(30))
+
+        // The second art task is still running; its spinner and state must remain intact.
+        #expect(model.metadata.artLoading.contains(id))
+        #expect(model.metadata.lastOutcome[id] == nil)
+
+        gate2Release.open()
+        await waitUntil { !model.metadata.artLoading.contains(id) }
+        #expect(model.metadata.lastOutcome[id] == .applied(artFailed: false))
+    }
+
+    @Test func removeAfterReplacementStillCancelsNewArtTask() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Doom")
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+
+        let gate1Entered = Gate()
+        let gate1Release = Gate()
+        let gate2Entered = Gate()
+        let gate2Release = Gate()
+        let callCounter = Counter()
+        let secondTaskSawCancel = Flag()
+
+        provider.downloadGate = { _ in
+            let n = callCounter.increment()
+            if n == 1 {
+                gate1Entered.open()
+                await gate1Release.wait()
+            } else {
+                gate2Entered.open()
+                await gate2Release.wait()
+                if Task.isCancelled {
+                    secondTaskSawCancel.set()
+                }
+            }
+        }
+
+        _ = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        await gate1Entered.wait()
+
+        _ = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        await gate2Entered.wait()
+
+        // Let the first (cancelled) art task finish while the second is still blocked.
+        gate1Release.open()
+        try await Task.sleep(for: .milliseconds(30))
+
+        // Removing/cancelling the game now must still cancel the second art task.
+        model.metadata.cancel(id)
+        #expect(!model.metadata.artLoading.contains(id))
+
+        gate2Release.open()
+        await waitUntil { secondTaskSawCancel.value }
+        #expect(!FileManager.default.fileExists(atPath: io.coverURL(crateURL).path))
+    }
+}
+
+private final class Gate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func open() {
+        let pending: [CheckedContinuation<Void, Never>] = lock.withLock {
+            isOpen = true
+            let copy = continuations
+            continuations.removeAll()
+            return copy
+        }
+        for c in pending { c.resume() }
+    }
+
+    func wait() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let resumeNow = lock.withLock { () -> Bool in
+                if isOpen { return true }
+                continuations.append(c)
+                return false
+            }
+            if resumeNow { c.resume() }
+        }
+    }
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() -> Int {
+        lock.withLock {
+            count += 1
+            return count
+        }
+    }
+}
+
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = false
+    var value: Bool { lock.withLock { storage } }
+    func set() { lock.withLock { storage = true } }
 }
