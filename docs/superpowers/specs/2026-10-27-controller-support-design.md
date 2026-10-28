@@ -86,7 +86,7 @@ All new logic lives in `DOSCrateKit` and is pure and unit-tested; the app only d
 - `LayoutSelector.select(_ devices: [GamepadInfo]) -> ControllerLayout?`, in order:
   1. Drop devices Staging can't open (Nintendo `0x057e` / `0x2069`).
   2. Valve `0x28de` (any usage) → `steam`.
-  3. Microsoft `0x045e` with transport `USB` → `xboxUSB` (Bluetooth Xbox falls through to `standard`).
+  3. Microsoft `0x045e` with transport `USB` and a controller usage (page 1, usage 4, 5 or 8) → `xboxUSB` (Bluetooth Xbox falls through to `standard`; Microsoft keyboards and mice are ignored).
   4. Any other device with usage page 1 and usage 4 (joystick), 5 (gamepad) or 8 (multi-axis) → `standard`.
   5. Otherwise `nil`.
   With several candidates, the first in this priority order wins.

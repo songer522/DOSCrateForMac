@@ -22,8 +22,13 @@ public enum LayoutSelector {
     public static func select(_ devices: [GamepadInfo]) -> ControllerLayout? {
         let usable = devices.filter { !($0.vendorID == 0x057e && $0.productID == 0x2069) }
         if usable.contains(where: { $0.vendorID == 0x28de }) { return .steam }
-        if usable.contains(where: { $0.vendorID == 0x045e && $0.transport == "USB" }) { return .xboxUSB }
-        if usable.contains(where: { $0.usagePage == 1 && (4...5 ~= $0.usage || $0.usage == 8) }) { return .standard }
+        let controllers = usable.filter(isController)
+        if controllers.contains(where: { $0.vendorID == 0x045e && $0.transport == "USB" }) { return .xboxUSB }
+        if !controllers.isEmpty { return .standard }
         return nil
+    }
+
+    private static func isController(_ d: GamepadInfo) -> Bool {
+        d.usagePage == 1 && (4...5 ~= d.usage || d.usage == 8)
     }
 }

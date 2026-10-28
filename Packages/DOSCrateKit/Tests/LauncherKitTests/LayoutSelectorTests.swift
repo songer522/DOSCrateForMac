@@ -22,6 +22,13 @@ import ConfigKit
         #expect(LayoutSelector.select([mouse, keyboard]) == nil)
         #expect(LayoutSelector.select([]) == nil)
     }
+    @Test func microsoftPeripheralsAreNotXboxUSB() {
+        let msKeyboard = GamepadInfo(vendorID: 0x045e, productID: 0x07a5, transport: "USB", product: "Microsoft Keyboard", usagePage: 1, usage: 6)
+        let msMouse = GamepadInfo(vendorID: 0x045e, productID: 0x0823, transport: "USB", product: "Microsoft Mouse", usagePage: 1, usage: 2)
+        #expect(LayoutSelector.select([msKeyboard, msMouse]) == nil)
+        #expect(LayoutSelector.select([msKeyboard, dualSense]) == .standard)
+        #expect(LayoutSelector.select([msMouse, xboxBT]) == .standard)
+    }
     @Test func switch2WithXbox() { #expect(LayoutSelector.select([switch2, xboxBT]) == .standard) }
     @Test func priority() {
         #expect(LayoutSelector.select([dualSense, puck]) == .steam)
