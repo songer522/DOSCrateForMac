@@ -31,6 +31,8 @@ struct RetroStatusBar: View {
             bar(cancellable: false) {
                 if case .downloading(let fraction) = model.metadata.phase {
                     progressBar(current: Int((min(1.0, max(0.0, fraction)) * 100).rounded()), total: 100)
+                } else if case .building = model.metadata.phase {
+                    RetroSpinner()
                 } else if let findProgress = model.metadata.findMissingProgress {
                     progressBar(current: findProgress.current, total: findProgress.total)
                 }

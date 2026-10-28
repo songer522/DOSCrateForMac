@@ -106,7 +106,7 @@ final class MetadataCoordinator {
 
     var phase: LaunchBoxIndexStore.Phase = .idle
     var lastUpdated: Date?
-    private(set) var unmatched: [UUID] = []
+    var unmatched: [UUID] = []
     private(set) var findMissingProgress: (current: Int, total: Int)?
     var isFindingMissing: Bool { findMissingProgress != nil }
     private(set) var artLoading: Set<UUID> = []

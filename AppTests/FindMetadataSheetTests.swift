@@ -1,8 +1,10 @@
+import AppKit
 import Foundation
 import ImportKit
 import LauncherKit
 import LibraryKit
 import MetadataKit
+import SwiftUI
 import Testing
 @testable import DOSCrate
 
@@ -144,5 +146,75 @@ import Testing
         #expect(updated.genre == "Role-Playing")
         #expect(updated.description == "Second Ultima.")
         #expect(updated.metadataSource?.id == 2)
+    }
+
+    @Test func findMetadataSheetUsesRetroLayoutInDOS() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Ultima")
+
+        #expect(FindMetadataSheet.layout(for: .dos) == .retro)
+        #expect(FindMetadataSheet.layout(for: .standard) == .standard)
+
+        for theme in [AppTheme.dos, AppTheme.standard] {
+            model.prefs.appTheme = theme
+            let sheet = FindMetadataSheet(model: model, gameID: id)
+            let hosting = NSHostingView(rootView: sheet)
+            hosting.frame = NSRect(x: 0, y: 0, width: 520, height: 420)
+            hosting.layoutSubtreeIfNeeded()
+        }
+    }
+
+    @Test func unmatchedSheetUsesRetroLayoutInDOS() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Ultima")
+
+        #expect(UnmatchedMetadataSheet.layout(for: .dos) == .retro)
+        #expect(UnmatchedMetadataSheet.layout(for: .standard) == .standard)
+
+        for unmatched in [[id], []] {
+            model.metadata.unmatched = unmatched
+            for theme in [AppTheme.dos, AppTheme.standard] {
+                model.prefs.appTheme = theme
+                let sheet = UnmatchedMetadataSheet(model: model)
+                let hosting = NSHostingView(rootView: sheet)
+                hosting.frame = NSRect(x: 0, y: 0, width: 460, height: 360)
+                hosting.layoutSubtreeIfNeeded()
+            }
+        }
+    }
+
+    @Test func replaceConfirmationIsInSheetPanelInDOS() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Ultima") { game in
+            game.developer = "Existing Dev"
+        }
+        model.prefs.appTheme = .dos
+
+        let sheetModel = FindMetadataModel(model: model, gameID: id)
+        await sheetModel.searchNow()
+
+        let canProceedImmediately = sheetModel.requestUse(Self.sampleRecords[1])
+        #expect(!canProceedImmediately)
+        #expect(sheetModel.confirmingRecord == Self.sampleRecords[1])
+        #expect(sheetModel.showsInSheetReplacePanel)
+        #expect(!sheetModel.showsNativeConfirmationDialog)
+
+        // Switching to Standard flips confirmation to native dialog instead of in-sheet panel.
+        model.prefs.appTheme = .standard
+        #expect(!sheetModel.showsInSheetReplacePanel)
+        #expect(sheetModel.showsNativeConfirmationDialog)
+
+        // Switch back to DOS, host the sheet with the in-sheet panel, and confirm.
+        model.prefs.appTheme = .dos
+        let sheet = FindMetadataSheet(model: model, gameID: id)
+        let hosting = NSHostingView(rootView: sheet)
+        hosting.frame = NSRect(x: 0, y: 0, width: 520, height: 420)
+        hosting.layoutSubtreeIfNeeded()
+
+        let outcome = await sheetModel.confirmReplace()
+        #expect(outcome == .applied(artFailed: false))
+        #expect(sheetModel.confirmingRecord == nil)
+        #expect(!sheetModel.showsInSheetReplacePanel)
+        #expect(model.store.record(id)?.game.developer == "Sierra On-Line")
     }
 }
