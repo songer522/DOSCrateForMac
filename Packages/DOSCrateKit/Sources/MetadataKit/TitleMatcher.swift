@@ -13,6 +13,7 @@ public struct MatchCandidate: Sendable, Equatable {
 public enum TitleMatcher {
     public static let autoThreshold = 0.9
     public static let autoMargin = 0.1
+    public static let searchFloor = 0.3
 
     private static let romanToDigits: [String: String] = [
         "ii": "2",
@@ -127,6 +128,74 @@ public enum TitleMatcher {
         return Array(candidates.prefix(limit).map(\.candidate))
     }
 
+    public static func searchScore(_ query: String, _ record: LaunchBoxRecord) -> Double {
+        let queryNorm = normalize(query)
+        guard !queryNorm.isEmpty else { return 0 }
+        let queryWords = queryNorm.split(separator: " ").map(String.init)
+        let queryBigrams = bigrams(for: queryWords)
+        let queryTrigrams = charTrigrams(for: queryNorm)
+        let queryYear = parseYear(query)
+
+        return searchScorePrecomputed(
+            queryNorm: queryNorm,
+            queryWords: queryWords,
+            queryBigrams: queryBigrams,
+            queryTrigrams: queryTrigrams,
+            queryYear: queryYear,
+            record: record
+        ).score
+    }
+
+    public static func search(
+        for title: String,
+        in records: [LaunchBoxRecord],
+        limit: Int
+    ) -> [MatchCandidate] {
+        guard limit > 0 else { return [] }
+        let queryNorm = normalize(title)
+        guard !queryNorm.isEmpty else { return [] }
+        let queryWords = queryNorm.split(separator: " ").map(String.init)
+        let queryBigrams = bigrams(for: queryWords)
+        let queryTrigrams = charTrigrams(for: queryNorm)
+        let queryYear = parseYear(title)
+
+        var candidates: [(candidate: MatchCandidate, yearMatched: Bool, wordCount: Int)] = []
+        candidates.reserveCapacity(records.count)
+
+        for record in records {
+            let result = searchScorePrecomputed(
+                queryNorm: queryNorm,
+                queryWords: queryWords,
+                queryBigrams: queryBigrams,
+                queryTrigrams: queryTrigrams,
+                queryYear: queryYear,
+                record: record
+            )
+            guard result.score + 1e-12 >= searchFloor else { continue }
+            let nameWordCount = normalize(record.name).split(separator: " ").count
+            candidates.append((MatchCandidate(record: record, score: result.score), result.yearMatched, nameWordCount))
+        }
+
+        candidates.sort { lhs, rhs in
+            if abs(lhs.candidate.score - rhs.candidate.score) > 1e-12 {
+                return lhs.candidate.score > rhs.candidate.score
+            }
+            if lhs.yearMatched != rhs.yearMatched {
+                return lhs.yearMatched && !rhs.yearMatched
+            }
+            if lhs.wordCount != rhs.wordCount {
+                return lhs.wordCount < rhs.wordCount
+            }
+            let cmp = lhs.candidate.record.name.localizedStandardCompare(rhs.candidate.record.name)
+            if cmp != .orderedSame {
+                return cmp == .orderedAscending
+            }
+            return lhs.candidate.record.id < rhs.candidate.record.id
+        }
+
+        return Array(candidates.prefix(limit).map(\.candidate))
+    }
+
     public static func autoMatch(
         for title: String,
         in records: [LaunchBoxRecord]
@@ -187,6 +256,62 @@ public enum TitleMatcher {
         out.reserveCapacity(words.count - 1)
         for i in 0..<(words.count - 1) {
             out.insert("\(words[i]) \(words[i + 1])")
+        }
+        return out
+    }
+
+    private static func searchScorePrecomputed(
+        queryNorm: String,
+        queryWords: [String],
+        queryBigrams: Set<String>,
+        queryTrigrams: Set<String>,
+        queryYear: Int?,
+        record: LaunchBoxRecord
+    ) -> (score: Double, yearMatched: Bool) {
+        var best = max(
+            score(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, against: record.name),
+            trigramDice(queryNorm: queryNorm, queryTrigrams: queryTrigrams, against: record.name)
+        )
+        for alt in record.alternateNames {
+            let s = max(
+                score(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, against: alt),
+                trigramDice(queryNorm: queryNorm, queryTrigrams: queryTrigrams, against: alt)
+            )
+            if s > best { best = s }
+        }
+        guard best > 0 else { return (0, false) }
+        let yearMatched = (queryYear != nil && queryYear == record.releaseYear)
+        if yearMatched {
+            best = min(1.0, best + 0.05)
+        }
+        return (best, yearMatched)
+    }
+
+    private static func trigramDice(
+        queryNorm: String,
+        queryTrigrams: Set<String>,
+        against candidateTitle: String
+    ) -> Double {
+        let candNorm = normalize(candidateTitle)
+        guard !candNorm.isEmpty else { return 0 }
+        if queryNorm == candNorm {
+            return 1.0
+        }
+        let candTrigrams = charTrigrams(for: candNorm)
+        guard !queryTrigrams.isEmpty, !candTrigrams.isEmpty else { return 0 }
+        let shared = queryTrigrams.intersection(candTrigrams).count
+        return (2.0 * Double(shared)) / Double(queryTrigrams.count + candTrigrams.count)
+    }
+
+    private static func charTrigrams(for norm: String) -> Set<String> {
+        let compact = norm.replacingOccurrences(of: " ", with: "")
+        guard !compact.isEmpty else { return [] }
+        let chars = Array("  " + compact + "  ")
+        guard chars.count >= 3 else { return [] }
+        var out = Set<String>()
+        out.reserveCapacity(chars.count - 2)
+        for i in 0..<(chars.count - 2) {
+            out.insert(String(chars[i...(i + 2)]))
         }
         return out
     }

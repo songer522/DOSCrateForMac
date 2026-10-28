@@ -160,7 +160,7 @@ final class MetadataCoordinator {
             }
             phase = .ready
             lastUpdated = await provider.downloadedAt
-            return TitleMatcher.matches(for: title, in: records, limit: 8)
+            return TitleMatcher.search(for: title, in: records, limit: 8)
         } catch {
             if case .failed = phase {} else {
                 phase = .failed(error.localizedDescription)

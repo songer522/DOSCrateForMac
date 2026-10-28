@@ -86,4 +86,47 @@ struct TitleMatcherTests {
         let candidates = TitleMatcher.matches(for: "King's Quest", in: records, limit: 3)
         #expect(candidates.count == 3)
     }
+
+    @Test func searchFindsTypo() {
+        let records = [
+            LaunchBoxRecord(id: 1, name: "Doom"),
+            LaunchBoxRecord(id: 2, name: "Disney's Aladdin"),
+            LaunchBoxRecord(id: 3, name: "Disney Aladdin"),
+            LaunchBoxRecord(id: 4, name: "Prince of Persia"),
+            LaunchBoxRecord(id: 5, name: "Wolfenstein 3D"),
+        ]
+        let top3 = TitleMatcher.search(for: "Aladin", in: records, limit: 8).prefix(3).map(\.record.name)
+        #expect(top3.contains("Disney's Aladdin"))
+        #expect(top3.contains("Disney Aladdin"))
+    }
+
+    @Test func searchFindsJoinedDigits() {
+        let records = [
+            LaunchBoxRecord(id: 1, name: "Alien"),
+            LaunchBoxRecord(id: 2, name: "Aliens"),
+            LaunchBoxRecord(id: 3, name: "SimCity 2000"),
+            LaunchBoxRecord(id: 4, name: "Master of Orion"),
+            LaunchBoxRecord(id: 5, name: "Dune II"),
+        ]
+        let top8 = TitleMatcher.search(for: "Alien2", in: records, limit: 8).map(\.record.name)
+        #expect(top8.contains("Aliens") || top8.contains("Alien"))
+    }
+
+    @Test func autoMatchUnchangedForTypo() {
+        let records = [
+            LaunchBoxRecord(id: 1, name: "Disney's Aladdin"),
+            LaunchBoxRecord(id: 2, name: "Disney Aladdin"),
+        ]
+        #expect(TitleMatcher.autoMatch(for: "Aladin", in: records) == nil)
+    }
+
+    @Test func searchDropsBelowFloor() {
+        let records = [
+            LaunchBoxRecord(id: 1, name: "Prince of Persia"),
+            LaunchBoxRecord(id: 2, name: "Wolfenstein 3D"),
+            LaunchBoxRecord(id: 3, name: "SimCity 2000"),
+        ]
+        let results = TitleMatcher.search(for: "Aladin", in: records, limit: 8)
+        #expect(results.isEmpty)
+    }
 }
