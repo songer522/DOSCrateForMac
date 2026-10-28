@@ -792,6 +792,29 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         await waitUntil { secondTaskSawCancel.value }
         #expect(!FileManager.default.fileExists(atPath: io.coverURL(crateURL).path))
     }
+
+    @Test func retryAfterFailedFindMissingWorksWithImportToggleOff() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Doom", fetchOnImport: false)
+        provider.shouldFailEnsureReady = true
+
+        model.metadata.findMissingMetadata()
+        await waitUntil {
+            if case .failed = model.metadata.phase, !model.metadata.isFindingMissing {
+                return true
+            }
+            return false
+        }
+
+        provider.shouldFailEnsureReady = false
+        model.metadata.retry()
+
+        await waitUntil { model.store.record(id)?.game.metadataSource != nil }
+        let updated = try #require(model.store.record(id)?.game)
+        #expect(updated.year == 1993)
+        #expect(updated.developer == "id Software")
+        #expect(updated.metadataSource?.id == 101)
+    }
 }
 
 private final class Gate: @unchecked Sendable {

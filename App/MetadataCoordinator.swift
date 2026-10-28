@@ -219,14 +219,7 @@ final class MetadataCoordinator {
             for (index, id) in targets.enumerated() {
                 if Task.isCancelled || self.findMissingCancelled { break }
                 self.findMissingProgress = (current: index + 1, total: targets.count)
-                self.tasks[id]?.cancel()
-                self.failedQueueIDs.remove(id)
-                let itemTask = Task { [weak self] in
-                    guard let self else { return }
-                    await self.runAutoFetch(for: id)
-                }
-                self.tasks[id] = itemTask
-                await itemTask.value
+                await self.enqueueAutoFetch(id)?.value
             }
         }
     }
@@ -251,36 +244,34 @@ final class MetadataCoordinator {
 
     func importedGame(_ id: UUID) {
         guard prefs.fetchMetadataOnImport else { return }
+        enqueueAutoFetch(id)
+    }
+
+    @discardableResult
+    func enqueueAutoFetch(_ id: UUID) -> Task<Void, Never>? {
         tasks[id]?.cancel()
         failedQueueIDs.remove(id)
         if model?.store.record(id) == nil {
             if !pendingStoreIDs.contains(id) {
                 pendingStoreIDs.append(id)
             }
-            return
+            return nil
         }
         pendingStoreIDs.removeAll { $0 == id }
-        tasks[id] = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
             await self.runAutoFetch(for: id)
         }
+        tasks[id] = task
+        return task
     }
 
     func storeDidReload() {
         guard let model, !pendingStoreIDs.isEmpty else { return }
-        var remaining: [UUID] = []
-        for id in pendingStoreIDs {
-            if model.store.record(id) != nil {
-                tasks[id]?.cancel()
-                tasks[id] = Task { [weak self] in
-                    guard let self else { return }
-                    await self.runAutoFetch(for: id)
-                }
-            } else {
-                remaining.append(id)
-            }
+        let readyIDs = pendingStoreIDs.filter { model.store.record($0) != nil }
+        for id in readyIDs {
+            enqueueAutoFetch(id)
         }
-        pendingStoreIDs = remaining
     }
 
     func cancel(_ id: UUID) {
@@ -299,7 +290,7 @@ final class MetadataCoordinator {
         failedQueueIDs.removeAll()
         if !retryIDs.isEmpty {
             for id in retryIDs {
-                importedGame(id)
+                enqueueAutoFetch(id)
             }
         } else {
             refreshIndex()
