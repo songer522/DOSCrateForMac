@@ -70,6 +70,7 @@ final class AppModel {
     let sessions: SessionManager
     let importer: Importer
     let imports = ImportQueue()
+    let gamepads = GamepadMonitor()
 
     @ObservationIgnored private let dosbox: URL
     @ObservationIgnored private let io = CrateIO()
