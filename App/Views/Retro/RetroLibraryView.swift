@@ -7,15 +7,28 @@ struct RetroWindowChrome: NSViewRepresentable {
 
     @MainActor
     static func apply(isRetro: Bool, to window: NSWindow) {
-        window.titleVisibility = isRetro ? .hidden : .visible
-        window.titlebarAppearsTransparent = isRetro
-        if isRetro {
-            window.styleMask.insert(.fullSizeContentView)
-        } else {
-            window.styleMask.remove(.fullSizeContentView)
+        let targetVisibility: NSWindow.TitleVisibility = isRetro ? .hidden : .visible
+        if window.titleVisibility != targetVisibility {
+            window.titleVisibility = targetVisibility
+        }
+        if window.titlebarAppearsTransparent != isRetro {
+            window.titlebarAppearsTransparent = isRetro
+        }
+        if window.styleMask.contains(.fullSizeContentView) != isRetro {
+            if isRetro {
+                window.styleMask.insert(.fullSizeContentView)
+            } else {
+                window.styleMask.remove(.fullSizeContentView)
+            }
         }
         for button: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
-            window.standardWindowButton(button)?.isHidden = isRetro
+            if let btn = window.standardWindowButton(button), btn.isHidden != isRetro {
+                btn.isHidden = isRetro
+            }
+        }
+        if let titlebarView = window.standardWindowButton(.closeButton)?.superview,
+           titlebarView.isHidden != isRetro {
+            titlebarView.isHidden = isRetro
         }
     }
 
@@ -27,7 +40,7 @@ struct RetroWindowChrome: NSViewRepresentable {
 
     func updateNSView(_ nsView: ChromeView, context: Context) {
         nsView.isRetro = isRetro
-        nsView.apply()
+        nsView.scheduleApply()
     }
 
     final class ChromeView: NSView {
@@ -35,13 +48,17 @@ struct RetroWindowChrome: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            apply()
+            scheduleApply()
         }
 
         @MainActor
-        func apply() {
+        func scheduleApply() {
             guard let window else { return }
-            RetroWindowChrome.apply(isRetro: isRetro, to: window)
+            let retro = isRetro
+            DispatchQueue.main.async { [weak window] in
+                guard let window else { return }
+                RetroWindowChrome.apply(isRetro: retro, to: window)
+            }
         }
     }
 }
@@ -120,7 +137,6 @@ struct RetroLibraryView: View {
         }
         .background(RetroPalette.desktop)
         .ignoresSafeArea(.container, edges: .top)
-        .navigationTitle("DOSCrate")
         .toolbar(.hidden, for: .windowToolbar)
     }
 
