@@ -30,6 +30,11 @@ struct GameContextMenu: View {
         if case .needsRepair = record.status {
             Button("Recreate Game Info…") { model.applyFix(.recreate, for: record.id) }
         }
+        Button("Find Metadata…") { model.findMetadataFor = record.id }
+            .disabled({
+                if case .readOnly = record.status { return true }
+                return false
+            }())
         Divider()
         // Right-clicking a game in a multiple selection removes the whole selection.
         let count = model.selectedIDs.contains(record.id) ? model.selectedIDs.count : 1

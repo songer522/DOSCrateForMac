@@ -4,6 +4,7 @@ import SwiftUI
 
 struct InfoTab: View {
     @Binding var game: Game
+    var onFindMetadata: (() -> Void)? = nil
     @Environment(\.retroTheme) private var retroTheme
 
     var body: some View {
@@ -24,6 +25,17 @@ struct InfoTab: View {
                             .retroBevel(.sunken)
                     } else {
                         TokenField(tokens: $game.tags)
+                    }
+                }
+                if let onFindMetadata {
+                    HStack {
+                        Spacer()
+                        if retroTheme {
+                            Button("Find Metadata…", action: onFindMetadata)
+                                .buttonStyle(RetroButtonStyle())
+                        } else {
+                            Button("Find Metadata…", action: onFindMetadata)
+                        }
                     }
                 }
             }

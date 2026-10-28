@@ -44,7 +44,7 @@ struct GameDetailView: View {
                 .padding(.bottom, retroTheme ? 8 : 0)
             Group {
                 switch tab {
-                case .info: InfoTab(game: $draft)
+                case .info: InfoTab(game: $draft) { model.findMetadataFor = record.id }
                 case .settings: SettingsTab(record: record, game: $draft, onError: showError) { removedMedia.append($0.relativePath) }
                 case .advanced: AdvancedTab(model: model, record: record, game: draft)
                 }

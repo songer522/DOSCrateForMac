@@ -62,6 +62,7 @@ final class AppModel {
     var lastResult: [UUID: SessionResult] = [:]
     var pendingFix: PendingFix?
     var chooseProgram: ChooseProgramRequest?
+    var findMetadataFor: UUID?
     private(set) var needsLibrarySetup: Bool
     /// True while the first-run scan looks for games, before the batch import (and its progress) starts.
     private(set) var isScanningLibrary = false
