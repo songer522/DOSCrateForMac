@@ -13,8 +13,8 @@ State as of the merge of PR #1 (`d07a896`, 2026-10-27). The code, tests (`make g
 
 ## Planned features
 
-- **Controller support.** Slice A (gamepad → keyboard keys with a default map, a per-model layout table, a Settings switch) is specified in `docs/superpowers/specs/2026-10-27-controller-support-design.md`, with the 2026-10-27 device probe results. Later slices: PC-joystick emulation per game (slice C) and a per-game Controller tab. The Switch 2 Pro controller is out of scope (Staging's SDL can't open it on macOS).
-  **Testing:** simulator (unit tests for layout selection, map generation and `mapperfile` in the launch config); device test on the Mac with an Xbox (USB and Bluetooth), a PS5 DualSense (USB and Bluetooth) and the Steam Controller (puck), stick-up first.
+- **Controller support, later slices.** Slice A shipped on `songer522/controller-support` (gamepad → keyboard keys, per-model layouts, Settings switch; device test passed 2026-10-28). Still planned: PC-joystick emulation per game (slice C, trigger axes are recorded in the spec §2 table) and a per-game Controller tab. The Switch 2 Pro controller stays out of scope (Staging's SDL can't open it on macOS).
+  **Testing:** simulator (layout and config tests); device test on the Mac with the controllers in the manual checklist's Controllers section.
 
 ## Known gaps
 
@@ -30,6 +30,10 @@ From the final review, deferred as non-blocking:
 - iCloud "Optimize Storage" can evict files from the default `~/Documents/DOSCrate Library`. iCloud is out of scope (spec §9); worth a release-notes caveat.
 - `Vendor/DOSBox Staging.app` carries a `com.apple.quarantine` flag from `scripts/fetch-staging.sh`, so launching it directly (as the 2026-10-27 controller probe did) runs it from an App Translocation path. Check whether `embed-staging.sh` copies the flag into the app bundle; if so, strip it after fetching (`xattr -dr com.apple.quarantine`) so the embedded copy matches the notarized release.
   **Testing:** simulator (none); device probe: `xattr -l` on `Vendor/` and on the built app's embedded Staging after `make vendor` and a build.
+- Launch files (`launch.conf`, `controller.map`) are written on the main thread at Play. In the 2026-10-28 controller test, the exFAT SD card volume hung (a plain `ls` hung too, and macOS's `UVFSService` was stuck), and DOSCrate beachballed until the card was recovered. Play should write off the main thread and fail with a message if the library volume doesn't respond. The cause of the volume hang is unknown; it didn't recur on the retry.
+  **Testing:** simulator (a planner test with a blocking file writer); device probe: reproduce with a hung or very slow volume if possible.
+- The controller switch applies at Play; it doesn't change a game that's already running (Staging reads the mapper file once at startup). By design; the Settings caption doesn't say so.
+  **Testing:** none (documented in the manual checklist).
 
 From the PR #4 review (duplicate handling), deferred:
 

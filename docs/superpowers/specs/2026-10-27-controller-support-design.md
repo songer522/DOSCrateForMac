@@ -49,10 +49,10 @@ key_enter "stick_0 axis 5 1" "key 40"
 | Start / Menu / Options | button 6 | button 7 | button 3 |
 | D-pad up / down / left / right | buttons 11 / 12 / 13 / 14 | buttons 14 / 11 / 12 / 13 | buttons 11 / 8 / 9 / 10 |
 | Left stick left / right | axis 0 0 / axis 0 1 | axis 0 0 / axis 0 1 | axis 0 0 / axis 0 1 |
-| Left stick up / down | axis 1 0 / axis 1 1 (**to verify**) | axis 1 0 / axis 1 1 (**to verify**) | axis 1 1 / axis 1 0 |
+| Left stick up / down | axis 1 0 / axis 1 1 | axis 1 1 / axis 1 0 | axis 1 1 / axis 1 0 |
 | Left / right trigger | axis 4 1 / axis 5 1 | button 17 / button 24 | button 14 / button 17 |
 
-The wired Xbox's vertical stick axis is inverted. Stick-up was not probed on the standard and steam layouts; it is the first check of the device test (§7). Triggers are unbound in slice A but recorded for slice C.
+The vertical stick axis is inverted on the wired Xbox and on the Steam Controller. The 2026-10-28 device test confirmed stick up on all three layouts; steam was fixed from the probed guess after that test. Triggers are unbound in slice A but recorded for slice C.
 
 **HID identity.** `hidutil list` shows the Steam puck as vendor `0x28de`, product `0x1304`, transport USB, product "Steam Controller Puck", with usage page 1 / usage 2 (not the gamepad usage 5). The Switch 2 Pro shows as vendor `0x057e`, product `0x2069`, "Pro Controller", usage 1/5, but Staging logs "No joysticks found". The wired Xbox shows as vendor `0x045e`, product `0x0b12`, transport USB, product "Controller", usage 1/5. Raw probe files and notes are in `controller-probe-2026-10-27/`.
 
