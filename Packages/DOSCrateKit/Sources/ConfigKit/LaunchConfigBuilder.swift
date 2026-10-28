@@ -6,17 +6,26 @@ public struct GlobalConfig: Sendable {
     public var overrides: GameSettings
     public var rawOverrides: String
     public var env: ConfigEnvironment
+    public var controllerLayout: ControllerLayout?
     public init(defaultPreset: Preset = .auto, overrides: GameSettings = GameSettings(),
-                rawOverrides: String = "", env: ConfigEnvironment = ConfigEnvironment()) {
+                rawOverrides: String = "", env: ConfigEnvironment = ConfigEnvironment(),
+                controllerLayout: ControllerLayout? = nil) {
         self.defaultPreset = defaultPreset; self.overrides = overrides
         self.rawOverrides = rawOverrides; self.env = env
+        self.controllerLayout = controllerLayout
     }
 }
 
 public enum LaunchConfigBuilder {
-    /// Layers, lowest to highest: global curated, global raw, preset, game settings, autoexec.
-    public static func build(game: Game, cDrive: URL, media: [(URL, MediaKind)], global: GlobalConfig) throws(DOSPathError) -> ConfigDocument {
-        var doc = SettingsMapper.document(global.overrides, env: global.env)
+    /// Layers, lowest to highest: controller map, global curated, global raw, preset, game settings, autoexec.
+    public static func build(game: Game, cDrive: URL, media: [(URL, MediaKind)], global: GlobalConfig,
+                             controllerMap: URL? = nil) throws(DOSPathError) -> ConfigDocument {
+        var doc = ConfigDocument()
+        if let controllerMap {
+            doc.set("sdl", "mapperfile", controllerMap.path)
+            doc.set("joystick", "joysticktype", "hidden")
+        }
+        doc.merge(SettingsMapper.document(global.overrides, env: global.env))
         doc.merge(ConfigDocument.parse(global.rawOverrides))
         doc.merge(Presets.document(game.settings.preset ?? global.defaultPreset))
         doc.merge(SettingsMapper.document(game.settings, env: global.env))
