@@ -148,11 +148,12 @@ private struct GameHeader: View {
     @State private var dropTargeted = false
 
     private var running: Bool { model.sessions.running.contains(record.id) }
+    private var starting: Bool { model.startingIDs.contains(record.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
-                CoverView(record: record, isRunning: running)
+                CoverView(record: record, isRunning: running, isStarting: starting)
                     .id(coverRevision)
                     .frame(width: 90)
                     .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 3) } }
@@ -163,10 +164,19 @@ private struct GameHeader: View {
                     Text(lastPlayed).font(.callout).foregroundStyle(.secondary)
                     if running {
                         Button("Stop", systemImage: "stop.fill") { model.stop(record.id) }
+                    } else if starting {
+                        Button(action: onPlay) {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Starting…")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(true)
                     } else {
                         Button("Play", systemImage: "play.fill", action: onPlay)
                             .buttonStyle(.borderedProminent)
-                            .disabled(model.pendingRemovalIDs.contains(record.id) || model.startingIDs.contains(record.id))
+                            .disabled(model.pendingRemovalIDs.contains(record.id))
                     }
                 }
                 Spacer(minLength: 0)

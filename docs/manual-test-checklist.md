@@ -6,6 +6,7 @@ Run before each release, on the release build.
 - [ ] Import a redistributable shareware game as a zip.
 - [ ] Play a game and quit; the play time in the library updates.
 - [ ] Play a game whose library is on an external drive; the app stays responsive while it starts.
+- [ ] While a game is starting, its cover, list row and Play button show Starting…
 - [ ] Referenced game on an external drive: unplug the drive; the game shows the Missing state and the Locate fix works.
 - [ ] A game in a long-named subfolder triggers the "Use folder as C:" fix.
 - [ ] Multi-disc game: swap discs during play.

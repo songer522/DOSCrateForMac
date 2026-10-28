@@ -14,6 +14,9 @@ struct GameListView: View {
                     Text(record.game.title)
                     if model.sessions.running.contains(record.id) {
                         Image(systemName: "play.circle.fill").foregroundStyle(.green)
+                    } else if model.startingIDs.contains(record.id) {
+                        ProgressView().controlSize(.small)
+                        Text("Starting…").font(.caption).foregroundStyle(.secondary)
                     }
                     switch record.status {
                     case .missingSource: Text("Missing").font(.caption).foregroundStyle(.orange)

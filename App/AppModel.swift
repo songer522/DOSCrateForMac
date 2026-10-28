@@ -77,14 +77,14 @@ final class AppModel {
     @ObservationIgnored private let dosbox: URL
     @ObservationIgnored private let io = CrateIO()
     @ObservationIgnored private let verifyDosbox: @Sendable (URL) throws -> Void
-    @ObservationIgnored private let launchTimeout: Duration
+    @ObservationIgnored let launchTimeout: Duration
     @ObservationIgnored private var startTokens: [UUID: UUID] = [:]
     /// Debounced editor writes not yet on disk, keyed by game; `play` runs them first.
     @ObservationIgnored private var pendingWrites: [UUID: [String: @MainActor () -> Void]] = [:]
 
     init(prefs: Preferences, store: LibraryStore, sessions: SessionManager, importer: Importer, dosbox: URL,
          verifyDosbox: @escaping @Sendable (URL) throws -> Void = { try StagingLocator.verify($0) },
-         launchTimeout: Duration = .seconds(10)) {
+         launchTimeout: Duration = .seconds(20)) {
         self.prefs = prefs
         self.store = store
         self.sessions = sessions

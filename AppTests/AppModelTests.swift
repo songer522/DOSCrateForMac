@@ -59,7 +59,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
 
     /// Creates a library holding one managed game; returns the model and the game id.
     func makeModel(executable: String?, files: [String] = [], libraryExists: Bool = true,
-                   launchTimeout: Duration = .seconds(10),
+                   launchTimeout: Duration? = nil,
                    configure: (inout Game) -> Void = { _ in },
                    verify: @escaping @Sendable (URL) throws -> Void = { _ in }) async throws -> (AppModel, UUID) {
         let fm = FileManager.default
@@ -87,9 +87,14 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         let prefs = Preferences(defaults: UserDefaults(suiteName: suite)!)
         let store = LibraryStore(library: lib)
         await store.reload()
-        let model = AppModel(prefs: prefs, store: store, sessions: SessionManager(runner: runner),
-                             importer: Importer(), dosbox: dosbox, verifyDosbox: verify,
-                             launchTimeout: launchTimeout)
+        let model = if let launchTimeout {
+            AppModel(prefs: prefs, store: store, sessions: SessionManager(runner: runner),
+                     importer: Importer(), dosbox: dosbox, verifyDosbox: verify,
+                     launchTimeout: launchTimeout)
+        } else {
+            AppModel(prefs: prefs, store: store, sessions: SessionManager(runner: runner),
+                     importer: Importer(), dosbox: dosbox, verifyDosbox: verify)
+        }
         return (model, id)
     }
 
@@ -658,6 +663,12 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.store.records.count == 3)
         #expect(model.store.records.filter { $0.game.title == "Commander Keen" }.count == 1)
         #expect(model.store.records.filter { $0.game.title == "Wolfenstein" }.count == 2)
+    }
+
+    @Test func defaultLaunchTimeoutIsTwentySeconds() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _) = try await makeModel(executable: nil)
+        #expect(model.launchTimeout == .seconds(20))
     }
 
     @Test func playRunsOffMainTracksStartingAndIgnoresDuplicatePlay() async throws {

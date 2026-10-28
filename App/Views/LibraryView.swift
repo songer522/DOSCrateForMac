@@ -13,8 +13,9 @@ struct GameContextMenu: View {
         if model.sessions.running.contains(record.id) {
             Button("Stop") { model.stop(record.id) }
         } else {
-            Button("Play") { model.play(record.id) }
-                .disabled(model.pendingRemovalIDs.contains(record.id) || model.startingIDs.contains(record.id))
+            let starting = model.startingIDs.contains(record.id)
+            Button(starting ? "Starting…" : "Play") { model.play(record.id) }
+                .disabled(model.pendingRemovalIDs.contains(record.id) || starting)
         }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([record.crateURL]) }
         Button(record.game.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
