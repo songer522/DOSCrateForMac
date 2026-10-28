@@ -283,12 +283,16 @@ final class AppModel {
         if pendingWrites[id]?.isEmpty == true { pendingWrites[id] = nil }
     }
 
+    func flushPendingWrites(for id: UUID) {
+        let writes = pendingWrites.removeValue(forKey: id) ?? [:]
+        for write in writes.values { write() }
+    }
+
     @discardableResult
     func play(_ id: UUID) -> Task<Void, Never>? {
         guard !startingIDs.contains(id), !sessions.running.contains(id) else { return nil }
         metadata.cancel(id)
-        let writes = pendingWrites.removeValue(forKey: id) ?? [:]
-        for write in writes.values { write() }
+        flushPendingWrites(for: id)
         guard !pendingRemovalIDs.contains(id), !startingIDs.contains(id), !sessions.running.contains(id),
               let record = store.record(id) else { return nil }
 

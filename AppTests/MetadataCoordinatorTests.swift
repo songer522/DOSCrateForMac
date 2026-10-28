@@ -815,6 +815,83 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         #expect(updated.developer == "id Software")
         #expect(updated.metadataSource?.id == 101)
     }
+
+    @Test func autoApplyFlushesPendingInspectorEditFirst() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Doom", fetchOnImport: false)
+
+        var draft = try #require(model.store.record(id)?.game)
+        draft.notes = "My custom inspector notes"
+        draft.developer = "User Edited Dev"
+        let saveTask = GameDetailView.scheduleDraftSave(draft: draft, in: model)
+        #expect(saveTask != nil)
+        #expect(model.store.record(id)?.game.notes == "")
+
+        // Auto-fetch runs while the 500ms inspector debounce is still pending.
+        await model.metadata.enqueueAutoFetch(id)?.value
+
+        // Wait past the 500ms debounce window to ensure a stale timer doesn't overwrite metadata.
+        try await Task.sleep(for: .milliseconds(550))
+
+        let saved = try #require(model.store.record(id)?.game)
+        #expect(saved.notes == "My custom inspector notes")
+        #expect(saved.developer == "User Edited Dev")
+        #expect(saved.year == 1993)
+        #expect(saved.publisher == "id Software")
+        #expect(saved.genre == "Shooter")
+        #expect(saved.description == "Fight demons on Mars.")
+        #expect(saved.metadataSource?.id == 101)
+        #expect(GameDetailView.shouldAdopt(stored: saved, over: draft))
+
+        let onDisk = io.loadRecord(at: try #require(model.store.record(id)?.crateURL)).game
+        #expect(onDisk.notes == "My custom inspector notes")
+        #expect(onDisk.developer == "User Edited Dev")
+        #expect(onDisk.year == 1993)
+    }
+
+    @Test func manualApplyFlushesPendingInspectorEditFirst() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Doom", fetchOnImport: false)
+
+        var draft = try #require(model.store.record(id)?.game)
+        draft.notes = "Notes before manual replace"
+        draft.year = 1990
+        let saveTask = GameDetailView.scheduleDraftSave(draft: draft, in: model)
+        #expect(saveTask != nil)
+
+        let outcome = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        #expect(outcome == .applied(artFailed: false))
+
+        // Wait past the 500ms debounce window to ensure the flushed draft doesn't fire again.
+        try await Task.sleep(for: .milliseconds(550))
+
+        let saved = try #require(model.store.record(id)?.game)
+        #expect(saved.notes == "Notes before manual replace")
+        #expect(saved.year == 1993)
+        #expect(saved.developer == "id Software")
+        #expect(saved.publisher == "id Software")
+        #expect(saved.genre == "Shooter")
+        #expect(saved.description == "Fight demons on Mars.")
+        #expect(saved.metadataSource?.id == 101)
+        #expect(GameDetailView.shouldAdopt(stored: saved, over: draft))
+    }
+
+    @Test func playStillFlushesPendingWrites() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Doom", fetchOnImport: false)
+
+        var draft = try #require(model.store.record(id)?.game)
+        draft.notes = "Flushed on play"
+        _ = GameDetailView.scheduleDraftSave(draft: draft, in: model)
+        #expect(model.store.record(id)?.game.notes == "")
+
+        let playTask = model.play(id)
+        #expect(model.store.record(id)?.game.notes == "Flushed on play")
+
+        await waitUntil { !runner.processes.isEmpty }
+        runner.processes[0].finish(0)
+        await playTask?.value
+    }
 }
 
 private final class Gate: @unchecked Sendable {

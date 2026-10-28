@@ -337,9 +337,11 @@ final class MetadataCoordinator {
         let clock = ContinuousClock()
         guard !Task.isCancelled else { return .cancelled }
         let readStart = clock.now
-        guard let model, !model.isActive(id), !model.pendingRemovalIDs.contains(id),
-              let latestRecord = model.store.record(id)
-        else {
+        guard let model, !model.isActive(id), !model.pendingRemovalIDs.contains(id) else {
+            return Task.isCancelled ? .cancelled : .gameMissing
+        }
+        model.flushPendingWrites(for: id)
+        guard let latestRecord = model.store.record(id) else {
             return Task.isCancelled ? .cancelled : .gameMissing
         }
         Self.logger.debug("record read in apply took \(clock.now - readStart, privacy: .public)")
@@ -478,9 +480,9 @@ final class MetadataCoordinator {
         }
 
         guard !Task.isCancelled else { return }
-        guard !model.isActive(id), !model.pendingRemovalIDs.contains(id),
-              let currentRecord = model.store.record(id)
-        else { return }
+        guard !model.isActive(id), !model.pendingRemovalIDs.contains(id) else { return }
+        model.flushPendingWrites(for: id)
+        guard let currentRecord = model.store.record(id) else { return }
 
         guard let matched = TitleMatcher.autoMatch(for: currentRecord.game.title, in: records) else {
             addUnmatched(id)

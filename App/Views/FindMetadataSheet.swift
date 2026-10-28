@@ -107,6 +107,7 @@ final class FindMetadataModel {
     }
 
     func needsReplaceConfirmation(for record: LaunchBoxRecord) -> Bool {
+        model.flushPendingWrites(for: gameID)
         guard let gameRecord = model.store.record(gameID) else { return false }
         let patch = MetadataApplier.patch(from: record)
         let existingArt = MetadataApplier.existingArtKinds(in: gameRecord.crateURL)
