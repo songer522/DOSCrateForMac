@@ -56,6 +56,8 @@ final class AppModel {
     var isRemoving: Bool { removalProgress != nil }
     /// Games `removeGames` hasn't finished with; they can't be launched until it ends.
     private(set) var pendingRemovalIDs: Set<UUID> = []
+    /// Games whose launch is preparing off the main thread.
+    private(set) var startingIDs: Set<UUID> = []
     var alert: AppAlert?
     var lastResult: [UUID: SessionResult] = [:]
     var pendingFix: PendingFix?
@@ -74,18 +76,22 @@ final class AppModel {
 
     @ObservationIgnored private let dosbox: URL
     @ObservationIgnored private let io = CrateIO()
-    @ObservationIgnored private let verifyDosbox: @MainActor (URL) throws -> Void
+    @ObservationIgnored private let verifyDosbox: @Sendable (URL) throws -> Void
+    @ObservationIgnored private let launchTimeout: Duration
+    @ObservationIgnored private var startTokens: [UUID: UUID] = [:]
     /// Debounced editor writes not yet on disk, keyed by game; `play` runs them first.
     @ObservationIgnored private var pendingWrites: [UUID: [String: @MainActor () -> Void]] = [:]
 
     init(prefs: Preferences, store: LibraryStore, sessions: SessionManager, importer: Importer, dosbox: URL,
-         verifyDosbox: @escaping @MainActor (URL) throws -> Void = { try StagingLocator.verify($0) }) {
+         verifyDosbox: @escaping @Sendable (URL) throws -> Void = { try StagingLocator.verify($0) },
+         launchTimeout: Duration = .seconds(10)) {
         self.prefs = prefs
         self.store = store
         self.sessions = sessions
         self.importer = importer
         self.dosbox = dosbox
         self.verifyDosbox = verifyDosbox
+        self.launchTimeout = launchTimeout
         self.needsLibrarySetup = !Self.isDirectory(store.library)
         sessions.onEnded = { [weak self] result in self?.sessionEnded(result) }
         do {
@@ -233,6 +239,16 @@ final class AppModel {
 
     // MARK: Launching
 
+    private enum PreparedLaunch: Sendable {
+        case ready(SessionManager.PreparedSession)
+        case chooseProgram([ExecutableCandidate])
+        case failed(any Error)
+
+        func discard() {
+            if case .ready(let prepared) = self { prepared.discard() }
+        }
+    }
+
     /// Registers (or with nil clears) a write that must finish before `id` launches. Each owner
     /// ("draft", "override", ...) has its own slot, so independent editors don't replace each other.
     func setPendingWrite(_ id: UUID, owner: String, _ write: (@MainActor () -> Void)?) {
@@ -240,36 +256,109 @@ final class AppModel {
         if pendingWrites[id]?.isEmpty == true { pendingWrites[id] = nil }
     }
 
-    func play(_ id: UUID) {
+    @discardableResult
+    func play(_ id: UUID) -> Task<Void, Never>? {
+        guard !startingIDs.contains(id), !sessions.running.contains(id) else { return nil }
         let writes = pendingWrites.removeValue(forKey: id) ?? [:]
         for write in writes.values { write() }
-        guard !pendingRemovalIDs.contains(id), let record = store.record(id) else { return }
-        do {
-            try verifyDosbox(dosbox)
-            let cDrive = try Preflight.check(record, io: io, dosbox: dosbox)
-            let global = prefs.launchConfig(gamepads: GamepadDetector.snapshot())
-            let plan = try LaunchPlanner.plan(record, cDrive: cDrive, global: global, dosbox: dosbox, io: io)
-            try sessions.start(gameID: id, plan: plan)
-        } catch let error as LaunchError {
-            if error == .executableNotSet, presentChooseProgram(for: record) { return }
+        guard !pendingRemovalIDs.contains(id), !startingIDs.contains(id), !sessions.running.contains(id),
+              let record = store.record(id) else { return nil }
+
+        let token = UUID()
+        startingIDs.insert(id)
+        startTokens[id] = token
+
+        let global = prefs.launchConfig(gamepads: GamepadDetector.snapshot())
+        let dosbox = self.dosbox
+        let io = self.io
+        let verifyDosbox = self.verifyDosbox
+        let sessions = self.sessions
+        let timeout = self.launchTimeout
+
+        let work = Task.detached { () -> PreparedLaunch in
+            do {
+                try verifyDosbox(dosbox)
+                let cDrive = try Preflight.check(record, io: io, dosbox: dosbox)
+                let plan = try LaunchPlanner.plan(record, cDrive: cDrive, global: global, dosbox: dosbox, io: io)
+                return .ready(try sessions.prepare(plan))
+            } catch let error as LaunchError where error == .executableNotSet {
+                if let cDrive = try? io.cDriveURL(for: record),
+                   let candidates = try? ExecutableRanker.rank(root: cDrive, title: record.game.title),
+                   !candidates.isEmpty {
+                    return .chooseProgram(candidates)
+                }
+                return .failed(error)
+            } catch {
+                return .failed(error)
+            }
+        }
+        let timer = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            self?.launchTimedOut(id: id, token: token, title: record.game.title)
+        }
+        return Task { [weak self] in
+            let outcome = await work.value
+            timer.cancel()
+            guard let self else {
+                outcome.discard()
+                return
+            }
+            self.finishPlay(id: id, token: token, record: record, outcome: outcome)
+        }
+    }
+
+    private func launchTimedOut(id: UUID, token: UUID, title: String) {
+        guard startTokens[id] == token else { return }
+        startTokens[id] = nil
+        startingIDs.remove(id)
+        guard !pendingRemovalIDs.contains(id), store.record(id) != nil else { return }
+        alert = AppAlert(
+            title: "Can't start \(title)",
+            message: "This game's library volume isn't responding. Check the drive, then try again."
+        )
+    }
+
+    private func finishPlay(id: UUID, token: UUID, record: GameRecord, outcome: PreparedLaunch) {
+        guard startTokens[id] == token else {
+            outcome.discard()
+            return
+        }
+        startTokens[id] = nil
+        startingIDs.remove(id)
+        guard !pendingRemovalIDs.contains(id), store.record(id) != nil else {
+            outcome.discard()
+            return
+        }
+        switch outcome {
+        case .ready(let prepared):
+            do {
+                try sessions.start(gameID: id, prepared: prepared)
+            } catch {
+                alert = Self.alert(for: error, gameID: id, game: record.game)
+            }
+        case .chooseProgram(let candidates):
+            chooseProgram = ChooseProgramRequest(gameID: record.id, title: record.game.title, candidates: candidates)
+        case .failed(let error as LaunchError):
             alert = Self.alert(for: error, gameID: id, game: record.game)
-        } catch {
+        case .failed(let error):
             alert = AppAlert(title: "Can't start \(record.game.title)", message: error.localizedDescription)
         }
     }
 
-    func confirmProgram(_ executable: String) {
-        guard let request = chooseProgram else { return }
+    @discardableResult
+    func confirmProgram(_ executable: String) -> Task<Void, Never>? {
+        guard let request = chooseProgram else { return nil }
         chooseProgram = nil
-        guard var game = store.record(request.gameID)?.game else { return }
+        guard var game = store.record(request.gameID)?.game else { return nil }
         game.launch.executable = executable
         do {
             try store.save(game)
         } catch {
             alert = AppAlert(title: "Can't save \(game.title)", message: error.localizedDescription)
-            return
+            return nil
         }
-        play(request.gameID)
+        return play(request.gameID)
     }
 
     func cancelChooseProgram() {

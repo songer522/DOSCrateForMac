@@ -166,7 +166,7 @@ private struct GameHeader: View {
                     } else {
                         Button("Play", systemImage: "play.fill", action: onPlay)
                             .buttonStyle(.borderedProminent)
-                            .disabled(model.pendingRemovalIDs.contains(record.id))
+                            .disabled(model.pendingRemovalIDs.contains(record.id) || model.startingIDs.contains(record.id))
                     }
                 }
                 Spacer(minLength: 0)

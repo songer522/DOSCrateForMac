@@ -530,7 +530,7 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         await model.store.reload()
 
         // Start Keen so it is running.
-        model.play(seeded.id)
+        await model.play(seeded.id)?.value
         #expect(model.sessions.running.contains(seeded.id))
 
         // Single-item duplicate notice check + running refusal on Replace.
