@@ -54,7 +54,7 @@ key_enter "stick_0 axis 5 1" "key 40"
 
 The wired Xbox's vertical stick axis is inverted. Stick-up was not probed on the standard and steam layouts; it is the first check of the device test (§7). Triggers are unbound in slice A but recorded for slice C.
 
-**HID identity.** `hidutil list` shows the Steam puck as vendor `0x28de`, product `0x1304`, transport USB, product "Steam Controller Puck", with usage page 1 / usage 2 (not the gamepad usage 5). The Switch 2 Pro shows as vendor `0x057e`, product `0x2069`, "Pro Controller", usage 1/5, but Staging logs "No joysticks found". The wired Xbox's vendor, product and usage were not captured; the first implementation task captures them with `hidutil list` (it reports the generic name "Controller", so it may not use Microsoft's vendor ID).
+**HID identity.** `hidutil list` shows the Steam puck as vendor `0x28de`, product `0x1304`, transport USB, product "Steam Controller Puck", with usage page 1 / usage 2 (not the gamepad usage 5). The Switch 2 Pro shows as vendor `0x057e`, product `0x2069`, "Pro Controller", usage 1/5, but Staging logs "No joysticks found". The wired Xbox shows as vendor `0x045e`, product `0x0b12`, transport USB, product "Controller", usage 1/5. Raw probe files and notes are in `controller-probe-2026-10-27/`.
 
 ## 3. Default map
 
@@ -86,7 +86,7 @@ All new logic lives in `DOSCrateKit` and is pure and unit-tested; the app only d
 - `LayoutSelector.select(_ devices: [GamepadInfo]) -> ControllerLayout?`, in order:
   1. Drop devices Staging can't open (Nintendo `0x057e` / `0x2069`).
   2. Valve `0x28de` (any usage) → `steam`.
-  3. The wired Xbox's identity from §2 → `xboxUSB`.
+  3. Microsoft `0x045e` with transport `USB` → `xboxUSB` (Bluetooth Xbox falls through to `standard`).
   4. Any other device with usage page 1 and usage 4 (joystick), 5 (gamepad) or 8 (multi-axis) → `standard`.
   5. Otherwise `nil`.
   With several candidates, the first in this priority order wins.
