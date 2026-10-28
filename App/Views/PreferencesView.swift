@@ -60,6 +60,9 @@ private struct GeneralPreferences: View {
             Picker("When importing", selection: $prefs.importLocation) {
                 ForEach(ImportLocationPreference.allCases, id: \.self) { Text($0.displayName).tag($0) }
             }
+            Toggle("Use game controllers", isOn: $prefs.useControllers)
+            Text("Maps the d-pad, left stick, A/B/X/Y and Start to keyboard keys.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
     }
