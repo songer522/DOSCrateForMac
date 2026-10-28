@@ -9,6 +9,7 @@ State as of the merge of PR #1 (`d07a896`, 2026-10-27). The code, tests (`make g
 - **LGPL source.** `release.sh` attaches plain upstream glib and gettext tarballs (versions read from the bundled dylibs). Staging builds these with vcpkg, which may patch them; if so the patches may also be "corresponding source". Needs a legal or owner look. The glib and gettext tarballs have no pinned checksums.
 - **Credentials and identifiers.** Developer ID certificate, notarytool profile, Sparkle appcast host and EdDSA key (`DOSCRATE_APPCAST_URL`, `DOSCRATE_SPARKLE_KEY` are empty by default; the release script refuses empty values), and the final bundle id (placeholder `com.songer522.DOSCrate`).
 - **Appcast generation and EdDSA signing** (spec §7) are not in `release.sh`.
+- **LaunchBox terms.** Confirm the LaunchBox Games Database terms allow a third-party app to download `Metadata.zip` and its images, or get written permission (metadata crawler spec §7).
 - **Manual test checklist** (`docs/manual-test-checklist.md`) has not been walked on a Mac. Several UI paths were never exercised by hand: right-click selection on macOS, the import and detail-view manual steps, drag-and-drop.
 
 ## Planned features
