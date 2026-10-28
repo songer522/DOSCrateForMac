@@ -27,9 +27,28 @@ struct RetroStatusBar: View {
                 progressBar(current: removal.done, total: removal.total)
                 Text("Removing \(removal.done) of \(removal.total)…")
             }
+        } else if let metadataText = model.metadata.statusText {
+            bar(cancellable: false) {
+                if case .downloading(let fraction) = model.metadata.phase {
+                    progressBar(current: Int((min(1.0, max(0.0, fraction)) * 100).rounded()), total: 100)
+                }
+                Text(metadataText)
+                if Self.showsMetadataRetry(for: model) {
+                    Button("Retry") { model.metadata.retry() }
+                        .buttonStyle(RetroButtonStyle(kind: .text))
+                }
+            }
         } else if controllerStatus != nil {
             bar(cancellable: false) {}
         }
+    }
+
+    static func leadingText(for model: AppModel) -> String? {
+        LibraryView.statusBarLeadingText(for: model)
+    }
+
+    static func showsMetadataRetry(for model: AppModel) -> Bool {
+        LibraryView.showsMetadataRetry(for: model)
     }
 
     private func bar(cancellable: Bool, @ViewBuilder _ items: () -> some View) -> some View {

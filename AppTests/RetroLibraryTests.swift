@@ -162,4 +162,40 @@ struct RetroLibraryTests {
         view.onClose()
         #expect(didClose)
     }
+
+    @Test func statusBarShowsMetadataStatusWhenIdleOtherwise() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "retrolib-status-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let defaults = UserDefaults(suiteName: "doscrate-retro-status-\(UUID().uuidString)")!
+        let prefs = Preferences(defaults: defaults)
+        let store = LibraryStore(library: root)
+        let model = AppModel(
+            prefs: prefs,
+            store: store,
+            sessions: SessionManager(runner: FakeRunner()),
+            importer: Importer(),
+            dosbox: root.appending(path: "dosbox"),
+            verifyDosbox: { _ in }
+        )
+
+        #expect(LibraryView.statusBarLeadingText(for: model) == nil)
+        #expect(RetroStatusBar.leadingText(for: model) == nil)
+
+        model.metadata.phase = .downloading(0.5)
+        #expect(LibraryView.statusBarLeadingText(for: model) == "Downloading LaunchBox data… 50%")
+        #expect(RetroStatusBar.leadingText(for: model) == "Downloading LaunchBox data… 50%")
+        #expect(!LibraryView.showsMetadataRetry(for: model))
+
+        model.metadata.phase = .building
+        #expect(LibraryView.statusBarLeadingText(for: model) == "Building LaunchBox index…")
+        #expect(RetroStatusBar.leadingText(for: model) == "Building LaunchBox index…")
+
+        model.metadata.phase = .failed("offline")
+        #expect(LibraryView.statusBarLeadingText(for: model) == "LaunchBox data unavailable")
+        #expect(RetroStatusBar.leadingText(for: model) == "LaunchBox data unavailable")
+        #expect(LibraryView.showsMetadataRetry(for: model))
+        #expect(RetroStatusBar.showsMetadataRetry(for: model))
+    }
 }

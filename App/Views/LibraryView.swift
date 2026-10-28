@@ -111,6 +111,21 @@ struct LibraryView: View {
                                 .frame(maxWidth: 180)
                             Text("Removing \(removal.done) of \(removal.total)…")
                         }
+                    } else if let metadataText = model.metadata.statusText {
+                        statusBar(cancellable: false) {
+                            if case .downloading(let fraction) = model.metadata.phase {
+                                ProgressView(value: min(1.0, max(0.0, fraction)), total: 1.0)
+                                    .progressViewStyle(.linear)
+                                    .frame(maxWidth: 140)
+                            } else if case .building = model.metadata.phase {
+                                ProgressView().controlSize(.small)
+                            }
+                            Text(metadataText)
+                            if Self.showsMetadataRetry(for: model) {
+                                Button("Retry") { model.metadata.retry() }
+                                    .controlSize(.small)
+                            }
+                        }
                     } else if controllerStatus != nil {
                         statusBar(cancellable: false) {}
                     }
@@ -211,6 +226,33 @@ struct LibraryView: View {
         } label: {
             if model.query.sort == key { Label(title, systemImage: "checkmark") } else { Text(title) }
         }
+    }
+
+    static func statusBarLeadingText(for model: AppModel) -> String? {
+        if let progress = model.imports.progress {
+            return progress.label
+        } else if model.isScanningLibrary {
+            return "Looking for games…"
+        } else if model.imports.isCheckingDuplicates {
+            return "Checking for duplicates…"
+        } else if let removal = model.removalProgress {
+            return "Removing \(removal.done) of \(removal.total)…"
+        } else if let metadataText = model.metadata.statusText {
+            return metadataText
+        }
+        return nil
+    }
+
+    static func showsMetadataRetry(for model: AppModel) -> Bool {
+        guard model.imports.progress == nil,
+              !model.isScanningLibrary,
+              !model.imports.isCheckingDuplicates,
+              model.removalProgress == nil
+        else { return false }
+        if case .failed = model.metadata.phase {
+            return true
+        }
+        return false
     }
 
     /// What removal does, worded per source: a managed game's files live in its crate, so they always go with it.
