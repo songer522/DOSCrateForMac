@@ -77,4 +77,47 @@ import LibraryKit
         let r = f.record(executable: "Long Name/x.exe")
         #expect(LaunchPlanner.generatedConfigPreview(r, global: GlobalConfig(), io: f.io).hasPrefix("# error:"))
     }
+
+    @Test func writesControllerMap() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE"); let r = f.record(executable: "GAME.EXE", exitWhenDone: false)
+        let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+        _ = try LaunchPlanner.plan(r, cDrive: c, global: GlobalConfig(controllerLayout: .steam), dosbox: f.dosbox, io: f.io)
+        let map = f.crate.appending(path: ".cache/controller.map")
+        #expect(try String(contentsOf: map, encoding: .utf8) == ControllerMap.render(.steam))
+        let conf = try String(contentsOf: f.crate.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(conf.contains("mapperfile = \(map.path)\n")); #expect(conf.contains("joysticktype = hidden\n"))
+    }
+
+    @Test func noLayoutNoMap() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE"); let r = f.record(executable: "GAME.EXE", exitWhenDone: false)
+        let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+        _ = try LaunchPlanner.plan(r, cDrive: c, global: GlobalConfig(), dosbox: f.dosbox, io: f.io)
+        let map = f.crate.appending(path: ".cache/controller.map")
+        #expect(!FileManager.default.fileExists(atPath: map.path))
+        let conf = try String(contentsOf: f.crate.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(!conf.contains("mapperfile")); #expect(!conf.contains("joysticktype"))
+    }
+
+    @Test func unwritableMapStillLaunches() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE"); let r = f.record(executable: "GAME.EXE", exitWhenDone: false)
+        let map = f.crate.appending(path: ".cache/controller.map")
+        try FileManager.default.createDirectory(at: map, withIntermediateDirectories: true)
+        let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+        _ = try LaunchPlanner.plan(r, cDrive: c, global: GlobalConfig(controllerLayout: .steam), dosbox: f.dosbox, io: f.io)
+        let conf = try String(contentsOf: f.crate.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(!conf.contains("mapperfile")); #expect(!conf.contains("joysticktype"))
+    }
+
+    @Test func previewShowsControllerLines() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE"); let r = f.record(executable: "GAME.EXE", exitWhenDone: false)
+        let map = f.crate.appending(path: ".cache/controller.map")
+        let preview = LaunchPlanner.generatedConfigPreview(r, global: GlobalConfig(controllerLayout: .standard), io: f.io)
+        #expect(preview.contains("mapperfile = \(map.path)\n"))
+        #expect(preview.contains("joysticktype = hidden\n"))
+        #expect(!FileManager.default.fileExists(atPath: map.path))
+    }
 }
