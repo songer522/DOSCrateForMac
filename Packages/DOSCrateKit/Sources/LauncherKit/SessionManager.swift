@@ -30,18 +30,47 @@ public final class SessionManager {
     }
 
     /// Session logs kept per game, including the current one.
-    public static let keptLogs = 5
+    nonisolated public static let keptLogs = 5
 
-    public func start(gameID: UUID, plan: LaunchPlan) throws(LaunchError) {
-        guard !running.contains(gameID) else { throw .alreadyRunning }
+    public struct PreparedSession: Sendable {
+        public let plan: LaunchPlan
+        public let started: Date
+        public let logURL: URL
+        public let log: FileHandle?
+
+        public func discard() {
+            try? log?.close()
+        }
+    }
+
+    nonisolated public func prepare(_ plan: LaunchPlan) throws(LaunchError) -> PreparedSession {
         let started = now()
         let logURL = plan.logsDirectory.appending(path: Self.logName(started), directoryHint: .notDirectory)
-        let process: any RunningProcess
         // Log housekeeping must never stop a launch: keep 4 old logs so the new one makes 5.
         try? FileManager.default.createDirectory(at: plan.logsDirectory, withIntermediateDirectories: true)
         try? LogRotation.prune(plan.logsDirectory, keep: Self.keptLogs - 1)
         do {
-            process = try runner.start(plan, logURL: logURL)
+            let log = try (runner as? FoundationProcessRunner)?.openLog(at: logURL)
+            return PreparedSession(plan: plan, started: started, logURL: logURL, log: log)
+        } catch let e as LaunchError {
+            throw e
+        } catch {
+            throw .launchFailed(error.localizedDescription)
+        }
+    }
+
+    public func start(gameID: UUID, prepared: PreparedSession) throws(LaunchError) {
+        guard !running.contains(gameID) else {
+            prepared.discard()
+            throw .alreadyRunning
+        }
+        let process: any RunningProcess
+        do {
+            if let log = prepared.log, let foundation = runner as? FoundationProcessRunner {
+                process = try foundation.start(prepared.plan, log: log)
+            } else {
+                process = try runner.start(prepared.plan, logURL: prepared.logURL)
+            }
         } catch let e as LaunchError {
             throw e
         } catch {
@@ -50,10 +79,18 @@ public final class SessionManager {
         running.insert(gameID)
         processes[gameID] = process
         stopped.remove(gameID)
+        let started = prepared.started
+        let logURL = prepared.logURL
         Task { @MainActor [weak self] in
             let code = await process.waitForExit()
             self?.ended(gameID: gameID, code: code, started: started, logURL: logURL)
         }
+    }
+
+    public func start(gameID: UUID, plan: LaunchPlan) throws(LaunchError) {
+        guard !running.contains(gameID) else { throw .alreadyRunning }
+        let prepared = try prepare(plan)
+        try start(gameID: gameID, prepared: prepared)
     }
 
     public func stop(gameID: UUID) {
@@ -83,10 +120,42 @@ public final class SessionManager {
                                logURL: logURL, unexpected: code != 0 && !wasStopped))
     }
 
-    private static func logName(_ date: Date) -> String {
+    nonisolated private static func logName(_ date: Date) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyyMMdd-HHmmss"
         return f.string(from: date) + ".log"
+    }
+}
+
+extension FoundationProcessRunner {
+    func openLog(at logURL: URL) throws -> FileHandle {
+        guard FileManager.default.createFile(atPath: logURL.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: logURL.path])
+        }
+        return try FileHandle(forWritingTo: logURL)
+    }
+
+    func start(_ plan: LaunchPlan, log: FileHandle) throws -> any RunningProcess {
+        let process = Process()
+        process.executableURL = plan.executable
+        process.arguments = plan.arguments
+        process.currentDirectoryURL = plan.workingDirectory
+        process.environment = ProcessInfo.processInfo.environment.merging(plan.environment) { _, new in new }
+        process.standardOutput = log
+        process.standardError = log
+        process.standardInput = FileHandle.nullDevice
+        let running = FoundationRunningProcess(process)
+        process.terminationHandler = { p in
+            try? log.close()
+            running.finished(p.terminationStatus)
+        }
+        do {
+            try process.run()
+        } catch {
+            try? log.close()
+            throw error
+        }
+        return running
     }
 }

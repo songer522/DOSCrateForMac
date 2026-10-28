@@ -13,8 +13,9 @@ struct GameContextMenu: View {
         if model.sessions.running.contains(record.id) {
             Button("Stop") { model.stop(record.id) }
         } else {
-            Button("Play") { model.play(record.id) }
-                .disabled(model.pendingRemovalIDs.contains(record.id))
+            let starting = model.startingIDs.contains(record.id)
+            Button(starting ? "Starting…" : "Play") { model.play(record.id) }
+                .disabled(model.pendingRemovalIDs.contains(record.id) || starting)
         }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([record.crateURL]) }
         Button(record.game.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
@@ -115,7 +116,7 @@ struct LibraryView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { record in
-            Text(Self.removalMessage(for: record, running: model.sessions.running.contains(record.id)))
+            Text(Self.removalMessage(for: record, running: model.isActive(record.id)))
         }
         .confirmationDialog(removingMany.map { "Remove \($0.count) games?" } ?? "",
                             isPresented: Binding(get: { removingMany != nil }, set: { if !$0 { removingMany = nil } }),
@@ -130,7 +131,7 @@ struct LibraryView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { ids in
-            Text(Self.removalMessage(for: ids.compactMap(model.store.record), running: model.sessions.running))
+            Text(Self.removalMessage(for: ids.compactMap(model.store.record), running: model.sessions.running.union(model.startingIDs)))
         }
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)

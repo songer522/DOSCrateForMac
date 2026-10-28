@@ -3,6 +3,7 @@ import Foundation
 import ImportKit
 import LauncherKit
 import LibraryKit
+import os
 import Testing
 @testable import DOSCrate
 
@@ -46,7 +47,7 @@ final class FakeRunner: ProcessRunner, @unchecked Sendable {
 }
 
 @MainActor
-private func waitUntil(_ cond: @MainActor () -> Bool) async {
+func waitUntil(_ cond: @MainActor () -> Bool) async {
     for _ in 0..<500 where !cond() { try? await Task.sleep(for: .milliseconds(10)) }
 }
 
@@ -58,8 +59,9 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
 
     /// Creates a library holding one managed game; returns the model and the game id.
     func makeModel(executable: String?, files: [String] = [], libraryExists: Bool = true,
+                   launchTimeout: Duration? = nil,
                    configure: (inout Game) -> Void = { _ in },
-                   verify: @escaping @MainActor (URL) throws -> Void = { _ in }) async throws -> (AppModel, UUID) {
+                   verify: @escaping @Sendable (URL) throws -> Void = { _ in }) async throws -> (AppModel, UUID) {
         let fm = FileManager.default
         let lib = root.appending(path: "Library")
         if libraryExists { try fm.createDirectory(at: lib, withIntermediateDirectories: true) }
@@ -85,15 +87,21 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         let prefs = Preferences(defaults: UserDefaults(suiteName: suite)!)
         let store = LibraryStore(library: lib)
         await store.reload()
-        let model = AppModel(prefs: prefs, store: store, sessions: SessionManager(runner: runner),
-                             importer: Importer(), dosbox: dosbox, verifyDosbox: verify)
+        let model = if let launchTimeout {
+            AppModel(prefs: prefs, store: store, sessions: SessionManager(runner: runner),
+                     importer: Importer(), dosbox: dosbox, verifyDosbox: verify,
+                     launchTimeout: launchTimeout)
+        } else {
+            AppModel(prefs: prefs, store: store, sessions: SessionManager(runner: runner),
+                     importer: Importer(), dosbox: dosbox, verifyDosbox: verify)
+        }
         return (model, id)
     }
 
     @Test func playSuccessUpdatesStatsOnEnd() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.alert == nil)
         #expect(model.sessions.running.contains(id))
         runner.processes[0].finish(0)
@@ -115,7 +123,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         try io.save(otherGame, extra: [:], to: other)
         await model.store.reload()
 
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.sessions.running.contains(id))
         model.selectedIDs = [id, otherGame.id]
         #expect(model.selection == nil)
@@ -191,12 +199,12 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
         var launchedBeforeWrite: [Bool] = []
         model.setPendingWrite(id, owner: "a") { launchedBeforeWrite.append(!self.runner.processes.isEmpty) }
-        model.play(id)
+        await model.play(id)?.value
         #expect(launchedBeforeWrite == [false])
         #expect(model.sessions.running.contains(id))
         runner.processes[0].finish(0)
         await waitUntil { !model.sessions.running.contains(id) }
-        model.play(id)
+        await model.play(id)?.value
         #expect(launchedBeforeWrite == [false])
     }
 
@@ -208,7 +216,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         model.setPendingWrite(id, owner: "override") { ran.append("override") }
         model.setPendingWrite(id, owner: "cleared") { ran.append("cleared") }
         model.setPendingWrite(id, owner: "cleared", nil)
-        model.play(id)
+        await model.play(id)?.value
         #expect(Set(ran) == ["draft", "override"] && ran.count == 2)
         #expect(model.sessions.running.contains(id))
     }
@@ -218,14 +226,14 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
         var ran = false
         model.setPendingWrite(UUID(), owner: "draft") { ran = true }
-        model.play(id)
+        await model.play(id)?.value
         #expect(!ran)
     }
 
     @Test func playNonDOSPathRaisesAlertWithUseFolderFix() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "Long Name/GAME.EXE", files: ["Long Name/GAME.EXE"])
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.alert?.fix == .useFolderAsC("Long Name"))
         #expect(model.alert?.gameID == id)
         #expect(runner.processes.isEmpty)
@@ -240,7 +248,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(game.launch.executable == "GAME.EXE")
         await model.store.reload()
         #expect(model.store.record(id)?.game.launch.driveCRoot == "Long Name")
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.alert == nil)
         #expect(model.sessions.running.contains(id))
     }
@@ -248,7 +256,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
     @Test func nonDOSExecutableItselfOffersNoFolderFix() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "KEEN/Long Name.exe", files: ["KEEN/Long Name.exe"])
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.alert?.fix == .chooseExecutable)
         model.applyFix(.useFolderAsC("KEEN/Long Name.exe"), for: id)
         let game = try #require(model.store.record(id)).game
@@ -259,7 +267,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
     @Test func missingDriveCRootOffersResetNotLocate() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { $0.launch.driveCRoot = "GONE" }
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.alert?.fix == .resetCRoot)
         #expect(runner.processes.isEmpty)
         model.applyFix(.resetCRoot, for: id)
@@ -275,7 +283,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         }
         try FileManager.default.createDirectory(at: try #require(model.store.record(id)).crateURL.appending(path: "files"),
                                                 withIntermediateDirectories: true)
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.alert?.title == "Disc image missing")
         #expect(model.alert?.fix == nil)
     }
@@ -283,7 +291,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
     @Test func locateFolderIsNeverOfferedForManagedGames() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "GAME.EXE")
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.alert?.fix == nil)
         model.applyFix(.locateFolder, for: id)
         #expect(model.pendingFix == nil)
@@ -308,7 +316,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         let crate = try await breakGameJSON(model, oldID)
         let record = try #require(model.store.records.first)
         guard case .needsRepair = record.status else { Issue.record("expected needsRepair"); return }
-        model.play(record.id)
+        await model.play(record.id)?.value
         #expect(model.alert?.fix == .recreate)
         model.applyFix(.recreate, for: record.id)
         #expect(model.store.record(record.id)?.status == .ok)
@@ -349,7 +357,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
     @Test func unexpectedExitStoredInLastResult() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
-        model.play(id)
+        await model.play(id)?.value
         runner.processes[0].finish(3)
         await waitUntil { model.lastResult[id] != nil }
         #expect(model.lastResult[id]?.exitCode == 3)
@@ -387,7 +395,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
     @Test func playWithNoExecutableAndCandidatesPresentsChooseProgramAndDoesNotLaunch() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: nil, files: ["SETUP.EXE", "TESTGAME.EXE"])
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.alert == nil)
         #expect(runner.processes.isEmpty)
         let prompt = try #require(model.chooseProgram)
@@ -406,11 +414,11 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         try io.save(game, extra: ["futureKey": .string("preserved")], to: crate)
         await model.store.reload()
 
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.chooseProgram?.gameID == id)
         #expect(runner.processes.isEmpty)
 
-        model.confirmProgram("TESTGAME.EXE")
+        await model.confirmProgram("TESTGAME.EXE")?.value
         #expect(model.chooseProgram == nil)
         #expect(model.alert == nil)
         #expect(model.sessions.running.contains(id))
@@ -427,7 +435,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
     @Test func cancelChooseProgramChangesNothing() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: nil, files: ["GAME.EXE"])
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.chooseProgram != nil)
         model.cancelChooseProgram()
         #expect(model.chooseProgram == nil)
@@ -446,7 +454,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         try FileManager.default.createDirectory(at: crate.appending(path: "media"), withIntermediateDirectories: true)
         try Data("iso".utf8).write(to: crate.appending(path: "media/disc.iso"))
 
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.chooseProgram == nil)
         #expect(model.alert == nil)
         #expect(model.sessions.running.contains(id))
@@ -455,7 +463,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
     @Test func playWithNoExecutableAndNoCandidatesFallsBackToAlert() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: nil, files: ["README.TXT"])
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.chooseProgram == nil)
         #expect(model.alert?.title == "No program to run")
         #expect(model.alert?.fix == .chooseExecutable)
@@ -469,7 +477,7 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
     @Test func missingExecutableFixUsesRankedChooseProgramSheet() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "GONE.EXE", files: ["SETUP.EXE", "TESTGAME.EXE"])
-        model.play(id)
+        await model.play(id)?.value
         #expect(model.chooseProgram == nil)
         #expect(model.alert?.title == "Program not found")
         #expect(model.alert?.fix == .chooseExecutable)
@@ -655,5 +663,139 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.store.records.count == 3)
         #expect(model.store.records.filter { $0.game.title == "Commander Keen" }.count == 1)
         #expect(model.store.records.filter { $0.game.title == "Wolfenstein" }.count == 2)
+    }
+
+    @Test func defaultLaunchTimeoutIsTwentySeconds() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _) = try await makeModel(executable: nil)
+        #expect(model.launchTimeout == .seconds(20))
+    }
+
+    @Test func playRunsOffMainTracksStartingAndIgnoresDuplicatePlay() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let release = DispatchSemaphore(value: 0)
+        let state = OSAllocatedUnfairLock(initialState: (armed: false, calls: 0, ranOffMain: false))
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { _ in } verify: { _ in
+            let shouldBlock = state.withLock { s -> Bool in
+                guard s.armed else { return false }
+                s.calls += 1
+                s.ranOffMain = !Thread.isMainThread
+                return true
+            }
+            if shouldBlock {
+                release.wait()
+            }
+        }
+        state.withLock { $0.armed = true }
+
+        let first = model.play(id)
+        #expect(first != nil)
+        #expect(model.startingIDs == [id])
+        #expect(model.sessions.running.isEmpty)
+        #expect(runner.processes.isEmpty)
+
+        await waitUntil { state.withLock { $0.calls == 1 } }
+        #expect(state.withLock { $0.ranOffMain })
+        #expect(model.play(id) == nil)
+        #expect(state.withLock { $0.calls } == 1)
+
+        release.signal()
+        await first?.value
+        #expect(model.startingIDs.isEmpty)
+        #expect(model.sessions.running == [id])
+        #expect(runner.processes.count == 1)
+
+        // A second Play while already running also does nothing.
+        #expect(model.play(id) == nil)
+        #expect(model.alert == nil)
+        #expect(runner.processes.count == 1)
+    }
+
+    @Test func playTimeoutShowsAlertKeepsStartingUntilWorkEndsAndIgnoresLateCompletion() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let release = DispatchSemaphore(value: 0)
+        let state = OSAllocatedUnfairLock(initialState: (armed: false, entered: false))
+        let (model, id) = try await makeModel(
+            executable: "GAME.EXE", files: ["GAME.EXE"], launchTimeout: .milliseconds(100)
+        ) { _ in } verify: { _ in
+            let shouldBlock = state.withLock { s -> Bool in
+                guard s.armed else { return false }
+                s.entered = true
+                return true
+            }
+            if shouldBlock { release.wait() }
+        }
+        state.withLock { $0.armed = true }
+
+        let first = model.play(id)
+        #expect(model.startingIDs == [id])
+        await waitUntil { state.withLock { $0.entered } }
+
+        await waitUntil { model.alert != nil }
+        #expect(model.sessions.running.isEmpty)
+        #expect(runner.processes.isEmpty)
+        let alert = try #require(model.alert)
+        #expect(alert.title == "Can't start Test Game")
+        #expect(alert.message.contains("library volume"))
+        #expect(alert.message.contains("isn't responding"))
+
+        // The expired attempt may still write launch files into the crate, so the game stays
+        // starting: no second Play and no removal until that work ends.
+        model.alert = nil
+        #expect(model.startingIDs == [id])
+        #expect(model.play(id) == nil)
+        model.removeGame(id, trashFiles: true)
+        #expect(model.store.record(id) != nil)
+        model.alert = nil
+
+        release.signal()
+        await first?.value
+        #expect(model.startingIDs.isEmpty)
+        #expect(model.sessions.running.isEmpty)
+        #expect(runner.processes.isEmpty)
+        #expect(model.alert == nil)
+
+        // A later Play of the same game after the timeout is allowed.
+        state.withLock { $0.armed = false }
+        await model.play(id)?.value
+        #expect(model.sessions.running == [id])
+        #expect(runner.processes.count == 1)
+    }
+
+    @Test func removingAGameThatIsStartingIsRefused() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let release = DispatchSemaphore(value: 0)
+        let state = OSAllocatedUnfairLock(initialState: (armed: false, entered: false))
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { _ in } verify: { _ in
+            let shouldBlock = state.withLock { s -> Bool in
+                guard s.armed else { return false }
+                s.entered = true
+                return true
+            }
+            if shouldBlock { release.wait() }
+        }
+        state.withLock { $0.armed = true }
+
+        let task = model.play(id)
+        #expect(model.startingIDs == [id])
+        await waitUntil { state.withLock { $0.entered } }
+
+        // The background start may still write into the crate, so removal must wait for it.
+        model.removeGame(id, trashFiles: true)
+        #expect(model.store.record(id) != nil)
+        #expect(model.alert?.title == "Can't remove Test Game")
+        model.alert = nil
+
+        await model.removeGames([id], trashFolders: true)
+        #expect(model.store.record(id) != nil)
+        #expect(model.alert?.title == "Couldn't remove 1 game")
+        model.alert = nil
+
+        release.signal()
+        await task?.value
+        #expect(model.startingIDs.isEmpty)
+        #expect(model.sessions.running.contains(id))
+        runner.processes[0].finish(0)
+        await waitUntil { !model.sessions.running.contains(id) }
     }
 }

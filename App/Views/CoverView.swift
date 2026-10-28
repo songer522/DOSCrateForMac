@@ -22,6 +22,7 @@ enum PlaceholderCover {
 struct CoverView: View {
     let record: GameRecord
     var isRunning = false
+    var isStarting = false
 
     @State private var image: NSImage?
 
@@ -68,7 +69,11 @@ struct CoverView: View {
             case .readOnly: badge("Read-only", .gray)
             case .ok: EmptyView()
             }
-            if isRunning { badge("Running", .green) }
+            if isRunning {
+                badge("Running", .green)
+            } else if isStarting {
+                badge("Starting…", .blue)
+            }
         }
     }
 

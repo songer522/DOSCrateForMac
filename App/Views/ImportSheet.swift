@@ -177,7 +177,7 @@ final class ImportQueue {
                 importer.discard(prepared)
                 return nil
             }
-            guard !model.sessions.running.contains(existing.id) else {
+            guard !model.isActive(existing.id) else {
                 model.alert = AppModel.alert(for: .alreadyRunning, gameID: existing.id, game: existing.game)
                 importer.discard(prepared)
                 return nil
@@ -254,7 +254,7 @@ final class ImportQueue {
             do {
                 var replaceTarget: GameRecord?
                 if let replaceID = entry.replacing {
-                    if model.sessions.running.contains(replaceID) {
+                    if model.isActive(replaceID) {
                         throw ImportError.alreadyRunning
                     }
                     if let currentRecord = model.store.record(replaceID) {

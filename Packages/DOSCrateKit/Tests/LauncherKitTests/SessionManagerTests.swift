@@ -216,4 +216,39 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(throws: LaunchError.launchFailed("spawn failed")) { try m.start(gameID: UUID(), plan: plan()) }
         #expect(m.running.isEmpty)
     }
+
+    @Test func prepareOffMainPrunesLogsAndStartRunsProcess() async throws {
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: logs.deletingLastPathComponent()) }
+        for i in 1...8 { try Data().write(to: logs.appending(path: "2020010\(i)-000000.log")) }
+        let runner = FakeRunner()
+        let m = SessionManager(runner: runner)
+        let id = UUID()
+        let p = plan()
+        let prepared = try await Task.detached { try m.prepare(p) }.value
+        #expect(m.running.isEmpty)
+        #expect(runner.started.isEmpty)
+        try m.start(gameID: id, prepared: prepared)
+        #expect(m.running == [id])
+        #expect(runner.started.count == 1)
+        let names = try FileManager.default.contentsOfDirectory(atPath: logs.path).sorted()
+        #expect(names.count == 5)
+        #expect(names.contains(runner.started[0].logURL.lastPathComponent))
+    }
+
+    @Test func prepareOpensLogFileOffMainWithFoundationRunner() async throws {
+        defer { try? FileManager.default.removeItem(at: logs.deletingLastPathComponent()) }
+        let m = SessionManager()
+        let p = LaunchPlan(executable: URL(filePath: "/bin/sh"), arguments: ["-c", "echo prepared-ok"],
+                           workingDirectory: logs, environment: [:],
+                           configURL: logs.appending(path: "x.conf"), logsDirectory: logs)
+        let prepared = try await Task.detached { try m.prepare(p) }.value
+        #expect(FileManager.default.fileExists(atPath: prepared.logURL.path))
+        var results: [SessionResult] = []
+        m.onEnded = { results.append($0) }
+        try m.start(gameID: UUID(), prepared: prepared)
+        await waitUntil { !results.isEmpty }
+        let text = try String(contentsOf: prepared.logURL, encoding: .utf8)
+        #expect(text.contains("prepared-ok"))
+    }
 }

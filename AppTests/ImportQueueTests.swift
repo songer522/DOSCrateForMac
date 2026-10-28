@@ -1,4 +1,5 @@
 import Foundation
+import os
 import ImportKit
 import LauncherKit
 import LibraryKit
@@ -28,7 +29,8 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
 @Suite struct ImportQueueTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "importqueue-\(UUID().uuidString)")
 
-    func makeModel(stagingParent: URL? = nil, importLocation: ImportLocationPreference = .copy) async throws -> AppModel {
+    func makeModel(stagingParent: URL? = nil, importLocation: ImportLocationPreference = .copy,
+                   verify: @escaping @Sendable (URL) throws -> Void = { _ in }) async throws -> AppModel {
         let fm = FileManager.default
         let lib = root.appending(path: "Library")
         try fm.createDirectory(at: lib, withIntermediateDirectories: true)
@@ -41,7 +43,7 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         await store.reload()
         let importer = stagingParent.map { Importer(stagingParent: $0) } ?? Importer()
         return AppModel(prefs: prefs, store: store, sessions: SessionManager(runner: FakeRunner()),
-                        importer: importer, dosbox: dosbox, verifyDosbox: { _ in })
+                        importer: importer, dosbox: dosbox, verifyDosbox: verify)
     }
 
     @Test func singleItemOpensSheetAndAdvances() async throws {
@@ -530,7 +532,7 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         await model.store.reload()
 
         // Start Keen so it is running.
-        model.play(seeded.id)
+        await model.play(seeded.id)?.value
         #expect(model.sessions.running.contains(seeded.id))
 
         // Single-item duplicate notice check + running refusal on Replace.
@@ -557,5 +559,57 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         let alert = try #require(model.alert)
         #expect(alert.title == "Couldn't import 1 item")
         #expect(alert.message.contains("already running"))
+    }
+
+    @Test func replaceRefusesStartingGameInBatchAndSingleImport() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let release = DispatchSemaphore(value: 0)
+        let state = OSAllocatedUnfairLock(initialState: (armed: false, entered: false))
+        let model = try await makeModel(importLocation: .copy) { _ in
+            let shouldBlock = state.withLock { s -> Bool in
+                guard s.armed else { return false }
+                s.entered = true
+                return true
+            }
+            if shouldBlock { release.wait() }
+        }
+        let queue = ImportQueue()
+
+        let keen = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(keen, "KEEN1.EXE")
+        let pSeed = try await model.importer.prepare(keen)
+        let seeded = try await model.importer.commit(
+            pSeed, mode: .copy, title: "Keen", executable: "KEEN1.EXE", into: model.store.library
+        )
+        await model.store.reload()
+
+        // Keen's start is still preparing in the background, reading its files.
+        state.withLock { $0.armed = true }
+        let start = model.play(seeded.id)
+        await waitUntil { state.withLock { $0.entered } }
+        #expect(model.startingIDs == [seeded.id])
+
+        let pSingle = try await model.importer.prepare(keen)
+        let replacedSingle = try await queue.finishSingleImport(
+            pSingle, action: .replace, replacing: seeded, mode: .copy, title: "Keen", executable: "KEEN1.EXE", model: model
+        )
+        #expect(replacedSingle == nil)
+        #expect(model.alert?.title == "Already running")
+        model.alert = nil
+
+        // Batch Replace counts Keen as a failure and still imports Duke.
+        let duke = root.appending(path: "duke", directoryHint: .isDirectory)
+        try touchFile(duke, "DUKE.EXE")
+        await queue.add([keen, duke], model: model)?.value
+        await queue.confirmBatch(duplicateAction: .replace, model: model)?.value
+        #expect(model.store.records.map(\.game.title) == ["Duke", "Keen"])
+        let alert = try #require(model.alert)
+        #expect(alert.title == "Couldn't import 1 item")
+        #expect(alert.message.contains("already running"))
+        model.alert = nil
+
+        release.signal()
+        await start?.value
+        #expect(model.sessions.running.contains(seeded.id))
     }
 }
