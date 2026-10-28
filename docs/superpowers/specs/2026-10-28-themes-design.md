@@ -4,20 +4,20 @@ Date: 2026-10-28. Status: design approved in chat by the owner, spec awaiting re
 
 ## 1. Goal
 
-Add a theme choice to DOSCrate. **Standard** is today's UI, unchanged, and stays the default. **DOS** gives the library window the look of an early-1990s DOS graphical shell: a VGA-blue desktop, grey beveled panels, chunky 3D icon buttons and a pixel font (owner reference: a German DOS "Programmanager"-style shell screenshot). The DOS theme is our own design in that genre, not a copy of any specific product.
+Add a theme choice to DOSCrate. **Standard** is today's UI, unchanged. **DOS**, the default (owner decision 2026-10-28, after the first device test), gives the library window the look of an early-1990s DOS graphical shell: a VGA-blue desktop, grey beveled panels, chunky 3D icon buttons and a pixel font (owner reference: a German DOS "Programmanager"-style shell screenshot). The DOS theme is our own design in that genre, not a copy of any specific product.
 
 ## 2. Owner decisions
 
 | Question | Decision |
 |---|---|
-| How deep | Skin the **library window** only. macOS title bar, menu bar, Settings window, import sheets, alerts, confirmation dialogs and file pickers stay native. |
+| How deep | Skin the **library window** only. Menu bar, Settings window, import sheets, alerts, confirmation dialogs and file pickers stay native. Owner follow-up (2026-10-28): in DOS the library window also gets its own blue title bar with a [-] box that quits DOSCrate (like ⌘Q); the native title bar and traffic lights are hidden, and come back in Standard. |
 | Font | Bundle a freely licensed VGA bitmap-style font: **PxPlus IBM VGA 8x16** from the int10h Ultimate Oldschool PC Font Pack (CC BY-SA 4.0), credited in the Licenses window. |
 | Icons | **Pixelated SF Symbols**: drawn small in flat retro colors, scaled up with nearest-neighbor. No new art. |
 | Architecture | Approach 1: theme tokens plus a second library layout for DOS (below). |
 
 ## 3. Behavior
 
-- Settings › General gets a **Theme** picker: *Standard* (default), *DOS*. Stored in `UserDefaults` under `appTheme` through `Preferences`, like the other settings. Unknown or missing values read as Standard.
+- Settings › General gets a **Theme** picker: *DOS* (default), *Standard*. Stored in `UserDefaults` under `appTheme` through `Preferences`, like the other settings. Unknown or missing values read as DOS.
 - Changing the theme applies live to the open library window. No restart. A running game, an import in progress, a removal in progress and the current selection, filter, search, sort, grid/list mode and inspector visibility all survive the switch.
 - The DOS theme uses one fixed palette in both light and dark mode.
 - Every action available in Standard is available in DOS with the same behavior: Play (double-click and context menu), Stop, Show in Finder, Favorite, Recreate Game Info, Remove (single and batch, same confirmation dialogs and messages), Delete key removal, ⌘-click / ⇧-click / ⌘A selection, drag-and-drop import, Import… file picker, collections (select, rename, remove), search, sort, grid/list toggle, inspector toggle, Settings, the fix flows (`pendingFix`), status bar states (import progress with Cancel, library scan, duplicate check, removal progress, controller indicator).
@@ -46,7 +46,7 @@ Add a theme choice to DOSCrate. **Standard** is today's UI, unchanged, and stays
 
 Layout, top to bottom, all in the pixel font:
 
-1. **Button bar** (grey panel): icon buttons *Import*, *Play* (plays the single selected game; disabled when the Standard Play would be), *Grid* / *List* (one toggle button showing the other mode), *Sort* (menu: Title, Year, Last Played, Play Time, check on current), *Details* (inspector toggle), *Settings* (`SettingsLink`). A sunken search field on the right, bound to `model.query.search`. Native window toolbar is hidden in DOS (`.toolbar(.hidden, for: .windowToolbar)` or equivalent); the native title bar stays.
+1. **Button bar** (grey panel): icon buttons *Import*, *Play* (plays the single selected game; disabled when the Standard Play would be), *Grid* / *List* (one toggle button showing the other mode), *Sort* (menu: Title, Year, Last Played, Play Time, check on current), *Details* (inspector toggle), *Settings* (`SettingsLink`). A sunken search field on the right, bound to `model.query.search`. Native window toolbar is hidden in DOS (`.toolbar(.hidden, for: .windowToolbar)` or equivalent); the native title bar is replaced by the DOS title bar (§2).
 2. **Main row**, three columns:
    - **Left panel** (fixed ~180 pt, resizable not required): beveled list with *All Games*, *Recently Played*, *Favorites*, then *Collections* with the same rename/remove context menu and alerts as `SidebarView` (reuse its logic, don't duplicate the tag rewrites). Selected row: blue strip, white text.
    - **Desktop** (VGA blue, fills):
@@ -64,7 +64,7 @@ Layout, top to bottom, all in the pixel font:
 
 ## 5. Out of scope
 
-Theming the Settings window, import sheets, alerts, confirmation dialogs, file pickers, menus or the title bar; custom pixel-art icons; more than two themes; per-game themes; sound effects; a DOS-styled DOSBox window.
+Theming the Settings window, import sheets, alerts, confirmation dialogs, file pickers, or menus; custom pixel-art icons; more than two themes; per-game themes; sound effects; a DOS-styled DOSBox window.
 
 ## 6. Testing
 
@@ -72,7 +72,7 @@ Theming the Settings window, import sheets, alerts, confirmation dialogs, file p
 
 ### 6.1 Automated (`make generate test`, 0 warnings)
 
-- `AppTheme`: default is `.standard`; round-trips through `Preferences`/`UserDefaults`; an unknown stored value reads as `.standard`.
+- `AppTheme`: default is `.dos`; round-trips through `Preferences`/`UserDefaults`; an unknown stored value reads as `.dos`.
 - `RetroFont`: the bundled font file exists in the app bundle and registers; the font name resolves (`NSFont(name:size:)` non-nil) after registration; calling register twice is harmless.
 - Layout selection: `LibraryView` (or a small pure helper it uses) picks the retro layout for `.dos` and the standard one for `.standard`.
 - Shared actions refactor: existing `LibraryView` tests (removal messages, etc.) pass unchanged.
@@ -81,13 +81,13 @@ Theming the Settings window, import sheets, alerts, confirmation dialogs, file p
 
 ### 6.2 Owner device test (manual checklist, new "Themes" section)
 
-1. Fresh install: Standard theme, UI identical to before.
-2. Switch to DOS in Settings: library window restyles immediately; selection, filter, search, sort, grid/list and inspector state kept.
+1. Fresh install: DOS theme, with the DOS title bar; its [-] box quits DOSCrate.
+2. Switch to Standard and back to DOS in Settings: library window restyles immediately; selection, filter, search, sort, grid/list and inspector state kept.
 3. In DOS: grid and list both readable; pixel font crisp (not blurry); selection outline; context menu actions; double-click Play; Delete key removal with the same dialog; drag-and-drop import and Import… with progress and Cancel in the status bar; collection rename/remove; inspector edits save.
 4. Switch themes while a game runs and while an import runs: nothing interrupted.
 5. Light and dark mode: DOS palette unchanged.
 6. Licenses window lists the font license.
-7. Switch back to Standard: identical to step 1.
+7. Switch to Standard: native title bar and traffic lights back, UI identical to before the themes work.
 
 ## 7. Docs
 
