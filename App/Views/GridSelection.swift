@@ -7,6 +7,11 @@ struct SelectionStep: Equatable {
 }
 
 struct GridSelection {
+    /// The game Return plays: the selected one, only when exactly one is selected.
+    static func activationTarget(_ selected: Set<UUID>) -> UUID? {
+        selected.count == 1 ? selected.first : nil
+    }
+
     static func toggle(_ id: UUID, in selected: Set<UUID>) -> Set<UUID> {
         var result = selected
         if result.contains(id) {

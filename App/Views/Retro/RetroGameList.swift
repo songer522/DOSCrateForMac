@@ -36,6 +36,11 @@ struct RetroGameList: View {
                 proxy.scrollTo(next)
                 return .handled
             }
+            .onKeyPress(.return) {
+                guard let id = GridSelection.activationTarget(model.selectedIDs) else { return .ignored }
+                model.play(id)
+                return .handled
+            }
             .onMoveCommand { direction in
                 let delta: Int
                 switch direction {

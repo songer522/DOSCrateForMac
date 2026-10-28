@@ -3,6 +3,14 @@ import Testing
 @testable import DOSCrate
 
 struct GridSelectionTests {
+    @Test func returnActivatesOnlyASingleSelection() {
+        let a = UUID()
+        let b = UUID()
+        #expect(GridSelection.activationTarget([]) == nil)
+        #expect(GridSelection.activationTarget([a]) == a)
+        #expect(GridSelection.activationTarget([a, b]) == nil)
+    }
+
     @Test func toggleAddsAndRemoves() {
         let a = UUID()
         let b = UUID()
