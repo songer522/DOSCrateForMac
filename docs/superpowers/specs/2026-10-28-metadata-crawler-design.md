@@ -85,6 +85,12 @@ This replaces the "online metadata and cover scraping comes later" non-goal in `
 
 - The Licenses window and the Find Metadata sheet's footer say "Game information and images from the LaunchBox Games Database".
 
+### 3.8 Follow-up: fuzzy search, unmatched notice, library-wide fetch
+
+- **Letter-level fuzzy search (Find Metadata… sheet only):** `TitleMatcher.searchScore(_ query:, _ record:)` takes `max(wordScore, trigramDice)` over the record's name and alternate names—where `trigramDice` is the Dice coefficient on character trigrams of the normalized strings with spaces removed and padded with `"  "` at both ends—plus the +0.05 year bonus (capped at 1.0). `TitleMatcher.search(for:in:limit:)` ranks by `searchScore` and drops candidates below 0.3; `MetadataCoordinator.candidates(for:)` uses `search`. `autoMatch` and its 0.9 / 0.1 rule stay word-level only.
+- **Unmatched notice:** `MetadataCoordinator` keeps `private(set) var unmatched: [UUID]` (ordered, no duplicates). A game is appended when an automatic lookup (import or library-wide) finds no confident match, and removed when a match is applied to it, when the game is removed from the library, or when `dismissUnmatched()` is called. When `unmatched` is non-empty and no download, build, or batch metadata run is active, the status bar in both themes shows `"1 game without a LaunchBox match"` / `"N games without a LaunchBox match"` with a **Review** button that opens `UnmatchedMetadataSheet` (listing each game's title with **Find Metadata…**, **Dismiss All**, and **Done**).
+- **Library-wide "Find Missing Metadata":** A menu command **Find Missing Metadata** (disabled while a run is active or when the library is empty) calls `MetadataCoordinator.findMissingMetadata()`, which targets every non-running game with `metadataSource == nil` that is missing at least one of `year`, `developer`, `publisher`, `genre`, `description`, or `cover.png`. It processes them one at a time through the `fillEmpty` auto-match path (independent of the "Fetch metadata on import" toggle), shows `"Finding metadata… K of N"` with a **Cancel** button (`cancelFindMissing()`) in the status bar, and records games without a confident match in `unmatched`.
+
 ## 4. Architecture
 
 - **New `MetadataKit` target** in `Packages/DOSCrateKit`. It depends on `LibraryKit` only and has no UI or AppKit apart from image encoding.
@@ -132,4 +138,4 @@ Before any public release, confirm that LaunchBox's terms allow a third-party ap
 
 ## 8. Out of scope
 
-A library-wide batch fetch; other providers (IGDB, MobyGames); manuals and videos; editing or uploading to LaunchBox; matching by file hash.
+Other providers (IGDB, MobyGames); manuals and videos; editing or uploading to LaunchBox; matching by file hash.
