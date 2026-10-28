@@ -359,3 +359,26 @@ struct ThemedLabeledRow<Content: View>: View {
         }
     }
 }
+
+struct RetroSpinner: View {
+    private static let frames = ["|", "/", "-", "\\"]
+    @State private var index = 0
+
+    var body: some View {
+        HStack(spacing: 4) {
+            PixelSymbol("hourglass", color: RetroPalette.yellow, pointSize: 16, scale: 1)
+            Text(Self.frames[index % Self.frames.count])
+                .font(RetroFont.font())
+                .foregroundStyle(RetroPalette.highlightText)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
+        .background(RetroPalette.shadow)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(150))
+                index = (index + 1) % Self.frames.count
+            }
+        }
+    }
+}

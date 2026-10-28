@@ -198,7 +198,11 @@ private struct GameHeader: View {
                 }
                 Spacer(minLength: 0)
             }
-            ArtStripView(crateURL: record.crateURL)
+            ArtStripView(
+                crateURL: record.crateURL,
+                isLoadingArt: model.metadata.artLoading.contains(record.id),
+                artRevision: model.metadata.artRevision[record.id, default: 0]
+            )
             if let result = model.lastResult[record.id], result.unexpected {
                 unexpectedExitBanner(logURL: result.logURL)
             }
@@ -206,7 +210,13 @@ private struct GameHeader: View {
     }
 
     @ViewBuilder private var coverBox: some View {
-        let base = CoverView(record: record, isRunning: !retroTheme && running, isStarting: !retroTheme && starting)
+        let base = CoverView(
+            record: record,
+            isRunning: !retroTheme && running,
+            isStarting: !retroTheme && starting,
+            isLoadingArt: model.metadata.artLoading.contains(record.id),
+            artRevision: model.metadata.artRevision[record.id, default: 0]
+        )
             .id(coverRevision)
             .frame(width: 90)
         if retroTheme {

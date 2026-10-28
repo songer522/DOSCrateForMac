@@ -22,6 +22,16 @@ public enum ArtKind: Sendable, Hashable {
             io.screenshotURL(crate, index: index)
         }
     }
+
+    public var sortRank: Int {
+        switch self {
+        case .front: 0
+        case .back: 1
+        case .disc: 2
+        case .logo: 3
+        case .screenshot(let index): 10 + index
+        }
+    }
 }
 
 public struct MetadataPatch: Sendable, Equatable {

@@ -116,12 +116,14 @@ struct FindMetadataSheet: View {
 
             TextField("Search", text: $viewModel.query)
                 .textFieldStyle(.roundedBorder)
+                .disabled(viewModel.isApplying)
                 .onChange(of: viewModel.query) { _, _ in
                     viewModel.scheduleSearch()
                 }
 
             contentArea
                 .frame(height: 280)
+                .disabled(viewModel.isApplying)
 
             Text(LicensesView.launchBoxCredit)
                 .font(.caption)
@@ -135,12 +137,20 @@ struct FindMetadataSheet: View {
                 .keyboardShortcut(.cancelAction)
                 .disabled(viewModel.isApplying)
 
-                Button("Use This Match") {
+                Button {
                     guard let chosen = selectedRecord else { return }
                     if viewModel.needsReplaceConfirmation(for: chosen) {
                         confirmingRecord = chosen
                     } else {
                         applyAndClose(chosen)
+                    }
+                } label: {
+                    if viewModel.isApplying {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(minWidth: 100)
+                    } else {
+                        Text("Use This Match")
                     }
                 }
                 .keyboardShortcut(.defaultAction)

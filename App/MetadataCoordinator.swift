@@ -2,12 +2,24 @@ import Foundation
 import LibraryKit
 import MetadataKit
 import Observation
+import os
 
 protocol MetadataProviding: Sendable {
     var downloadedAt: Date? { get async }
     func ensureReady(onPhase: @escaping @Sendable (LaunchBoxIndexStore.Phase) -> Void) async throws -> [LaunchBoxRecord]
     func refresh(onPhase: @escaping @Sendable (LaunchBoxIndexStore.Phase) -> Void) async throws -> [LaunchBoxRecord]
-    func download(_ art: [ArtKind: URL], into crate: URL, mode: ApplyMode) async -> ArtResult
+    func download(
+        _ art: [ArtKind: URL],
+        into crate: URL,
+        mode: ApplyMode,
+        onWrite: @escaping @Sendable (ArtKind) -> Void
+    ) async -> ArtResult
+}
+
+extension MetadataProviding {
+    func download(_ art: [ArtKind: URL], into crate: URL, mode: ApplyMode) async -> ArtResult {
+        await download(art, into: crate, mode: mode, onWrite: { _ in })
+    }
 }
 
 struct LaunchBoxProvider: MetadataProviding {
@@ -44,8 +56,13 @@ struct LaunchBoxProvider: MetadataProviding {
         try await store.refresh(onPhase: onPhase)
     }
 
-    func download(_ art: [ArtKind: URL], into crate: URL, mode: ApplyMode) async -> ArtResult {
-        await downloader.download(art, into: crate, mode: mode)
+    func download(
+        _ art: [ArtKind: URL],
+        into crate: URL,
+        mode: ApplyMode,
+        onWrite: @escaping @Sendable (ArtKind) -> Void
+    ) async -> ArtResult {
+        await downloader.download(art, into: crate, mode: mode, onWrite: onWrite)
     }
 }
 
@@ -62,7 +79,12 @@ struct NoOpMetadataProvider: MetadataProviding {
         []
     }
 
-    func download(_ art: [ArtKind: URL], into crate: URL, mode: ApplyMode) async -> ArtResult {
+    func download(
+        _ art: [ArtKind: URL],
+        into crate: URL,
+        mode: ApplyMode,
+        onWrite: @escaping @Sendable (ArtKind) -> Void
+    ) async -> ArtResult {
         ArtResult()
     }
 }
@@ -76,6 +98,8 @@ enum ApplyOutcome: Equatable, Sendable {
 
 @MainActor @Observable
 final class MetadataCoordinator {
+    private static let logger = Logger(subsystem: "com.songer522.DOSCrate", category: "metadata")
+
     let provider: any MetadataProviding
     let prefs: Preferences
     weak var model: AppModel?
@@ -85,8 +109,14 @@ final class MetadataCoordinator {
     private(set) var unmatched: [UUID] = []
     private(set) var findMissingProgress: (current: Int, total: Int)?
     var isFindingMissing: Bool { findMissingProgress != nil }
+    private(set) var artLoading: Set<UUID> = []
+    private(set) var artRevision: [UUID: Int] = [:]
+    private(set) var applyingIDs: Set<UUID> = []
+    private(set) var lastOutcome: [UUID: ApplyOutcome] = [:]
+    var artErrorMessage: String?
 
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var artTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var failedQueueIDs: Set<UUID> = []
     @ObservationIgnored private var findMissingTask: Task<Void, Never>?
     @ObservationIgnored private var findMissingCancelled = false
@@ -98,6 +128,10 @@ final class MetadataCoordinator {
             guard let self else { return }
             self.lastUpdated = await provider.downloadedAt
         }
+    }
+
+    func isApplying(_ id: UUID) -> Bool {
+        applyingIDs.contains(id)
     }
 
     static func unmatchedStatusText(count: Int) -> String? {
@@ -222,6 +256,10 @@ final class MetadataCoordinator {
     func cancel(_ id: UUID) {
         tasks[id]?.cancel()
         tasks[id] = nil
+        artTasks[id]?.cancel()
+        artTasks[id] = nil
+        artLoading.remove(id)
+        applyingIDs.remove(id)
         failedQueueIDs.remove(id)
     }
 
@@ -255,10 +293,13 @@ final class MetadataCoordinator {
     }
 
     func candidates(for title: String) async throws -> [MatchCandidate] {
+        let clock = ContinuousClock()
         do {
+            let start = clock.now
             let records = try await provider.ensureReady { [weak self] newPhase in
                 Task { @MainActor in self?.phase = newPhase }
             }
+            Self.logger.debug("ensureReady in candidates took \(clock.now - start, privacy: .public)")
             phase = .ready
             lastUpdated = await provider.downloadedAt
             return TitleMatcher.search(for: title, in: records, limit: 8)
@@ -271,20 +312,41 @@ final class MetadataCoordinator {
     }
 
     func apply(_ record: LaunchBoxRecord, to id: UUID, mode: ApplyMode) async -> ApplyOutcome {
+        let clock = ContinuousClock()
         guard !Task.isCancelled else { return .cancelled }
+        let readStart = clock.now
         guard let model, !model.isActive(id), !model.pendingRemovalIDs.contains(id),
-              let initialRecord = await resolveRecord(id, in: model)
+              let latestRecord = model.store.record(id)
         else {
             return Task.isCancelled ? .cancelled : .gameMissing
         }
+        Self.logger.debug("record read in apply took \(clock.now - readStart, privacy: .public)")
+
+        applyingIDs.insert(id)
+        defer { applyingIDs.remove(id) }
+
+        artTasks[id]?.cancel()
+        artTasks[id] = nil
 
         let patch = MetadataApplier.patch(from: record)
-        let crateURL = initialRecord.crateURL
+        let crateURL = latestRecord.crateURL
         let io = CrateIO()
 
+        // 1. Save metadata fields and metadataSource immediately.
+        let updatedGame = MetadataApplier.apply(patch, to: latestRecord.game, mode: mode, now: Date())
+        let saveStart = clock.now
+        do {
+            try model.store.save(updatedGame)
+            removeUnmatched(id)
+        } catch {
+            return .cancelled
+        }
+        Self.logger.debug("store.save in apply took \(clock.now - saveStart, privacy: .public)")
+
+        // 2. Check if referenced game folder is unwritable.
         var referencedUnwritable = false
-        if case .referenced = initialRecord.game.source {
-            if let folder = try? io.referencedFolderURL(for: initialRecord) {
+        if case .referenced = latestRecord.game.source {
+            if let folder = try? io.referencedFolderURL(for: latestRecord) {
                 if !FileManager.default.isWritableFile(atPath: folder.path) {
                     referencedUnwritable = true
                 }
@@ -293,46 +355,91 @@ final class MetadataCoordinator {
             }
         }
 
-        let artResult: ArtResult
         if referencedUnwritable {
-            artResult = ArtResult(written: [], failed: Set(patch.art.keys))
-        } else {
-            artResult = await provider.download(patch.art, into: crateURL, mode: mode)
-        }
-
-        guard !Task.isCancelled else { return .cancelled }
-        guard !model.isActive(id), !model.pendingRemovalIDs.contains(id),
-              let latestRecord = model.store.record(id)
-        else {
-            return .cancelled
-        }
-
-        let updatedGame = MetadataApplier.apply(patch, to: latestRecord.game, mode: mode, now: Date())
-        do {
-            try model.store.save(updatedGame)
-            removeUnmatched(id)
-        } catch {
-            return .cancelled
-        }
-
-        if referencedUnwritable || (!patch.art.isEmpty && artResult.written.isEmpty && !artResult.failed.isEmpty) {
+            lastOutcome[id] = .artNotWritable
+            if mode == .replace {
+                reportArtFailure()
+            }
             return .artNotWritable
         }
-        return .applied(artFailed: !artResult.failed.isEmpty)
+
+        let fm = FileManager.default
+        let pendingArt = patch.art.filter { kind, _ in
+            guard mode == .fillEmpty else { return true }
+            return !fm.fileExists(atPath: kind.fileURL(in: crateURL, io: io).path)
+        }
+
+        guard !pendingArt.isEmpty else {
+            lastOutcome[id] = .applied(artFailed: false)
+            return .applied(artFailed: false)
+        }
+
+        lastOutcome[id] = nil
+        artLoading.insert(id)
+        let artTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runBackgroundArt(pendingArt, for: id, crateURL: crateURL, mode: mode)
+        }
+        artTasks[id] = artTask
+        return .applied(artFailed: false)
+    }
+
+    private func runBackgroundArt(
+        _ art: [ArtKind: URL],
+        for id: UUID,
+        crateURL: URL,
+        mode: ApplyMode
+    ) async {
+        let clock = ContinuousClock()
+        let start = clock.now
+        let result = await provider.download(art, into: crateURL, mode: mode) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.artRevision[id, default: 0] += 1
+            }
+        }
+        Self.logger.debug("background art download for \(id, privacy: .public) took \(clock.now - start, privacy: .public)")
+
+        artTasks[id] = nil
+        artLoading.remove(id)
+        guard !Task.isCancelled else {
+            lastOutcome[id] = .cancelled
+            return
+        }
+        artRevision[id, default: 0] += 1
+
+        if !art.isEmpty && result.written.isEmpty && !result.failed.isEmpty {
+            lastOutcome[id] = .artNotWritable
+            if mode == .replace {
+                reportArtFailure()
+            }
+        } else {
+            lastOutcome[id] = .applied(artFailed: !result.failed.isEmpty)
+        }
+    }
+
+    private func reportArtFailure() {
+        let message = "The game information was saved, but the art files couldn't be written."
+        artErrorMessage = message
+        if let model, model.prefs.appTheme != .dos || model.findMetadataFor == nil {
+            model.alert = AppAlert(title: "Couldn't save art", message: message)
+        }
     }
 
     private func runAutoFetch(for id: UUID) async {
+        let clock = ContinuousClock()
         defer { tasks[id] = nil }
         guard !Task.isCancelled else { return }
         guard let model, !model.isActive(id), !model.pendingRemovalIDs.contains(id),
-              let initialRecord = await resolveRecord(id, in: model)
+              model.store.record(id) != nil
         else { return }
 
         let records: [LaunchBoxRecord]
         do {
+            let start = clock.now
             records = try await provider.ensureReady { [weak self] newPhase in
                 Task { @MainActor in self?.phase = newPhase }
             }
+            Self.logger.debug("ensureReady in runAutoFetch took \(clock.now - start, privacy: .public)")
             phase = .ready
             lastUpdated = await provider.downloadedAt
         } catch {
@@ -345,7 +452,7 @@ final class MetadataCoordinator {
 
         guard !Task.isCancelled else { return }
         guard !model.isActive(id), !model.pendingRemovalIDs.contains(id),
-              let currentRecord = model.store.record(id) ?? initialRecord as GameRecord?
+              let currentRecord = model.store.record(id)
         else { return }
 
         guard let matched = TitleMatcher.autoMatch(for: currentRecord.game.title, in: records) else {
@@ -354,18 +461,6 @@ final class MetadataCoordinator {
         }
 
         _ = await apply(matched, to: id, mode: .fillEmpty)
-    }
-
-    private func resolveRecord(_ id: UUID, in model: AppModel) async -> GameRecord? {
-        if let rec = model.store.record(id) {
-            return rec
-        }
-        for _ in 0..<150 {
-            if Task.isCancelled { return nil }
-            if let rec = model.store.record(id) { return rec }
-            if model.imports.progress == nil { break }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return model.store.record(id)
+        await artTasks[id]?.value
     }
 }

@@ -1,7 +1,9 @@
 import Foundation
 import LibraryKit
+import os
 
 public actor LaunchBoxIndexStore {
+    private static let logger = Logger(subsystem: "com.songer522.DOSCrate", category: "metadata")
     public enum Phase: Sendable, Equatable {
         case idle
         case downloading(Double)
@@ -51,13 +53,17 @@ public actor LaunchBoxIndexStore {
     public func ensureReady(
         onPhase: @escaping @Sendable (Phase) -> Void = { _ in }
     ) async throws -> [LaunchBoxRecord] {
+        let clock = ContinuousClock()
         if cachedIndex == nil {
+            let loadStart = clock.now
             cachedIndex = loadFromDisk()
+            Self.logger.debug("index disk load took \(clock.now - loadStart, privacy: .public)")
         }
         if let existing = cachedIndex {
             let age = now().timeIntervalSince(existing.downloadedAt)
             if age <= maxAge {
                 onPhase(.ready)
+                Self.logger.debug("ensureReady served \(existing.games.count) records from in-memory cache")
                 return existing.games
             }
             // Stale index: return old records immediately and refresh in the background.

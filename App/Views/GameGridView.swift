@@ -16,8 +16,13 @@ struct GameGridView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 16)], spacing: 16) {
                 ForEach(records) { record in
                     VStack(spacing: 6) {
-                        CoverView(record: record, isRunning: model.sessions.running.contains(record.id),
-                                  isStarting: model.startingIDs.contains(record.id))
+                        CoverView(
+                            record: record,
+                            isRunning: model.sessions.running.contains(record.id),
+                            isStarting: model.startingIDs.contains(record.id),
+                            isLoadingArt: model.metadata.artLoading.contains(record.id),
+                            artRevision: model.metadata.artRevision[record.id, default: 0]
+                        )
                             .overlay {
                                 RoundedRectangle(cornerRadius: 8)
                                     .stroke(Color.accentColor, lineWidth: model.selectedIDs.contains(record.id) ? 3 : 0)

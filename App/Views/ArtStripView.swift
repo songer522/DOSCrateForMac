@@ -6,6 +6,8 @@ import SwiftUI
 
 struct ArtStripView: View {
     let crateURL: URL
+    var isLoadingArt = false
+    var artRevision = 0
     @Environment(\.retroTheme) private var retroTheme
 
     static func items(in crate: URL) -> [URL] {
@@ -26,36 +28,51 @@ struct ArtStripView: View {
     }
 
     var body: some View {
+        let _ = artRevision
         let urls = Self.items(in: crateURL)
-        if !urls.isEmpty {
+        if !urls.isEmpty || isLoadingArt {
             if retroTheme {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Art")
-                        .font(RetroFont.font())
-                        .foregroundStyle(RetroPalette.secondaryText)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(Array(urls.enumerated()), id: \.element) { index, url in
-                                ArtThumbnailButton(url: url, retro: true) {
-                                    ArtQuickLookController.shared.present(urls: urls, startingAt: index)
+                    HStack(spacing: 6) {
+                        Text("Art")
+                            .font(RetroFont.font())
+                            .foregroundStyle(RetroPalette.secondaryText)
+                        if isLoadingArt {
+                            RetroSpinner()
+                        }
+                    }
+                    if !urls.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(Array(urls.enumerated()), id: \.element) { index, url in
+                                    ArtThumbnailButton(url: url, retro: true, revision: artRevision) {
+                                        ArtQuickLookController.shared.present(urls: urls, startingAt: index)
+                                    }
                                 }
                             }
+                            .padding(4)
                         }
-                        .padding(4)
+                        .background(RetroPalette.panel)
+                        .retroBevel(.sunken)
                     }
-                    .background(RetroPalette.panel)
-                    .retroBevel(.sunken)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Art")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(Array(urls.enumerated()), id: \.element) { index, url in
-                                ArtThumbnailButton(url: url, retro: false) {
-                                    ArtQuickLookController.shared.present(urls: urls, startingAt: index)
+                    HStack(spacing: 6) {
+                        Text("Art")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        if isLoadingArt {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    if !urls.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(Array(urls.enumerated()), id: \.element) { index, url in
+                                    ArtThumbnailButton(url: url, retro: false, revision: artRevision) {
+                                        ArtQuickLookController.shared.present(urls: urls, startingAt: index)
+                                    }
                                 }
                             }
                         }
@@ -69,8 +86,14 @@ struct ArtStripView: View {
 private struct ArtThumbnailButton: View {
     let url: URL
     let retro: Bool
+    var revision = 0
     let action: () -> Void
     @State private var image: NSImage?
+
+    private struct Key: Equatable {
+        var url: URL
+        var revision: Int
+    }
 
     var body: some View {
         Button(action: action) {
@@ -88,7 +111,7 @@ private struct ArtThumbnailButton: View {
             .modifier(ThumbnailChrome(retro: retro))
         }
         .buttonStyle(.plain)
-        .task(id: url) {
+        .task(id: Key(url: url, revision: revision)) {
             let target = url
             let data = await Task.detached { try? Data(contentsOf: target) }.value
             image = data.flatMap { NSImage(data: $0) }

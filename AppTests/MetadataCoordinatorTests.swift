@@ -51,7 +51,12 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         return try await ensureReady(onPhase: onPhase)
     }
 
-    func download(_ art: [ArtKind: URL], into crate: URL, mode: ApplyMode) async -> ArtResult {
+    func download(
+        _ art: [ArtKind: URL],
+        into crate: URL,
+        mode: ApplyMode,
+        onWrite: @escaping @Sendable (ArtKind) -> Void
+    ) async -> ArtResult {
         let gate = lock.withLock { () -> (@Sendable (URL) async -> Void)? in
             downloadCalls += 1
             return downloadGate
@@ -69,7 +74,9 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         let io = CrateIO()
         var written = Set<ArtKind>()
         var failed = Set<ArtKind>()
-        for kind in art.keys {
+        let sortedKinds = art.keys.sorted { $0.sortRank < $1.sortRank }
+        for kind in sortedKinds {
+            if Task.isCancelled { break }
             let dest = kind.fileURL(in: crate, io: io)
             if mode == .fillEmpty, FileManager.default.fileExists(atPath: dest.path) {
                 continue
@@ -78,6 +85,7 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
                 try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try Data("png".utf8).write(to: dest)
                 written.insert(kind)
+                onWrite(kind)
             } catch {
                 failed.insert(kind)
             }
@@ -239,7 +247,7 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
 
         let (enteredStream, enteredCont) = AsyncStream<Void>.makeStream()
         let (releaseStream, releaseCont) = AsyncStream<Void>.makeStream()
-        provider.downloadGate = { _ in
+        provider.ensureReadyGate = {
             enteredCont.yield(())
             enteredCont.finish()
             for await _ in releaseStream { break }
@@ -265,7 +273,7 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
 
         let (enteredStream, enteredCont) = AsyncStream<Void>.makeStream()
         let (releaseStream, releaseCont) = AsyncStream<Void>.makeStream()
-        provider.downloadGate = { _ in
+        provider.ensureReadyGate = {
             enteredCont.yield(())
             enteredCont.finish()
             for await _ in releaseStream { break }
@@ -289,7 +297,7 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
 
         let (enteredStream, enteredCont) = AsyncStream<Void>.makeStream()
         let (releaseStream, releaseCont) = AsyncStream<Void>.makeStream()
-        provider.downloadGate = { _ in
+        provider.ensureReadyGate = {
             enteredCont.yield(())
             enteredCont.finish()
             for await _ in releaseStream { break }
@@ -298,7 +306,7 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         model.metadata.importedGame(id)
         for await _ in enteredStream { break }
 
-        // User edits developer while the fetch is downloading art.
+        // User edits developer while the fetch is running.
         var edited = try #require(model.store.record(id)?.game)
         edited.developer = "User Edited Dev"
         try model.store.save(edited)
@@ -318,12 +326,13 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         let (model, provider, id) = try await makeEnv(title: "Doom")
         provider.artAllFailed = true
 
-        let outcome = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
-        #expect(outcome == .artNotWritable)
+        _ = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
         let saved = try #require(model.store.record(id)?.game)
         #expect(saved.year == 1993)
         #expect(saved.developer == "id Software")
         #expect(saved.metadataSource?.id == 101)
+        await waitUntil { model.metadata.lastOutcome[id] == .artNotWritable }
+        #expect(model.metadata.lastOutcome[id] == .artNotWritable)
     }
 
     @Test func statusTextForEachPhase() async throws {
@@ -561,5 +570,102 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         await waitUntil { model.store.record(id)?.game.metadataSource != nil }
 
         #expect(model.store.record(id)?.game.year == 1993)
+    }
+
+    @Test func applySavesFieldsBeforeArtDownloads() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Doom")
+
+        let (enteredStream, enteredCont) = AsyncStream<Void>.makeStream()
+        let (releaseStream, releaseCont) = AsyncStream<Void>.makeStream()
+        provider.downloadGate = { _ in
+            enteredCont.yield(())
+            enteredCont.finish()
+            for await _ in releaseStream { break }
+        }
+
+        let outcome = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        #expect(outcome == .applied(artFailed: false))
+
+        // Fields are already saved on disk while art download is still blocked in the background
+        let saved = try #require(model.store.record(id)?.game)
+        #expect(saved.year == 1993)
+        #expect(saved.developer == "id Software")
+        #expect(saved.metadataSource?.id == 101)
+        #expect(!FileManager.default.fileExists(atPath: io.coverURL(model.store.record(id)!.crateURL).path))
+
+        for await _ in enteredStream { break }
+        #expect(model.metadata.artLoading.contains(id))
+
+        releaseCont.yield(())
+        releaseCont.finish()
+        await waitUntil { !model.metadata.artLoading.contains(id) }
+        #expect(FileManager.default.fileExists(atPath: io.coverURL(model.store.record(id)!.crateURL).path))
+    }
+
+    @Test func artLoadingSetWhileDownloadingAndClearedAfter() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Doom")
+
+        let (enteredStream, enteredCont) = AsyncStream<Void>.makeStream()
+        let (releaseStream, releaseCont) = AsyncStream<Void>.makeStream()
+        provider.downloadGate = { _ in
+            enteredCont.yield(())
+            enteredCont.finish()
+            for await _ in releaseStream { break }
+        }
+
+        _ = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        #expect(model.metadata.artLoading.contains(id))
+        for await _ in enteredStream { break }
+        #expect(model.metadata.artLoading.contains(id))
+
+        releaseCont.yield(())
+        releaseCont.finish()
+        await waitUntil { !model.metadata.artLoading.contains(id) }
+        #expect(!model.metadata.artLoading.contains(id))
+    }
+
+    @Test func playCancelsBackgroundArtAndClearsSpinner() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Doom")
+
+        let (enteredStream, enteredCont) = AsyncStream<Void>.makeStream()
+        let (releaseStream, releaseCont) = AsyncStream<Void>.makeStream()
+        provider.downloadGate = { _ in
+            enteredCont.yield(())
+            enteredCont.finish()
+            for await _ in releaseStream { break }
+        }
+
+        _ = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        for await _ in enteredStream { break }
+        #expect(model.metadata.artLoading.contains(id))
+
+        let playTask = model.play(id)
+        #expect(!model.metadata.artLoading.contains(id))
+
+        releaseCont.yield(())
+        releaseCont.finish()
+        await waitUntil { !runner.processes.isEmpty }
+        #expect(!FileManager.default.fileExists(atPath: io.coverURL(model.store.record(id)!.crateURL).path))
+
+        runner.processes[0].finish(0)
+        await playTask?.value
+    }
+
+    @Test func artFailureReportedAfterFieldsSaved() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Doom")
+        provider.artAllFailed = true
+
+        _ = await model.metadata.apply(Self.sampleRecords[0], to: id, mode: .replace)
+        let saved = try #require(model.store.record(id)?.game)
+        #expect(saved.year == 1993)
+        #expect(saved.metadataSource?.id == 101)
+
+        await waitUntil { !model.metadata.artLoading.contains(id) && model.metadata.lastOutcome[id] != nil }
+        #expect(model.metadata.lastOutcome[id] == .artNotWritable)
+        #expect(model.alert?.title == "Couldn't save art")
     }
 }

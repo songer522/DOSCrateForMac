@@ -192,4 +192,65 @@ struct ArtDownloaderTests {
             #expect(entries.filter { $0.lastPathComponent.hasPrefix(".tmp-") }.isEmpty)
         }
     }
+
+    @Test func pngBytesWrittenWithoutReencode() async throws {
+        let (lib, crate) = try makeTempCrate()
+        defer { try? FileManager.default.removeItem(at: lib) }
+
+        // Append a custom marker after a valid PNG so any re-encode through NSBitmapImageRep would strip it.
+        let customPNG = StubURLProtocol.makeOnePixelPNG() + Data("DOSCRATE_RAW_PNG_MARKER".utf8)
+
+        let session = StubURLProtocol.makeSession { _ in
+            .init(statusCode: 200, data: customPNG)
+        }
+        let downloader = ArtDownloader(session: session)
+        let art: [ArtKind: URL] = [
+            .front: URL(string: "https://images.launchbox-app.com/front.png")!,
+        ]
+
+        let result = await downloader.download(art, into: crate, mode: .replace)
+        #expect(result.written == [.front])
+        let writtenBytes = try Data(contentsOf: io.coverURL(crate))
+        #expect(writtenBytes == customPNG)
+    }
+
+    @Test func coverWrittenBeforeScreenshots() async throws {
+        let (lib, crate) = try makeTempCrate()
+        defer { try? FileManager.default.removeItem(at: lib) }
+
+        let png = StubURLProtocol.makeOnePixelPNG()
+        let session = StubURLProtocol.makeSession { req in
+            if req.url?.lastPathComponent == "front.png" {
+                try? await Task.sleep(nanoseconds: 25_000_000)
+            }
+            return .init(statusCode: 200, data: png)
+        }
+        let downloader = ArtDownloader(session: session, maxConcurrent: 4)
+        let art: [ArtKind: URL] = [
+            .screenshot(1): URL(string: "https://images.launchbox-app.com/s1.png")!,
+            .screenshot(2): URL(string: "https://images.launchbox-app.com/s2.png")!,
+            .back: URL(string: "https://images.launchbox-app.com/back.png")!,
+            .front: URL(string: "https://images.launchbox-app.com/front.png")!,
+        ]
+
+        let recorder = OrderRecorder()
+        let result = await downloader.download(art, into: crate, mode: .replace) { kind in
+            recorder.append(kind)
+        }
+        #expect(result.written.count == 4)
+        #expect(recorder.items.first == .front)
+    }
+}
+
+private final class OrderRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [ArtKind] = []
+
+    func append(_ kind: ArtKind) {
+        lock.withLock { storage.append(kind) }
+    }
+
+    var items: [ArtKind] {
+        lock.withLock { storage }
+    }
 }

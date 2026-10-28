@@ -121,6 +121,9 @@ struct RetroGameList: View {
                 if !badges.isEmpty {
                     RetroBadgesView(badges: badges)
                 }
+                if model.metadata.artLoading.contains(record.id) {
+                    RetroSpinner()
+                }
             }
             .frame(minWidth: Self.titleMinWidth, maxWidth: .infinity, alignment: .leading)
 

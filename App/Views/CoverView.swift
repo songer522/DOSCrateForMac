@@ -23,8 +23,11 @@ struct CoverView: View {
     let record: GameRecord
     var isRunning = false
     var isStarting = false
+    var isLoadingArt = false
+    var artRevision = 0
 
     @State private var image: NSImage?
+    @Environment(\.retroTheme) private var retroTheme
 
     var body: some View {
         Color.clear
@@ -45,8 +48,23 @@ struct CoverView: View {
             }
             .clipped()
             .overlay(alignment: .topLeading) { badges.padding(6) }
+            .overlay(alignment: .bottomTrailing) {
+                if isLoadingArt {
+                    Group {
+                        if retroTheme {
+                            RetroSpinner()
+                        } else {
+                            ProgressView()
+                                .controlSize(.small)
+                                .padding(4)
+                                .background(.regularMaterial, in: Circle())
+                        }
+                    }
+                    .padding(6)
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .task(id: CoverKey(crate: record.crateURL, modified: coverModified)) {
+            .task(id: CoverKey(crate: record.crateURL, modified: coverModified, revision: artRevision)) {
                 image = await Self.loadCover(in: record.crateURL)
             }
     }
@@ -54,6 +72,7 @@ struct CoverView: View {
     private struct CoverKey: Equatable {
         var crate: URL
         var modified: Date?
+        var revision: Int
     }
 
     private var coverModified: Date? {

@@ -34,7 +34,11 @@ struct RetroGameGrid: View {
         let selected = model.selectedIDs.contains(record.id)
         let badges = RetroBadge.badges(for: record, running: model.sessions.running, starting: model.startingIDs)
         return VStack(spacing: 6) {
-            CoverView(record: record)
+            CoverView(
+                record: record,
+                isLoadingArt: model.metadata.artLoading.contains(record.id),
+                artRevision: model.metadata.artRevision[record.id, default: 0]
+            )
                 .retroBevel(.sunken)
             Text(record.game.title)
                 .font(RetroFont.font())
