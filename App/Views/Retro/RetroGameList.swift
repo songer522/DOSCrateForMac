@@ -7,29 +7,53 @@ struct RetroGameList: View {
     let records: [GameRecord]
     let commands: LibraryCommands
     @State private var anchor: UUID?
+    @State private var cursor: UUID?
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerRow
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(records) { record in
-                        row(for: record)
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                headerRow
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(records) { record in
+                            row(for: record)
+                                .id(record.id)
+                        }
                     }
                 }
+                .background(RetroPalette.desktop)
             }
-            .background(RetroPalette.desktop)
-        }
-        .retroBevel(.sunken)
-        .focusable()
-        .focusEffectDisabled()
-        .focused($isFocused)
-        .onCommand(#selector(NSResponder.selectAll(_:))) {
-            model.selectedIDs = Set(records.map(\.id))
-        }
-        .onDeleteCommand {
-            commands.requestRemoval(model.selectedIDs)
+            .retroBevel(.sunken)
+            .focusable()
+            .focusEffectDisabled()
+            .focused($isFocused)
+            .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
+                let delta = press.key == .upArrow ? -1 : 1
+                guard let next = moveSelection(by: delta, extend: press.modifiers.contains(.shift)) else {
+                    return .ignored
+                }
+                proxy.scrollTo(next)
+                return .handled
+            }
+            .onMoveCommand { direction in
+                let delta: Int
+                switch direction {
+                case .up: delta = -1
+                case .down: delta = 1
+                default: return
+                }
+                let extend = NSEvent.modifierFlags.contains(.shift)
+                if let next = moveSelection(by: delta, extend: extend) {
+                    proxy.scrollTo(next)
+                }
+            }
+            .onCommand(#selector(NSResponder.selectAll(_:))) {
+                model.selectedIDs = Set(records.map(\.id))
+            }
+            .onDeleteCommand {
+                commands.requestRemoval(model.selectedIDs)
+            }
         }
     }
 
@@ -131,12 +155,14 @@ struct RetroGameList: View {
     private func selectOnly(_ id: UUID) {
         model.selection = id
         anchor = id
+        cursor = id
         isFocused = true
     }
 
     private func toggle(_ id: UUID) {
         model.selectedIDs = GridSelection.toggle(id, in: model.selectedIDs)
         anchor = id
+        cursor = id
         isFocused = true
     }
 
@@ -146,5 +172,23 @@ struct RetroGameList: View {
             return selectOnly(id)
         }
         model.selectedIDs = selected
+        cursor = id
+    }
+
+    private func moveSelection(by delta: Int, extend: Bool) -> UUID? {
+        guard let step = GridSelection.step(
+            selected: model.selectedIDs,
+            anchor: anchor,
+            cursor: cursor,
+            by: delta,
+            extend: extend,
+            in: records.map(\.id)
+        ) else {
+            return nil
+        }
+        model.selectedIDs = step.selected
+        anchor = step.anchor
+        cursor = step.cursor
+        return step.cursor
     }
 }
