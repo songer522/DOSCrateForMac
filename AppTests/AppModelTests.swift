@@ -47,7 +47,7 @@ final class FakeRunner: ProcessRunner, @unchecked Sendable {
 }
 
 @MainActor
-private func waitUntil(_ cond: @MainActor () -> Bool) async {
+func waitUntil(_ cond: @MainActor () -> Bool) async {
     for _ in 0..<500 where !cond() { try? await Task.sleep(for: .milliseconds(10)) }
 }
 
