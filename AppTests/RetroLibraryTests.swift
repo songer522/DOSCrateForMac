@@ -113,6 +113,7 @@ struct RetroLibraryTests {
         #expect(window.standardWindowButton(.closeButton)?.isHidden == true)
         #expect(window.standardWindowButton(.miniaturizeButton)?.isHidden == true)
         #expect(window.standardWindowButton(.zoomButton)?.isHidden == true)
+        #expect(window.standardWindowButton(.closeButton)?.superview?.superview?.isHidden == true)
 
         RetroWindowChrome.apply(isRetro: false, to: window)
         #expect(window.titleVisibility == .visible)
@@ -121,6 +122,7 @@ struct RetroLibraryTests {
         #expect(window.standardWindowButton(.closeButton)?.isHidden == false)
         #expect(window.standardWindowButton(.miniaturizeButton)?.isHidden == false)
         #expect(window.standardWindowButton(.zoomButton)?.isHidden == false)
+        #expect(window.standardWindowButton(.closeButton)?.superview?.superview?.isHidden == false)
     }
 
     @Test func closeActionCallbackIsWiredOnRetroLibraryView() throws {

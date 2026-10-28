@@ -26,9 +26,20 @@ struct RetroWindowChrome: NSViewRepresentable {
                 btn.isHidden = isRetro
             }
         }
-        if let titlebarView = window.standardWindowButton(.closeButton)?.superview,
-           titlebarView.isHidden != isRetro {
-            titlebarView.isHidden = isRetro
+        if let titlebarView = window.standardWindowButton(.closeButton)?.superview {
+            if titlebarView.isHidden != isRetro {
+                titlebarView.isHidden = isRetro
+            }
+            if let container = titlebarView.superview, container.isHidden != isRetro {
+                container.isHidden = isRetro
+            }
+        }
+        if let themeFrame = window.contentView?.superview {
+            for subview in themeFrame.subviews where NSStringFromClass(type(of: subview)).contains("Titlebar") {
+                if subview.isHidden != isRetro {
+                    subview.isHidden = isRetro
+                }
+            }
         }
     }
 
@@ -45,9 +56,30 @@ struct RetroWindowChrome: NSViewRepresentable {
 
     final class ChromeView: NSView {
         var isRetro = false
+        private var keyObserver: NSObjectProtocol?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            if let keyObserver {
+                NotificationCenter.default.removeObserver(keyObserver)
+                self.keyObserver = nil
+            }
+            if let window {
+                keyObserver = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didBecomeKeyNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        self?.scheduleApply()
+                    }
+                }
+            }
+            scheduleApply()
+        }
+
+        override func layout() {
+            super.layout()
             scheduleApply()
         }
 
