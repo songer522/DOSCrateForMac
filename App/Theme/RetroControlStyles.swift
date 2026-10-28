@@ -1,5 +1,9 @@
 import SwiftUI
 
+extension EnvironmentValues {
+    @Entry var retroTheme = false
+}
+
 struct RetroTextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
         configuration
@@ -40,6 +44,7 @@ struct RetroToggleStyle: ToggleStyle {
 extension View {
     func retroControls() -> some View {
         self
+            .environment(\.retroTheme, true)
             .font(RetroFont.font())
             .foregroundStyle(RetroPalette.shadow)
             .buttonStyle(RetroButtonStyle())

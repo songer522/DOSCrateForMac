@@ -7,15 +7,24 @@ struct RetroButtonStyle: ButtonStyle {
     }
 
     var kind: Kind = .text
+    var isSelected = false
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let sunken = (configuration.isPressed && isEnabled) || isSelected
+        let fg: Color = if !isEnabled {
+            RetroPalette.bevelDark
+        } else if isSelected {
+            RetroPalette.highlightText
+        } else {
+            RetroPalette.shadow
+        }
+        return configuration.label
             .font(RetroFont.font())
-            .foregroundStyle(isEnabled ? RetroPalette.shadow : RetroPalette.bevelDark)
+            .foregroundStyle(fg)
             .padding(.horizontal, kind == .icon ? 10 : 8)
             .padding(.vertical, kind == .icon ? 6 : 4)
-            .background(RetroPalette.panel)
-            .retroBevel(configuration.isPressed && isEnabled ? .sunken : .raised)
+            .background(isSelected ? RetroPalette.highlight : RetroPalette.panel)
+            .retroBevel(sunken ? .sunken : .raised)
     }
 }
