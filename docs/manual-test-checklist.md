@@ -54,3 +54,5 @@ With Settings → "Use game controllers" on, connect one controller at a time an
 - [ ] On a game that matched wrong (or didn't match), open "Find Metadata…" from the Info tab or context menu, search, confirm "Replace existing info and art?" when prompted, and verify the replacement metadata and art apply.
 - [ ] Turn Wi-Fi off and trigger a lookup or refresh on a missing index; verify the status bar and sheet show "LaunchBox data unavailable" with a working Retry button once Wi-Fi is back on.
 - [ ] Quit and relaunch the app; verify the existing fresh `launchbox-dos.json` is reused with no new download.
+- [ ] Run Library → "Find Missing Metadata" on the SD library; verify the status bar shows "Finding metadata… K of N" with a working Cancel button that stops after the current game.
+- [ ] When "Find Missing Metadata" finishes, verify the status bar shows "N game(s) without a LaunchBox match" with a Review button; click Review, find "Aladin" in the unmatched list, click "Find Metadata…", select "Disney's Aladdin", and verify it applies and drops off the unmatched list.

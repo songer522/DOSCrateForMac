@@ -83,9 +83,13 @@ final class MetadataCoordinator {
     var phase: LaunchBoxIndexStore.Phase = .idle
     var lastUpdated: Date?
     private(set) var unmatched: [UUID] = []
+    private(set) var findMissingProgress: (current: Int, total: Int)?
+    var isFindingMissing: Bool { findMissingProgress != nil }
 
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var failedQueueIDs: Set<UUID> = []
+    @ObservationIgnored private var findMissingTask: Task<Void, Never>?
+    @ObservationIgnored private var findMissingCancelled = false
 
     init(provider: any MetadataProviding, prefs: Preferences) {
         self.provider = provider
@@ -104,11 +108,12 @@ final class MetadataCoordinator {
     }
 
     var unmatchedStatusText: String? {
+        guard findMissingProgress == nil else { return nil }
         switch phase {
         case .idle, .ready:
-            Self.unmatchedStatusText(count: unmatched.count)
+            return Self.unmatchedStatusText(count: unmatched.count)
         case .downloading, .building, .failed:
-            nil
+            return nil
         }
     }
 
@@ -116,17 +121,78 @@ final class MetadataCoordinator {
         unmatchedStatusText != nil
     }
 
+    var showsFindMissingCancel: Bool {
+        guard findMissingProgress != nil else { return false }
+        switch phase {
+        case .idle, .ready:
+            return true
+        case .downloading, .building, .failed:
+            return false
+        }
+    }
+
     var statusText: String? {
         switch phase {
         case .idle, .ready:
-            unmatchedStatusText
+            if let progress = findMissingProgress {
+                return "Finding metadata… \(progress.current) of \(progress.total)"
+            }
+            return unmatchedStatusText
         case .downloading(let fraction):
-            "Downloading LaunchBox data… \(Int((min(1.0, max(0.0, fraction)) * 100).rounded()))%"
+            return "Downloading LaunchBox data… \(Int((min(1.0, max(0.0, fraction)) * 100).rounded()))%"
         case .building:
-            "Building LaunchBox index…"
+            return "Building LaunchBox index…"
         case .failed:
-            "LaunchBox data unavailable"
+            return "LaunchBox data unavailable"
         }
+    }
+
+    static func needsMissingMetadata(_ record: GameRecord, io: CrateIO = CrateIO()) -> Bool {
+        let g = record.game
+        guard g.metadataSource == nil else { return false }
+        let missingYear = (g.year == nil)
+        let missingDeveloper = (g.developer == nil || g.developer?.isEmpty == true)
+        let missingPublisher = (g.publisher == nil || g.publisher?.isEmpty == true)
+        let missingGenre = (g.genre == nil || g.genre?.isEmpty == true)
+        let missingDescription = g.description.isEmpty
+        let missingCover = !FileManager.default.fileExists(atPath: io.coverURL(record.crateURL).path)
+        return missingYear || missingDeveloper || missingPublisher || missingGenre || missingDescription || missingCover
+    }
+
+    func findMissingMetadata() {
+        guard findMissingTask == nil, let model else { return }
+        let io = CrateIO()
+        let targets = model.store.records
+            .filter { !model.isActive($0.id) && !model.pendingRemovalIDs.contains($0.id) && Self.needsMissingMetadata($0, io: io) }
+            .map(\.id)
+        guard !targets.isEmpty else { return }
+
+        findMissingCancelled = false
+        findMissingProgress = (current: 1, total: targets.count)
+        findMissingTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.findMissingTask = nil
+                self.findMissingProgress = nil
+                self.findMissingCancelled = false
+            }
+            for (index, id) in targets.enumerated() {
+                if Task.isCancelled || self.findMissingCancelled { break }
+                self.findMissingProgress = (current: index + 1, total: targets.count)
+                self.tasks[id]?.cancel()
+                self.failedQueueIDs.remove(id)
+                let itemTask = Task { [weak self] in
+                    guard let self else { return }
+                    await self.runAutoFetch(for: id)
+                }
+                self.tasks[id] = itemTask
+                await itemTask.value
+            }
+        }
+    }
+
+    func cancelFindMissing() {
+        findMissingCancelled = true
     }
 
     func dismissUnmatched() {

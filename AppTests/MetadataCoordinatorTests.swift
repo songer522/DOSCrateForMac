@@ -424,4 +424,142 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         #expect(LibraryView.statusBarLeadingText(for: model) == nil)
         #expect(LibraryView.showsUnmatchedReview(for: model) == false)
     }
+
+    @Test func findMissingTargetsOnlyIncompleteUnmatchedGames() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, incompleteID) = try await makeEnv(title: "Doom")
+        let lib = root.appending(path: "Library", directoryHint: .isDirectory)
+
+        // Game 2: already has metadataSource -> should be skipped even with nil year
+        let crate2 = try io.makeCrate(title: "DoomWithSource", in: lib)
+        var game2 = Game(title: "Doom", source: .managed)
+        game2.metadataSource = MetadataSource(provider: "launchbox", id: 101, fetchedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        game2.launch.executable = "GAME.EXE"
+        try io.save(game2, extra: [:], to: crate2)
+
+        // Game 3: metadataSource == nil, but all fields + cover.png are present -> should be skipped
+        let crate3 = try io.makeCrate(title: "DoomComplete", in: lib)
+        var game3 = Game(title: "Doom", source: .managed)
+        game3.year = 1993
+        game3.developer = "Custom Dev"
+        game3.publisher = "Custom Pub"
+        game3.genre = "Custom Genre"
+        game3.description = "Custom Desc"
+        game3.launch.executable = "GAME.EXE"
+        try io.save(game3, extra: [:], to: crate3)
+        try Data("png".utf8).write(to: io.coverURL(crate3))
+
+        await model.store.reload()
+
+        model.metadata.findMissingMetadata()
+        await waitUntil { !model.metadata.isFindingMissing && model.store.record(incompleteID)?.game.metadataSource != nil }
+
+        #expect(provider.downloadCalls == 1)
+        #expect(model.store.record(incompleteID)?.game.year == 1993)
+        #expect(model.store.record(game2.id)?.game.year == nil)
+        #expect(model.store.record(game3.id)?.game.metadataSource == nil)
+        #expect(model.store.record(game3.id)?.game.developer == "Custom Dev")
+    }
+
+    @Test func findMissingSkipsRunningGames() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, runningID) = try await makeEnv(title: "Doom")
+        let lib = root.appending(path: "Library", directoryHint: .isDirectory)
+
+        let crate2 = try io.makeCrate(title: "DoomIdle", in: lib)
+        var game2 = Game(title: "Doom", source: .managed)
+        game2.launch.executable = "GAME.EXE"
+        try io.save(game2, extra: [:], to: crate2)
+        await model.store.reload()
+
+        let playTask = model.play(runningID)
+        await waitUntil { !runner.processes.isEmpty }
+
+        model.metadata.findMissingMetadata()
+        await waitUntil { !model.metadata.isFindingMissing && model.store.record(game2.id)?.game.metadataSource != nil }
+
+        #expect(provider.downloadCalls == 1)
+        #expect(model.store.record(runningID)?.game.metadataSource == nil)
+        #expect(model.store.record(game2.id)?.game.metadataSource?.id == 101)
+
+        runner.processes[0].finish(0)
+        await playTask?.value
+    }
+
+    @Test func findMissingProgressText() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, _) = try await makeEnv(title: "Doom")
+        let lib = root.appending(path: "Library", directoryHint: .isDirectory)
+
+        let crate2 = try io.makeCrate(title: "Zelda", in: lib)
+        var game2 = Game(title: "Zelda", source: .managed)
+        game2.launch.executable = "GAME.EXE"
+        try io.save(game2, extra: [:], to: crate2)
+        await model.store.reload()
+
+        let (entered1Stream, entered1Cont) = AsyncStream<Void>.makeStream()
+        let (release1Stream, release1Cont) = AsyncStream<Void>.makeStream()
+        provider.downloadGate = { _ in
+            entered1Cont.yield(())
+            entered1Cont.finish()
+            for await _ in release1Stream { break }
+        }
+
+        model.metadata.findMissingMetadata()
+        for await _ in entered1Stream { break }
+
+        #expect(LibraryView.statusBarLeadingText(for: model) == "Finding metadata… 1 of 2")
+        #expect(RetroStatusBar.leadingText(for: model) == "Finding metadata… 1 of 2")
+        #expect(LibraryView.showsFindMissingCancel(for: model) == true)
+
+        release1Cont.yield(())
+        release1Cont.finish()
+
+        await waitUntil { !model.metadata.isFindingMissing }
+        // After finishing, the unmatched notice for "Aladin" takes over
+        #expect(model.metadata.unmatched == [game2.id])
+        #expect(LibraryView.statusBarLeadingText(for: model) == "1 game without a LaunchBox match")
+    }
+
+    @Test func cancelFindMissingStopsAfterCurrent() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, _) = try await makeEnv(title: "Doom")
+        let lib = root.appending(path: "Library", directoryHint: .isDirectory)
+
+        let crate2 = try io.makeCrate(title: "Doom 2", in: lib)
+        var game2 = Game(title: "Doom", source: .managed)
+        game2.launch.executable = "GAME.EXE"
+        try io.save(game2, extra: [:], to: crate2)
+        await model.store.reload()
+
+        let (enteredStream, enteredCont) = AsyncStream<Void>.makeStream()
+        let (releaseStream, releaseCont) = AsyncStream<Void>.makeStream()
+        provider.downloadGate = { _ in
+            enteredCont.yield(())
+            enteredCont.finish()
+            for await _ in releaseStream { break }
+        }
+
+        model.metadata.findMissingMetadata()
+        for await _ in enteredStream { break }
+
+        model.metadata.cancelFindMissing()
+        releaseCont.yield(())
+        releaseCont.finish()
+
+        await waitUntil { !model.metadata.isFindingMissing }
+        #expect(provider.downloadCalls == 1)
+        let matchedCount = model.store.records.filter { $0.game.metadataSource != nil }.count
+        #expect(matchedCount == 1)
+    }
+
+    @Test func findMissingIgnoresImportToggle() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Doom", fetchOnImport: false)
+
+        model.metadata.findMissingMetadata()
+        await waitUntil { model.store.record(id)?.game.metadataSource != nil }
+
+        #expect(model.store.record(id)?.game.year == 1993)
+    }
 }

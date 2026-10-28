@@ -49,7 +49,7 @@ struct DOSCrateApp: App {
             }
         }
         .commands {
-            AppCommands(updater: updaterController.updater, updatesEnabled: !appcastURL.isEmpty)
+            AppCommands(model: model, updater: updaterController.updater, updatesEnabled: !appcastURL.isEmpty)
         }
 
         Settings {
@@ -75,6 +75,7 @@ struct DOSCrateApp: App {
 
 struct AppCommands: Commands {
     static let licensesWindowID = "licenses"
+    let model: AppModel
     let updater: SPUUpdater
     let updatesEnabled: Bool
     @Environment(\.openWindow) private var openWindow
@@ -90,6 +91,12 @@ struct AppCommands: Commands {
             if updatesEnabled {
                 Button("Check for Updates…") { updater.checkForUpdates() }
             }
+        }
+        CommandMenu("Library") {
+            Button("Find Missing Metadata") {
+                model.metadata.findMissingMetadata()
+            }
+            .disabled(model.store.records.isEmpty || model.metadata.isFindingMissing)
         }
     }
 }

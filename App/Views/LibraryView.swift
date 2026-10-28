@@ -124,10 +124,17 @@ struct LibraryView: View {
                                     .frame(maxWidth: 140)
                             } else if case .building = model.metadata.phase {
                                 ProgressView().controlSize(.small)
+                            } else if let findProgress = model.metadata.findMissingProgress {
+                                ProgressView(value: Double(findProgress.current), total: Double(max(findProgress.total, 1)))
+                                    .progressViewStyle(.linear)
+                                    .frame(maxWidth: 140)
                             }
                             Text(metadataText)
                             if Self.showsMetadataRetry(for: model) {
                                 Button("Retry") { model.metadata.retry() }
+                                    .controlSize(.small)
+                            } else if Self.showsFindMissingCancel(for: model) {
+                                Button("Cancel") { model.metadata.cancelFindMissing() }
                                     .controlSize(.small)
                             } else if Self.showsUnmatchedReview(for: model) {
                                 Button("Review") { model.showingUnmatchedMetadata = true }
@@ -270,6 +277,15 @@ struct LibraryView: View {
               model.removalProgress == nil
         else { return false }
         return model.metadata.showsUnmatchedReview
+    }
+
+    static func showsFindMissingCancel(for model: AppModel) -> Bool {
+        guard model.imports.progress == nil,
+              !model.isScanningLibrary,
+              !model.imports.isCheckingDuplicates,
+              model.removalProgress == nil
+        else { return false }
+        return model.metadata.showsFindMissingCancel
     }
 
     /// What removal does, worded per source: a managed game's files live in its crate, so they always go with it.
