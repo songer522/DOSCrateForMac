@@ -65,7 +65,14 @@ struct LibraryView: View {
             case .standard:
                 standardLayout
             case .retro:
-                standardLayout
+                RetroLibraryView(
+                    model: model,
+                    records: records,
+                    commands: commands,
+                    showsGrid: $showsGrid,
+                    showsInspector: $showsInspector,
+                    choosingImport: $choosingImport
+                )
             }
         }
         .modifier(LibraryActions(model: model, records: records, removing: $removing,
