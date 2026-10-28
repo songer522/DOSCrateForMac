@@ -189,6 +189,7 @@ final class ImportQueue {
             importer.discard(prepared)
             await model.store.reload()
             model.selection = record.id
+            model.metadata.importedGame(record.id)
             return record
         case .keepBoth:
             let record = try await Task.detached {
@@ -199,6 +200,7 @@ final class ImportQueue {
             importer.discard(prepared)
             await model.store.reload()
             model.selection = record.id
+            model.metadata.importedGame(record.id)
             return record
         }
     }
@@ -275,6 +277,7 @@ final class ImportQueue {
                         prepared, mode: mode, title: prepared.suggestedTitle, executable: executable, into: library
                     )
                 }.value
+                model.metadata.importedGame(record.id)
                 if firstID == nil { firstID = record.id }
                 dirtyCount += 1
                 let now = ContinuousClock.now

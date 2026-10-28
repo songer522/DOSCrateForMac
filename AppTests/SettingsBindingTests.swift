@@ -57,6 +57,14 @@ struct SettingsBindingTests {
         #expect(p.launchConfig(gamepads: [pad]).controllerLayout == .standard)
         p.useControllers = false; #expect(p.launchConfig(gamepads: [pad]).controllerLayout == nil)
     }
+
+    @Test func fetchMetadataOnImportDefaultsTrue() {
+        let d = UserDefaults(suiteName: #function)!; d.removePersistentDomain(forName: #function)
+        let p = Preferences(defaults: d)
+        #expect(p.fetchMetadataOnImport == true)
+        p.fetchMetadataOnImport = false
+        #expect(Preferences(defaults: d).fetchMetadataOnImport == false)
+    }
 }
 
 @MainActor
