@@ -9,7 +9,18 @@ final class FindMetadataModel {
     let model: AppModel
     let gameID: UUID
 
-    var query: String
+    var query: String {
+        didSet {
+            guard query != oldValue else { return }
+            queryGeneration += 1
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                debounceTask?.cancel()
+                results = []
+                errorText = nil
+                isLoading = false
+            }
+        }
+    }
     var results: [MatchCandidate] = []
     var isLoading = false
     var errorText: String?
@@ -17,6 +28,7 @@ final class FindMetadataModel {
     var confirmingRecord: LaunchBoxRecord?
 
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
+    @ObservationIgnored private var queryGeneration = 0
 
     init(model: AppModel, gameID: UUID) {
         self.model = model
@@ -39,14 +51,25 @@ final class FindMetadataModel {
 
     func scheduleSearch() {
         debounceTask?.cancel()
+        queryGeneration += 1
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            results = []
+            errorText = nil
+            isLoading = false
+            return
+        }
+        let scheduledGeneration = queryGeneration
         debounceTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled, let self, self.queryGeneration == scheduledGeneration else { return }
             await self.searchNow()
         }
     }
 
     func searchNow() async {
+        queryGeneration += 1
+        let generation = queryGeneration
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             results = []
@@ -58,6 +81,7 @@ final class FindMetadataModel {
         errorText = nil
         do {
             var matched = try await model.metadata.candidates(for: trimmed)
+            guard generation == queryGeneration else { return }
             if let currentID = model.store.record(gameID)?.game.metadataSource?.id {
                 if let idx = matched.firstIndex(where: { $0.record.id == currentID }) {
                     let current = matched.remove(at: idx)
@@ -67,6 +91,7 @@ final class FindMetadataModel {
             results = matched
             isLoading = false
         } catch {
+            guard generation == queryGeneration else { return }
             results = []
             errorText = model.metadata.statusText ?? "LaunchBox data unavailable"
             isLoading = false

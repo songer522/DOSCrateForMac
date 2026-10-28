@@ -44,6 +44,16 @@ import Testing
             overview: "Third Ultima.",
             images: [LaunchBoxImage(type: "Box - Front", fileName: "u3.png")]
         ),
+        LaunchBoxRecord(
+            id: 99,
+            name: "Wolfenstein 3D",
+            releaseYear: 1992,
+            developer: "id Software",
+            publisher: "Apogee",
+            genres: ["Shooter"],
+            overview: "Escape Castle Wolfenstein.",
+            images: []
+        ),
     ]
 
     func makeEnv(
@@ -216,5 +226,106 @@ import Testing
         #expect(sheetModel.confirmingRecord == nil)
         #expect(!sheetModel.showsInSheetReplacePanel)
         #expect(model.store.record(id)?.game.developer == "Sierra On-Line")
+    }
+
+    @Test func staleSearchResponseIsDiscarded() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Ultima")
+        let sheetModel = FindMetadataModel(model: model, gameID: id)
+
+        let firstEntered = SearchGate()
+        let firstRelease = SearchGate()
+        let counter = SearchCounter()
+
+        provider.ensureReadyGate = {
+            if counter.increment() == 1 {
+                firstEntered.open()
+                await firstRelease.wait()
+            }
+        }
+
+        let firstSearch = Task { await sheetModel.searchNow() }
+        await firstEntered.wait()
+
+        // Newer search for "Wolfenstein 3D" finishes before the stale "Ultima" search resumes.
+        sheetModel.query = "Wolfenstein 3D"
+        await sheetModel.searchNow()
+        #expect(sheetModel.results.first?.record.id == 99)
+
+        // Release the older search; its stale "Ultima" results must be discarded.
+        firstRelease.open()
+        await firstSearch.value
+
+        #expect(sheetModel.results.first?.record.id == 99)
+        #expect(!sheetModel.results.contains { $0.record.id == 1 })
+        #expect(!sheetModel.isLoading)
+    }
+
+    @Test func clearingQueryWhileIndexLoadsStaysEmpty() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Ultima")
+        let sheetModel = FindMetadataModel(model: model, gameID: id)
+
+        let entered = SearchGate()
+        let release = SearchGate()
+        provider.ensureReadyGate = {
+            entered.open()
+            await release.wait()
+        }
+
+        let inFlight = Task { await sheetModel.searchNow() }
+        await entered.wait()
+        #expect(sheetModel.isLoading)
+
+        // Clear the search field while the index load is still in flight.
+        sheetModel.query = ""
+        sheetModel.scheduleSearch()
+        #expect(sheetModel.results.isEmpty)
+        #expect(!sheetModel.isLoading)
+
+        // When the in-flight load finishes, the cleared field must stay empty with no stale rows.
+        release.open()
+        await inFlight.value
+        #expect(sheetModel.results.isEmpty)
+        #expect(!sheetModel.isLoading)
+        #expect(sheetModel.errorText == nil)
+    }
+}
+
+private final class SearchGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func open() {
+        let pending: [CheckedContinuation<Void, Never>] = lock.withLock {
+            isOpen = true
+            let copy = continuations
+            continuations.removeAll()
+            return copy
+        }
+        for c in pending { c.resume() }
+    }
+
+    func wait() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let resumeNow = lock.withLock { () -> Bool in
+                if isOpen { return true }
+                continuations.append(c)
+                return false
+            }
+            if resumeNow { c.resume() }
+        }
+    }
+}
+
+private final class SearchCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() -> Int {
+        lock.withLock {
+            count += 1
+            return count
+        }
     }
 }
