@@ -74,19 +74,45 @@ struct GameDetailView: View {
     }
 
     private func scheduleSave() {
+        saveTask = Self.scheduleDraftSave(
+            draft: draft,
+            removedMedia: removedMedia,
+            in: model,
+            previousTask: saveTask,
+            flushAction: { flush() }
+        )
+    }
+
+    @discardableResult
+    static func scheduleDraftSave(
+        draft: Game,
+        removedMedia: [String] = [],
+        in model: AppModel,
+        previousTask: Task<Void, Never>? = nil,
+        flushAction: (@MainActor () -> Void)? = nil
+    ) -> Task<Void, Never>? {
         guard let current = model.store.record(draft.id)?.game,
-              Self.merged(draft, into: current) != current || !removedMedia.isEmpty else { return }
-        saveTask?.cancel()
-        saveTask = Task {
+              merged(draft, into: current) != current || !removedMedia.isEmpty else { return nil }
+        previousTask?.cancel()
+        let doFlush: @MainActor () -> Void = flushAction ?? {
+            model.setPendingWrite(draft.id, owner: "draft", nil)
+            guard let latest = model.store.record(draft.id)?.game else { return }
+            let game = merged(draft, into: latest)
+            if game != latest {
+                try? model.store.save(game)
+            }
+        }
+        let task = Task {
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
-            flush()
+            doFlush()
         }
         // A launch from the grid, list or context menu may come before the debounce fires.
         model.setPendingWrite(draft.id, owner: "draft") {
-            saveTask?.cancel()
-            flush()
+            task.cancel()
+            doFlush()
         }
+        return task
     }
 
     private func flush() {
@@ -132,6 +158,7 @@ struct GameDetailView: View {
         game.developer = draft.developer
         game.publisher = draft.publisher
         game.genre = draft.genre
+        game.description = draft.description
         game.notes = draft.notes
         game.tags = draft.tags
         game.media = draft.media
@@ -171,6 +198,7 @@ private struct GameHeader: View {
                 }
                 Spacer(minLength: 0)
             }
+            ArtStripView(crateURL: record.crateURL)
             if let result = model.lastResult[record.id], result.unexpected {
                 unexpectedExitBanner(logURL: result.logURL)
             }
