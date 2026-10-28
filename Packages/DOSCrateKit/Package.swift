@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "ConfigKit", targets: ["ConfigKit"]),
         .library(name: "ImportKit", targets: ["ImportKit"]),
         .library(name: "LauncherKit", targets: ["LauncherKit"]),
+        .library(name: "MetadataKit", targets: ["MetadataKit"]),
     ],
     targets: [
         .target(name: "LibraryKit", dependencies: []),
@@ -33,6 +34,13 @@ let package = Package(
         .testTarget(
             name: "LauncherKitTests",
             dependencies: ["LauncherKit"],
+            swiftSettings: [.unsafeFlags(["-warnings-as-errors"])]
+        ),
+        .target(name: "MetadataKit", dependencies: ["LibraryKit"]),
+        .testTarget(
+            name: "MetadataKitTests",
+            dependencies: ["MetadataKit"],
+            resources: [.copy("Fixtures")],
             swiftSettings: [.unsafeFlags(["-warnings-as-errors"])]
         ),
     ]

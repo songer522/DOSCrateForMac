@@ -51,6 +51,8 @@ targets:
         product: ImportKit
       - package: DOSCrateKit
         product: LauncherKit
+      - package: DOSCrateKit
+        product: MetadataKit
       - package: Sparkle
         product: Sparkle
     postCompileScripts:
