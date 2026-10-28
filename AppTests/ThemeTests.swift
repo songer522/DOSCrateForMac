@@ -4,22 +4,24 @@ import Testing
 
 @MainActor
 struct ThemeTests {
-    @Test func themeDefaultsToStandard() {
+    @Test func themeDefaultsToDOS() {
         let d = UserDefaults(suiteName: UUID().uuidString)!
-        #expect(Preferences(defaults: d).appTheme == .standard)
+        #expect(Preferences(defaults: d).appTheme == .dos)
     }
 
     @Test func themeRoundTrips() {
         let d = UserDefaults(suiteName: UUID().uuidString)!
         let prefs = Preferences(defaults: d)
+        prefs.appTheme = .standard
+        #expect(Preferences(defaults: d).appTheme == .standard)
         prefs.appTheme = .dos
         #expect(Preferences(defaults: d).appTheme == .dos)
     }
 
-    @Test func unknownThemeReadsAsStandard() {
+    @Test func unknownThemeReadsAsDOS() {
         let d = UserDefaults(suiteName: UUID().uuidString)!
         d.set("amiga", forKey: "appTheme")
-        #expect(Preferences(defaults: d).appTheme == .standard)
+        #expect(Preferences(defaults: d).appTheme == .dos)
     }
 
     @Test func layoutFollowsTheme() {

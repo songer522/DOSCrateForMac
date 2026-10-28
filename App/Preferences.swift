@@ -24,13 +24,13 @@ enum ImportLocationPreference: String, CaseIterable, Sendable {
 }
 
 enum AppTheme: String, CaseIterable, Sendable {
-    case standard
     case dos
+    case standard
 
     var displayName: String {
         switch self {
-        case .standard: "Standard"
         case .dos: "DOS"
+        case .standard: "Standard"
         }
     }
 }
@@ -73,7 +73,7 @@ final class Preferences {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         libraryPath = defaults.string(forKey: Key.libraryPath) ?? Self.defaultLibraryURL.path
-        appTheme = defaults.string(forKey: Key.appTheme).flatMap(AppTheme.init(rawValue:)) ?? .standard
+        appTheme = defaults.string(forKey: Key.appTheme).flatMap(AppTheme.init(rawValue:)) ?? .dos
         defaultPreset = defaults.string(forKey: Key.defaultPreset).flatMap(Preset.init(rawValue:)) ?? .auto
         importLocation = defaults.string(forKey: Key.importLocation).flatMap(ImportLocationPreference.init(rawValue:)) ?? .ask
         globalOverrides = defaults.data(forKey: Key.globalOverrides)
