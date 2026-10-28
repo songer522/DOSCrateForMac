@@ -283,6 +283,7 @@ final class ImportQueue {
                 let now = ContinuousClock.now
                 if dirtyCount >= 10 || now - lastReload >= .seconds(1) {
                     await model.store.reload()
+                    model.metadata.storeDidReload()
                     dirtyCount = 0
                     lastReload = ContinuousClock.now
                     if !selectedFirst, let firstID {
@@ -297,6 +298,7 @@ final class ImportQueue {
             // A batch enqueued during this final reload is picked up by the loop instead of being dropped.
             if batchIndex == batchEntries.count, dirtyCount > 0 {
                 await model.store.reload()
+                model.metadata.storeDidReload()
                 dirtyCount = 0
             }
         }

@@ -117,6 +117,7 @@ final class MetadataCoordinator {
 
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var artTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var pendingStoreIDs: [UUID] = []
     @ObservationIgnored private var failedQueueIDs: Set<UUID> = []
     @ObservationIgnored private var findMissingTask: Task<Void, Never>?
     @ObservationIgnored private var findMissingCancelled = false
@@ -247,13 +248,38 @@ final class MetadataCoordinator {
         guard prefs.fetchMetadataOnImport else { return }
         tasks[id]?.cancel()
         failedQueueIDs.remove(id)
+        if model?.store.record(id) == nil {
+            if !pendingStoreIDs.contains(id) {
+                pendingStoreIDs.append(id)
+            }
+            return
+        }
+        pendingStoreIDs.removeAll { $0 == id }
         tasks[id] = Task { [weak self] in
             guard let self else { return }
             await self.runAutoFetch(for: id)
         }
     }
 
+    func storeDidReload() {
+        guard let model, !pendingStoreIDs.isEmpty else { return }
+        var remaining: [UUID] = []
+        for id in pendingStoreIDs {
+            if model.store.record(id) != nil {
+                tasks[id]?.cancel()
+                tasks[id] = Task { [weak self] in
+                    guard let self else { return }
+                    await self.runAutoFetch(for: id)
+                }
+            } else {
+                remaining.append(id)
+            }
+        }
+        pendingStoreIDs = remaining
+    }
+
     func cancel(_ id: UUID) {
+        pendingStoreIDs.removeAll { $0 == id }
         tasks[id]?.cancel()
         tasks[id] = nil
         artTasks[id]?.cancel()

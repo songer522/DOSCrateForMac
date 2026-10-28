@@ -103,6 +103,7 @@ final class AppModel {
         self.metadata = resolvedMetadata
         self.needsLibrarySetup = !Self.isDirectory(store.library)
         resolvedMetadata.model = self
+        store.afterReload = { [weak resolvedMetadata] in resolvedMetadata?.storeDidReload() }
         sessions.onEnded = { [weak self] result in self?.sessionEnded(result) }
         do {
             try verifyDosbox(dosbox)

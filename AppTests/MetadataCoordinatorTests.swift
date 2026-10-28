@@ -668,4 +668,41 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         #expect(model.metadata.lastOutcome[id] == .artNotWritable)
         #expect(model.alert?.title == "Couldn't save art")
     }
+
+    @Test func batchImportedGamesAutoFillAfterDeferredReload() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let records = [
+            LaunchBoxRecord(id: 101, name: "Doom", releaseYear: 1993, developer: "id Software"),
+            LaunchBoxRecord(id: 102, name: "Heretic", releaseYear: 1994, developer: "Raven Software"),
+            LaunchBoxRecord(id: 103, name: "Hexen", releaseYear: 1995, developer: "Raven Software"),
+        ]
+        let (model, _, initialID) = try await makeEnv(title: "Placeholder", records: records)
+        try model.store.remove(initialID, trashFiles: true)
+
+        let fm = FileManager.default
+        let stagingDir = root.appending(path: "Staging", directoryHint: .isDirectory)
+        var entries: [ImportQueue.BatchEntry] = []
+        for title in ["Doom", "Heretic", "Hexen"] {
+            let folder = stagingDir.appending(path: title, directoryHint: .isDirectory)
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: folder.appending(path: "GAME.EXE"))
+            entries.append(ImportQueue.BatchEntry(url: folder, mode: .reference))
+        }
+
+        await model.imports.enqueue(entries, model: model)?.value
+        #expect(model.store.records.count == 3)
+
+        await waitUntil {
+            model.store.records.count == 3
+                && model.store.records.allSatisfy { $0.game.metadataSource != nil }
+        }
+
+        let byTitle = Dictionary(uniqueKeysWithValues: model.store.records.map { ($0.game.title, $0.game) })
+        #expect(byTitle["Doom"]?.year == 1993)
+        #expect(byTitle["Doom"]?.developer == "id Software")
+        #expect(byTitle["Heretic"]?.year == 1994)
+        #expect(byTitle["Heretic"]?.developer == "Raven Software")
+        #expect(byTitle["Hexen"]?.year == 1995)
+        #expect(byTitle["Hexen"]?.developer == "Raven Software")
+    }
 }
