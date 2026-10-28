@@ -112,8 +112,8 @@ private struct RetroControlBoxButtonStyle: ButtonStyle {
                 }
                 .offset(x: offset, y: offset)
         }
-        .frame(width: 24, height: 24)
-        .background(RetroPalette.panel)
+        .frame(width: 20, height: 20)
+        .background(RetroPalette.panel, ignoresSafeAreaEdges: [])
         .retroBevel(configuration.isPressed ? .sunken : .raised)
         .contentShape(Rectangle())
     }
@@ -179,7 +179,7 @@ struct RetroLibraryView: View {
                 .foregroundStyle(RetroPalette.highlightText)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
-                .background(RetroPalette.highlight)
+                .background(RetroPalette.highlight, ignoresSafeAreaEdges: [])
                 .contentShape(Rectangle())
                 .gesture(WindowDragGesture())
 
@@ -270,7 +270,7 @@ struct RetroLibraryView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(RetroPalette.panel)
+        .background(RetroPalette.panel, ignoresSafeAreaEdges: [])
         .retroBevel(.raised)
     }
 
