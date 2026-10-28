@@ -46,6 +46,22 @@ public struct CrateIO: Sendable {
     public func logsURL(_ crate: URL) -> URL { cacheURL(crate).appending(path: "logs", directoryHint: .isDirectory) }
     public func overrideURL(_ crate: URL) -> URL { crate.appending(path: "override.conf", directoryHint: .notDirectory) }
     public func coverURL(_ crate: URL) -> URL { crate.appending(path: "cover.png", directoryHint: .notDirectory) }
+    public func artURL(_ crate: URL) -> URL { crate.appending(path: "art", directoryHint: .isDirectory) }
+    public func backURL(_ crate: URL) -> URL { artURL(crate).appending(path: "back.png", directoryHint: .notDirectory) }
+    public func discURL(_ crate: URL) -> URL { artURL(crate).appending(path: "disc.png", directoryHint: .notDirectory) }
+    public func logoURL(_ crate: URL) -> URL { artURL(crate).appending(path: "logo.png", directoryHint: .notDirectory) }
+    public func screenshotURL(_ crate: URL, index: Int) -> URL {
+        artURL(crate).appending(path: String(format: "screenshots/%02d.png", index), directoryHint: .notDirectory)
+    }
+    public func screenshotURLs(_ crate: URL) -> [URL] {
+        let dir = artURL(crate).appending(path: "screenshots", directoryHint: .isDirectory)
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        )) ?? []
+        return entries
+            .filter { $0.pathExtension.lowercased() == "png" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
     func gameFileURL(_ crate: URL) -> URL { crate.appending(path: Self.gameFileName, directoryHint: .notDirectory) }
 
     // MARK: Names

@@ -152,4 +152,23 @@ struct CrateIOTests {
         #expect(throws: LibraryError.sourceUnreachable(path: source.path)) { try io.cDriveURL(for: record) }
         #expect(io.loadRecord(at: crate).status == .missingSource)
     }
+
+    @Test func artPathsLiveUnderArtFolder() throws {
+        let lib = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let crate = try io.makeCrate(title: "Doom", in: lib)
+        #expect(io.artURL(crate).path.hasSuffix("/art"))
+        #expect(io.backURL(crate).path.hasSuffix("/art/back.png"))
+        #expect(io.discURL(crate).path.hasSuffix("/art/disc.png"))
+        #expect(io.logoURL(crate).path.hasSuffix("/art/logo.png"))
+        #expect(io.screenshotURL(crate, index: 3).path.hasSuffix("/art/screenshots/03.png"))
+        #expect(io.screenshotURLs(crate).isEmpty)
+
+        let s2 = io.screenshotURL(crate, index: 2)
+        let s1 = io.screenshotURL(crate, index: 1)
+        try FileManager.default.createDirectory(at: s1.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([1]).write(to: s2)
+        try Data([1]).write(to: s1)
+        #expect(io.screenshotURLs(crate).map(\.lastPathComponent) == ["01.png", "02.png"])
+    }
 }
