@@ -12,17 +12,22 @@ final class GamepadMonitor {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         IOHIDManagerSetDeviceMatching(manager, nil)
         let context = Unmanaged.passUnretained(self).toOpaque()
-        let callback: IOHIDDeviceCallback = { context, _, _, _ in
+        // The removal callback fires while IOHIDManagerCopyDevices still lists the device,
+        // so track the set from the callbacks instead of re-reading it.
+        let added: IOHIDDeviceCallback = { context, _, _, device in
             guard let context else { return }
             let monitor = Unmanaged<GamepadMonitor>.fromOpaque(context).takeUnretainedValue()
-            MainActor.assumeIsolated {
-                monitor.refresh()
-            }
+            MainActor.assumeIsolated { monitor.update { $0.insert(device) } }
         }
-        IOHIDManagerRegisterDeviceMatchingCallback(manager, callback, context)
-        IOHIDManagerRegisterDeviceRemovalCallback(manager, callback, context)
+        let removed: IOHIDDeviceCallback = { context, _, _, device in
+            guard let context else { return }
+            let monitor = Unmanaged<GamepadMonitor>.fromOpaque(context).takeUnretainedValue()
+            MainActor.assumeIsolated { monitor.update { $0.remove(device) } }
+        }
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, added, context)
+        IOHIDManagerRegisterDeviceRemovalCallback(manager, removed, context)
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-        refresh()
+        update { $0 = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> ?? [] }
     }
 
     deinit {
@@ -31,12 +36,11 @@ final class GamepadMonitor {
         IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
     }
 
-    private func refresh() {
-        guard let set = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
-            devices = []
-            return
-        }
-        devices = set.map(GamepadInfo.init(device:)).sorted {
+    @ObservationIgnored private var connected: Set<IOHIDDevice> = []
+
+    private func update(_ change: (inout Set<IOHIDDevice>) -> Void) {
+        change(&connected)
+        devices = connected.map(GamepadInfo.init(device:)).sorted {
             ($0.vendorID, $0.productID, $0.transport, $0.usagePage, $0.usage, $0.product)
                 < ($1.vendorID, $1.productID, $1.transport, $1.usagePage, $1.usage, $1.product)
         }

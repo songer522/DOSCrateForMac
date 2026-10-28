@@ -23,6 +23,7 @@ With Settings → "Use game controllers" on, connect one controller at a time an
 - [ ] A game from a library path with a space (e.g. `/Volumes/MicroSD 1TB/dos`) launches with the controller working.
 - [ ] With the switch off, the controller does nothing in a newly launched game. Changing the switch doesn't affect a game that's already running; it applies at the next Play.
 - [ ] With a Switch 2 Pro (cable) and an Xbox both connected, the Xbox works and the Switch 2 Pro does nothing.
+- [ ] The library's bottom bar shows the connected controller (the one Play maps, "+N" for more) and updates within a second on connect and disconnect. A wired Xbox shows as "Xbox Controller", a Switch 2 Pro alone as "Pro Controller — not supported", and the name is dimmed with "(off)" when the switch is off.
 
 ## Manual check
 
