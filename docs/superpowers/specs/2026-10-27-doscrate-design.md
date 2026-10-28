@@ -232,4 +232,4 @@ If `override.conf` also has an `[autoexec]`, it is appended after ours (Staging'
 
 ## 9. Out of scope for v1
 
-Online metadata and cover scraping (planned next), a schema-driven full "Advanced" settings UI, save states, a controller or gamepad mapping UI, 7z/rar import, iCloud sync features, a Mac App Store build, Intel Macs, localization beyond English, and a custom emulator.
+Online metadata and cover scraping (see `2026-10-28-metadata-crawler-design.md`), a schema-driven full "Advanced" settings UI, save states, a controller or gamepad mapping UI, 7z/rar import, iCloud sync features, a Mac App Store build, Intel Macs, localization beyond English, and a custom emulator.

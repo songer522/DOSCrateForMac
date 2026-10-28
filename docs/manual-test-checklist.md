@@ -45,3 +45,12 @@ With Settings → "Use game controllers" on, connect one controller at a time an
 - [ ] Light and dark mode: DOS palette unchanged.
 - [ ] Licenses window lists the font license.
 - [ ] Switch back to DOS: identical to step 1.
+
+## Metadata (LaunchBox)
+
+- [ ] Start with a fresh index (delete `~/Library/Application Support/DOSCrate/launchbox-dos.json` if present); verify the status bar shows "Downloading LaunchBox data…" then "Building game index…" and saves `launchbox-dos.json`.
+- [ ] Import 3–5 games from `/Volumes/MicroSD 1TB/dos`; verify matched games auto-fill year, developer, publisher, genre, description, cover and extra art without blocking the import.
+- [ ] Check covers, descriptions, "From LaunchBox · <date>" captions, screenshots and the Art strip (plus Quick Look on click) in both DOS and Standard themes.
+- [ ] On a game that matched wrong (or didn't match), open "Find Metadata…" from the Info tab or context menu, search, confirm "Replace existing info and art?" when prompted, and verify the replacement metadata and art apply.
+- [ ] Turn Wi-Fi off and trigger a lookup or refresh on a missing index; verify the status bar and sheet show "LaunchBox data unavailable" with a working Retry button once Wi-Fi is back on.
+- [ ] Quit and relaunch the app; verify the existing fresh `launchbox-dos.json` is reused with no new download.
