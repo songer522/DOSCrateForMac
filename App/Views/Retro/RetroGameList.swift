@@ -10,7 +10,32 @@ struct RetroGameList: View {
     @State private var cursor: UUID?
     @FocusState private var isFocused: Bool
 
+    static let titleMinWidth: CGFloat = 200
+    static let columnWidths: [CGFloat] = [60, 160, 120, 100]
+    static let columnSpacing: CGFloat = 12
+    static let horizontalPadding: CGFloat = 8
+
+    /// The narrowest the header and rows get before the list scrolls sideways.
+    static var minimumContentWidth: CGFloat {
+        titleMinWidth + columnWidths.reduce(0, +) + columnSpacing * CGFloat(columnWidths.count) + horizontalPadding * 2
+    }
+
+    static func contentWidth(available: CGFloat) -> CGFloat {
+        max(available, minimumContentWidth)
+    }
+
     var body: some View {
+        GeometryReader { geometry in
+            // Header and rows scroll sideways together when the window is too narrow for every column.
+            ScrollView(.horizontal) {
+                list
+                    .frame(width: Self.contentWidth(available: geometry.size.width), height: geometry.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        }
+    }
+
+    private var list: some View {
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
                 headerRow
@@ -63,9 +88,9 @@ struct RetroGameList: View {
     }
 
     private var headerRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Self.columnSpacing) {
             Text("Title")
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: Self.titleMinWidth, maxWidth: .infinity, alignment: .leading)
             Text("Year")
                 .frame(width: 60, alignment: .leading)
             Text("Developer")
@@ -77,7 +102,7 @@ struct RetroGameList: View {
         }
         .font(RetroFont.font())
         .foregroundStyle(RetroPalette.shadow)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, Self.horizontalPadding)
         .padding(.vertical, 4)
         .background(RetroPalette.panel)
         .retroBevel(.raised)
@@ -87,7 +112,7 @@ struct RetroGameList: View {
         let selected = model.selectedIDs.contains(record.id)
         let badges = RetroBadge.badges(for: record, running: model.sessions.running, starting: model.startingIDs)
         let textColor = selected ? RetroPalette.highlightText : RetroPalette.cyan
-        return HStack(spacing: 12) {
+        return HStack(spacing: Self.columnSpacing) {
             HStack(spacing: 8) {
                 Text(record.game.title)
                     .font(RetroFont.font())
@@ -97,7 +122,7 @@ struct RetroGameList: View {
                     RetroBadgesView(badges: badges)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minWidth: Self.titleMinWidth, maxWidth: .infinity, alignment: .leading)
 
             Text(record.game.year.map(String.init) ?? "")
                 .font(RetroFont.font())
@@ -136,7 +161,7 @@ struct RetroGameList: View {
             .lineLimit(1)
             .frame(width: 100, alignment: .leading)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, Self.horizontalPadding)
         .padding(.vertical, 4)
         .background(selected ? RetroPalette.highlight : RetroPalette.desktop)
         .overlay {

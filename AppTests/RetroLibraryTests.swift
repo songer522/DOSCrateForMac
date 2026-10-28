@@ -9,6 +9,13 @@ import Testing
 
 @MainActor
 struct RetroLibraryTests {
+    @Test func listScrollsSidewaysOnlyWhenNarrowerThanItsColumns() {
+        // Title minimum 200 + Year 60 + Developer 160 + Last Played 120 + Play Time 100, 4 gaps of 12, 8 + 8 padding.
+        #expect(RetroGameList.minimumContentWidth == 704)
+        #expect(RetroGameList.contentWidth(available: 300) == 704)
+        #expect(RetroGameList.contentWidth(available: 900) == 900)
+    }
+
     @Test func badgesForEachStatus() {
         let url = URL(filePath: "/tmp/Game.doscrate")
         let okRecord = GameRecord(game: Game(title: "Keen", source: .managed), crateURL: url, status: .ok)
