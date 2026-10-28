@@ -21,4 +21,9 @@ struct ThemeTests {
         d.set("amiga", forKey: "appTheme")
         #expect(Preferences(defaults: d).appTheme == .standard)
     }
+
+    @Test func layoutFollowsTheme() {
+        #expect(LibraryLayout(theme: .standard) == .standard)
+        #expect(LibraryLayout(theme: .dos) == .retro)
+    }
 }
