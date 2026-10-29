@@ -612,4 +612,81 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         await start?.value
         #expect(model.sessions.running.contains(seeded.id))
     }
+
+    @Test func subfolderScanAndImportSubfoldersRespectsChosenModeAndDuplicateAction() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .copy)
+        let queue = ImportQueue()
+        let io = CrateIO()
+
+        // Seed library with "Keen" (managed, launchCount = 3).
+        let parent = root.appending(path: "pack", directoryHint: .isDirectory)
+        let keen = parent.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(keen, "KEEN1.EXE")
+        try Data("v1".utf8).write(to: keen.appending(path: "DATA.DAT"))
+        let pSeed = try await model.importer.prepare(keen)
+        var seeded = try await model.importer.commit(
+            pSeed, mode: .copy, title: "Keen", executable: "KEEN1.EXE", into: model.store.library
+        )
+        seeded.game.stats.launchCount = 3
+        try io.save(seeded.game, extra: [:], to: seeded.crateURL)
+        await model.store.reload()
+
+        // Update Keen's file so it is detected as a duplicate by title, plus add Doom subfolder,
+        // a zip archive, a cue+iso pair, a non-game subfolder, a .doscrate folder, and hidden files.
+        try Data("v2".utf8).write(to: keen.appending(path: "DATA.DAT"))
+        let doom = parent.appending(path: "doom", directoryHint: .isDirectory)
+        try touchFile(doom, "DOOM.EXE")
+        let docs = parent.appending(path: "docs", directoryHint: .isDirectory)
+        try touchFile(docs, "README.TXT")
+        let fakeCrate = parent.appending(path: "SkipMe.doscrate", directoryHint: .isDirectory)
+        try touchFile(fakeCrate, "GAME.EXE")
+        try touchFile(parent, ".hidden/HIDE.EXE")
+        try touchFile(parent, "._ghost.zip")
+
+        let wolfSrc = root.appending(path: "wolf-src", directoryHint: .isDirectory)
+        try touchFile(wolfSrc, "WOLF3D.EXE")
+        _ = try makeZip(wolfSrc, to: "wolf.zip", in: parent)
+
+        try touchFile(parent, "track1.bin")
+        let cueURL = try touchFile(parent, "disc.cue")
+        try Data("FILE \"track1.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n".utf8).write(to: cueURL)
+        try touchFile(parent, "disc.iso")
+
+        let scan1 = ImportQueue.scanFolder(parent, in: model.store.records)
+        #expect(scan1.urls.map(\.lastPathComponent) == ["disc.cue", "doom", "keen", "wolf.zip"])
+        #expect(scan1.hasDuplicates)
+        #expect(scan1.duplicateCount == 1)
+        #expect(scan1.duplicateTitles == ["Keen"])
+        let scannedKeen = try #require(scan1.urls.first { $0.lastPathComponent == "keen" })
+        #expect(scan1.matches[scannedKeen]?.record.id == seeded.id)
+
+        // 1. Import subfolders with mode = .reference and duplicateAction = .skip:
+        //    - Doom subfolder is referenced in place
+        //    - wolf.zip and disc.cue are copied into the library
+        //    - Keen duplicate is skipped
+        await queue.importSubfolders(scan1, mode: .reference, duplicateAction: .skip, model: model)?.value
+
+        #expect(model.store.records.map(\.game.title) == ["Disc", "Doom", "Keen", "Wolf"])
+        let doomRec = try #require(model.store.records.first { $0.game.title == "Doom" })
+        if case .referenced = doomRec.game.source {} else { Issue.record("Expected Doom to be referenced") }
+        let wolfRec = try #require(model.store.records.first { $0.game.title == "Wolf" })
+        #expect(wolfRec.game.source == .managed)
+        let discRec = try #require(model.store.records.first { $0.game.title == "Disc" })
+        #expect(discRec.game.source == .managed)
+        #expect(try String(contentsOf: seeded.crateURL.appending(path: "files/DATA.DAT"), encoding: .utf8) == "v1")
+
+        // 2. Re-scan and import with duplicateAction = .replace (replacing Keen with v2 while keeping launchCount = 3).
+        let scan2 = ImportQueue.scanFolder(parent, in: model.store.records)
+        #expect(scan2.duplicateCount == 4)
+        let keenOnlyScan = ImportQueue.SubfolderScan(
+            urls: [scannedKeen],
+            matches: [scannedKeen: try #require(scan2.matches[scannedKeen])]
+        )
+        await queue.importSubfolders(keenOnlyScan, mode: .copy, duplicateAction: .replace, model: model)?.value
+
+        let keenAfter = try #require(model.store.record(seeded.id))
+        #expect(keenAfter.game.stats.launchCount == 3)
+        #expect(try String(contentsOf: keenAfter.crateURL.appending(path: "files/DATA.DAT"), encoding: .utf8) == "v2")
+    }
 }

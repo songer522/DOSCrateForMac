@@ -166,50 +166,12 @@ final class AppModel {
     }
 
     nonisolated private static func scanExistingFolder(_ url: URL, records: [GameRecord]) -> [ImportQueue.BatchEntry] {
-        let fm = FileManager.default
-        guard let children = try? fm.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-
-        let visible = children.filter {
-            let name = $0.lastPathComponent
-            return !name.hasPrefix(".") && !name.hasPrefix("._")
-        }.sorted {
-            let order = $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent)
-            return order == .orderedSame ? $0.path < $1.path : order == .orderedAscending
-        }
-
-        let cueBases = Set(
-            visible.filter {
-                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
-                    && $0.pathExtension.lowercased() == "cue"
-            }.map { $0.deletingPathExtension().lastPathComponent.lowercased() }
-        )
-
-        let allowedFiles: Set<String> = ["zip", "iso", "cue", "img", "ima"]
         let duplicates = DuplicateIndex(records)
         var entries: [ImportQueue.BatchEntry] = []
-
-        for child in visible {
-            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            if values?.isSymbolicLink == true { continue }
-            let ext = child.pathExtension.lowercased()
-            if values?.isDirectory == true {
-                if ext == CrateIO.crateExtension { continue }
-                if duplicates.match(for: child)?.kind == .sameSource { continue }
-                let candidates = (try? ExecutableRanker.rank(root: child, title: child.lastPathComponent)) ?? []
-                if !candidates.isEmpty {
-                    entries.append(.init(url: child, mode: .reference))
-                }
-            } else if allowedFiles.contains(ext) {
-                if ext == "iso", cueBases.contains(child.deletingPathExtension().lastPathComponent.lowercased()) {
-                    continue
-                }
-                if duplicates.match(for: child)?.kind == .sameSource { continue }
-                entries.append(.init(url: child, mode: .copy))
-            }
+        for child in ImportQueue.scanFolder(url) {
+            if duplicates.match(for: child)?.kind == .sameSource { continue }
+            let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            entries.append(.init(url: child, mode: isDir ? .reference : .copy))
         }
         return entries
     }
