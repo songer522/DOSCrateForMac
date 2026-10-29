@@ -820,4 +820,25 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         runner.processes[0].finish(0)
         await waitUntil { !model.sessions.running.contains(id) }
     }
+
+    @Test func appTerminationDelegateWaitsForLiveProcessesBeforeReplying() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        let delegate = AppTerminationDelegate()
+        delegate.model = model
+
+        // When no sessions are running, termination proceeds immediately.
+        var replied = false
+        #expect(delegate.prepareForTermination { replied = $0 } == .terminateNow)
+        #expect(!replied)
+
+        // When a session is running, prepareForTermination stops it, defers quit, and replies once exited.
+        await model.play(id)?.value
+        #expect(model.sessions.running.contains(id))
+        let replyDecision = delegate.prepareForTermination { replied = $0 }
+        #expect(replyDecision == .terminateLater)
+        #expect(model.sessions.running.isEmpty)
+        await waitUntil { replied }
+        #expect(!model.sessions.hasLiveProcesses)
+    }
 }

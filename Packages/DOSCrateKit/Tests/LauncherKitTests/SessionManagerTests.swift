@@ -262,9 +262,11 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         m.stopAll()
         #expect(m.running.isEmpty)
         #expect(results.count == 1)
+        #expect(m.hasLiveProcesses)
         let p = runner.started[0].process
-        await waitUntil { p.killCalled }
+        await m.waitForAllProcessesToExit()
         #expect(p.terminateCalled && p.killCalled)
+        #expect(!m.hasLiveProcesses)
         #expect(results.count == 1)
     }
 

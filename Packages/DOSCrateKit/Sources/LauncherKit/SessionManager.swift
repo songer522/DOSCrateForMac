@@ -21,7 +21,11 @@ public final class SessionManager {
     @ObservationIgnored private var processes: [UUID: any RunningProcess] = [:]
     @ObservationIgnored private var activeSessions: [UUID: (started: Date, logURL: URL)] = [:]
     @ObservationIgnored private var liveProcesses: Set<ObjectIdentifier> = []
+    @ObservationIgnored private var liveTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
     @ObservationIgnored private var stopped: Set<UUID> = []
+
+    /// True while any launched process has not yet exited, including processes still shutting down after `stopAll()`.
+    public var hasLiveProcesses: Bool { !liveProcesses.isEmpty }
 
     public init(runner: any ProcessRunner = FoundationProcessRunner(),
                 now: @escaping @Sendable () -> Date = Date.init,
@@ -86,11 +90,12 @@ public final class SessionManager {
         stopped.remove(gameID)
         let started = prepared.started
         let logURL = prepared.logURL
-        Task { @MainActor [weak self] in
+        let exitTask = Task { @MainActor [weak self] in
             let code = await process.waitForExit()
             self?.processExited(pid: pid, gameID: gameID, process: process,
                                 code: code, started: started, logURL: logURL)
         }
+        liveTasks[pid] = exitTask
     }
 
     public func start(gameID: UUID, plan: LaunchPlan) throws(LaunchError) {
@@ -126,6 +131,13 @@ public final class SessionManager {
         }
     }
 
+    /// Suspends until every launched process has exited (including any `killGrace` escalation).
+    public func waitForAllProcessesToExit() async {
+        while let task = liveTasks.values.first {
+            await task.value
+        }
+    }
+
     private func isSame(_ a: any RunningProcess, _ b: any RunningProcess) -> Bool {
         (a as AnyObject) === (b as AnyObject)
     }
@@ -133,6 +145,7 @@ public final class SessionManager {
     private func processExited(pid: ObjectIdentifier, gameID: UUID, process: any RunningProcess,
                                code: Int32, started: Date, logURL: URL) {
         liveProcesses.remove(pid)
+        liveTasks[pid] = nil
         finishSession(gameID: gameID, process: process, code: code, started: started, logURL: logURL)
     }
 

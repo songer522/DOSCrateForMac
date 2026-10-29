@@ -5,8 +5,33 @@ import LibraryKit
 import Sparkle
 import SwiftUI
 
+@MainActor
+final class AppTerminationDelegate: NSObject, NSApplicationDelegate {
+    weak var model: AppModel?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        prepareForTermination { shouldTerminate in
+            sender.reply(toApplicationShouldTerminate: shouldTerminate)
+        }
+    }
+
+    func prepareForTermination(
+        reply: @escaping @MainActor (Bool) -> Void
+    ) -> NSApplication.TerminateReply {
+        guard let model else { return .terminateNow }
+        model.stopAllSessions()
+        guard model.sessions.hasLiveProcesses else { return .terminateNow }
+        Task { @MainActor in
+            await model.sessions.waitForAllProcessesToExit()
+            reply(true)
+        }
+        return .terminateLater
+    }
+}
+
 @main
 struct DOSCrateApp: App {
+    @NSApplicationDelegateAdaptor(AppTerminationDelegate.self) private var appDelegate
     @State private var model: AppModel
     private let updaterController: SPUStandardUpdaterController
     /// False in Debug builds (where SUFeedURL / SUPublicEDKey are empty), which disables Sparkle.
@@ -26,9 +51,11 @@ struct DOSCrateApp: App {
             startingUpdater: enabled, updaterDelegate: nil, userDriverDelegate: nil)
         let prefs = Preferences()
         let store = LibraryStore(library: prefs.libraryURL)
-        _model = State(initialValue: AppModel(
+        let appModel = AppModel(
             prefs: prefs, store: store, sessions: SessionManager(), importer: Importer(),
-            dosbox: StagingLocator.dosboxURL()))
+            dosbox: StagingLocator.dosboxURL())
+        _model = State(initialValue: appModel)
+        appDelegate.model = appModel
     }
 
     var body: some Scene {
@@ -42,6 +69,7 @@ struct DOSCrateApp: App {
                 }
             }
             .task {
+                appDelegate.model = model
                 guard !model.needsLibrarySetup else { return }
                 await model.store.reload()
                 model.store.startWatching()
