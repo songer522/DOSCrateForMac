@@ -189,10 +189,7 @@ struct LibraryActions: ViewModifier {
             onDefaultAction: running ? nil : { remove(record, trashFiles: true) }
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                Text(LibraryView.removalMessage(for: record, running: model.isActive(record.id)))
-                    .font(RetroFont.font())
-                    .foregroundStyle(RetroPalette.shadow)
-                    .fixedSize(horizontal: false, vertical: true)
+                RetroScrollableMessage(text: LibraryView.removalMessage(for: record, running: model.isActive(record.id)))
                 HStack(spacing: 8) {
                     Spacer()
                     Button("Cancel") {
@@ -242,15 +239,12 @@ struct LibraryActions: ViewModifier {
             onDefaultAction: defaultAction
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                Text(
-                    LibraryView.removalMessage(
+                RetroScrollableMessage(
+                    text: LibraryView.removalMessage(
                         for: ids.compactMap(model.store.record),
                         running: model.sessions.running.union(model.startingIDs)
                     )
                 )
-                .font(RetroFont.font())
-                .foregroundStyle(RetroPalette.shadow)
-                .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Spacer()
                     Button("Cancel") {

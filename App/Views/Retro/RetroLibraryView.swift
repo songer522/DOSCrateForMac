@@ -185,10 +185,7 @@ struct RetroLibraryView: View {
                     onDefaultAction: { model.metadata.artErrorMessage = nil }
                 ) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(artError)
-                            .font(RetroFont.font())
-                            .foregroundStyle(RetroPalette.shadow)
-                            .fixedSize(horizontal: false, vertical: true)
+                        RetroScrollableMessage(text: artError)
                         HStack {
                             Spacer()
                             Button("OK") {

@@ -522,7 +522,8 @@ struct RetroModalContainer<Content: View>: View {
                 content
             }
             .retroControls()
-            .frame(width: width)
+            .frame(maxWidth: width)
+            .padding(16)
         }
         .focusSection()
         .focusable()
@@ -548,6 +549,33 @@ struct RetroModalContainer<Content: View>: View {
         .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow, .space], phases: [.down, .repeat]) { _ in
             .handled
         }
+    }
+}
+
+struct RetroScrollableMessage: View {
+    static let defaultMaxHeight: CGFloat = 240
+
+    let text: String
+    var maxHeight: CGFloat = Self.defaultMaxHeight
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            messageText
+            ScrollView {
+                messageText
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .frame(maxHeight: maxHeight)
+    }
+
+    private var messageText: some View {
+        Text(text)
+            .font(RetroFont.font())
+            .foregroundStyle(RetroPalette.shadow)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

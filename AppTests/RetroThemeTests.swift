@@ -200,4 +200,72 @@ struct RetroThemeTests {
         #expect(!DOSCrateApp.isShowingRetroAlert(theme: .dos, alert: nil))
         #expect(DOSCrateApp.isShowingRetroAlert(theme: .dos, alert: alert))
     }
+
+    @Test func retroAlertContextTracksTopmostSheetAndScrollsLongMessages() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "alert-context-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let defaults = UserDefaults(suiteName: "doscrate-alert-ctx-\(UUID().uuidString)")!
+        let prefs = Preferences(defaults: defaults)
+        prefs.appTheme = .dos
+        let store = LibraryStore(library: root)
+        let model = AppModel(
+            prefs: prefs,
+            store: store,
+            sessions: SessionManager(runner: FakeRunner()),
+            importer: Importer(),
+            dosbox: root.appending(path: "dosbox"),
+            verifyDosbox: { _ in }
+        )
+
+        #expect(DOSCrateApp.activeRetroAlertContext(for: model) == nil)
+        model.alert = AppAlert(title: "Timed Out", message: "DOSBox did not start.")
+        #expect(DOSCrateApp.activeRetroAlertContext(for: model) == .mainWindow)
+
+        let gameID = UUID()
+        model.showingUnmatchedMetadata = true
+        #expect(DOSCrateApp.activeRetroAlertContext(for: model) == .unmatchedMetadataSheet)
+
+        model.findMetadataFor = gameID
+        #expect(DOSCrateApp.activeRetroAlertContext(for: model) == .findMetadataSheet)
+
+        model.showingUnmatchedMetadata = false
+        #expect(DOSCrateApp.activeRetroAlertContext(for: model) == .findMetadataSheet)
+
+        model.findMetadataFor = nil
+        model.chooseProgram = ChooseProgramRequest(
+            gameID: gameID,
+            title: "Doom",
+            candidates: [ExecutableCandidate(relativePath: "DOOM.EXE", score: 100)]
+        )
+        #expect(DOSCrateApp.activeRetroAlertContext(for: model) == .chooseProgramSheet)
+
+        model.chooseProgram = nil
+        model.imports.add([root.appending(path: "A"), root.appending(path: "B")], model: model)
+        #expect(DOSCrateApp.activeRetroAlertContext(for: model) == .batchImportSheet)
+
+        model.imports.cancelBatch()
+        model.imports.add([root.appending(path: "A")], model: model)
+        #expect(DOSCrateApp.activeRetroAlertContext(for: model) == .importSheet)
+        model.imports.finishCurrent()
+
+        prefs.appTheme = .standard
+        #expect(DOSCrateApp.activeRetroAlertContext(for: model) == nil)
+
+        prefs.appTheme = .dos
+        let longLines = (1...50).map { "Game \($0): Archive could not be extracted." }.joined(separator: "\n")
+        let longAlert = AppAlert(title: "Couldn't import 50 of 50 items", message: longLines)
+        let longHosting = NSHostingView(rootView: RetroAlertModal(model: model, alert: longAlert))
+        longHosting.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
+        longHosting.layoutSubtreeIfNeeded()
+        #expect(containsScrollView(in: longHosting))
+    }
+
+    private func containsScrollView(in view: NSView) -> Bool {
+        if view is NSScrollView {
+            return true
+        }
+        return view.subviews.contains(where: containsScrollView)
+    }
 }

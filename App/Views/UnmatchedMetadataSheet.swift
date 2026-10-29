@@ -26,6 +26,7 @@ struct UnmatchedMetadataSheet: View {
                 standardBody
             }
         }
+        .retroAlertHost(model: model, context: .unmatchedMetadataSheet)
         .sheet(
             isPresented: Binding(
                 get: { model.findMetadataFor != nil },

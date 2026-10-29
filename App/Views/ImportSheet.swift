@@ -520,6 +520,7 @@ struct ImportSheet: View {
             }
         }
         .frame(width: 460)
+        .retroAlertHost(model: model, context: .importSheet)
         .task { await prepare() }
         .task(id: importSubfolders) {
             guard importSubfolders, subfolderScan == nil else { return }
@@ -817,6 +818,7 @@ struct BatchImportSheet: View {
             }
         }
         .frame(width: 420)
+        .retroAlertHost(model: model, context: .batchImportSheet)
     }
 
     @ViewBuilder private func sheetContent(inRetroPanel: Bool) -> some View {
@@ -912,6 +914,7 @@ struct ChooseProgramSheet: View {
             }
         }
         .frame(width: 440)
+        .retroAlertHost(model: model, context: .chooseProgramSheet)
     }
 
     @ViewBuilder private func sheetContent(inRetroPanel: Bool) -> some View {

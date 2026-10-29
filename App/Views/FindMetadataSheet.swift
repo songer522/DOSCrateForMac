@@ -198,6 +198,7 @@ struct FindMetadataSheet: View {
                 standardBody
             }
         }
+        .retroAlertHost(model: model, context: .findMetadataSheet)
         .task {
             await viewModel.searchNow()
             if selectedID == nil {

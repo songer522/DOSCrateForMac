@@ -29,6 +29,43 @@ final class AppTerminationDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+enum RetroAlertContext: Equatable, Sendable {
+    case mainWindow
+    case importSheet
+    case batchImportSheet
+    case chooseProgramSheet
+    case unmatchedMetadataSheet
+    case findMetadataSheet
+}
+
+@MainActor
+struct RetroAlertHostModifier: ViewModifier {
+    @Bindable var model: AppModel
+    let context: RetroAlertContext
+
+    private var activeAlert: AppAlert? {
+        guard DOSCrateApp.activeRetroAlertContext(for: model) == context else { return nil }
+        return model.alert
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .disabled(activeAlert != nil)
+            .frame(minHeight: activeAlert != nil && context != .mainWindow ? 240 : nil)
+            .overlay {
+                if let alert = activeAlert {
+                    RetroAlertModal(model: model, alert: alert)
+                }
+            }
+    }
+}
+
+extension View {
+    func retroAlertHost(model: AppModel, context: RetroAlertContext) -> some View {
+        modifier(RetroAlertHostModifier(model: model, context: context))
+    }
+}
+
 @main
 struct DOSCrateApp: App {
     @NSApplicationDelegateAdaptor(AppTerminationDelegate.self) private var appDelegate
@@ -45,6 +82,32 @@ struct DOSCrateApp: App {
 
     static func isShowingRetroAlert(theme: AppTheme, alert: AppAlert?) -> Bool {
         LibraryLayout(theme: theme) == .retro && alert != nil
+    }
+
+    @MainActor
+    static func activeRetroAlertContext(for model: AppModel) -> RetroAlertContext? {
+        guard isShowingRetroAlert(theme: model.prefs.appTheme, alert: model.alert) else {
+            return nil
+        }
+        guard !model.needsLibrarySetup else {
+            return .mainWindow
+        }
+        if model.imports.current != nil {
+            return .importSheet
+        }
+        if model.imports.batchPrompt != nil {
+            return .batchImportSheet
+        }
+        if model.chooseProgram != nil {
+            return .chooseProgramSheet
+        }
+        if model.showingUnmatchedMetadata {
+            return model.findMetadataFor != nil ? .findMetadataSheet : .unmatchedMetadataSheet
+        }
+        if model.findMetadataFor != nil {
+            return .findMetadataSheet
+        }
+        return .mainWindow
     }
 
     init() {
@@ -72,7 +135,7 @@ struct DOSCrateApp: App {
                         .frame(minWidth: 700, minHeight: 450)
                 }
             }
-            .disabled(Self.isShowingRetroAlert(theme: model.prefs.appTheme, alert: model.alert))
+            .retroAlertHost(model: model, context: .mainWindow)
             .task {
                 appDelegate.model = model
                 guard !model.needsLibrarySetup else { return }
@@ -81,11 +144,6 @@ struct DOSCrateApp: App {
             }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 model.stopAllSessions()
-            }
-            .overlay {
-                if LibraryLayout(theme: model.prefs.appTheme) == .retro, let alert = model.alert {
-                    RetroAlertModal(model: model, alert: alert)
-                }
             }
             .alert(
                 item: Binding(
@@ -150,10 +208,7 @@ struct RetroAlertModal: View {
             onDefaultAction: { accept() }
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                Text(alert.message)
-                    .font(RetroFont.font())
-                    .foregroundStyle(RetroPalette.shadow)
-                    .fixedSize(horizontal: false, vertical: true)
+                RetroScrollableMessage(text: alert.message)
                 HStack(spacing: 8) {
                     Spacer()
                     if let fix = alert.fix, let id = alert.gameID {
