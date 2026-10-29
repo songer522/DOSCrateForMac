@@ -165,6 +165,22 @@ struct FindMetadataSheet: View {
         LibraryLayout(theme: theme)
     }
 
+    static func subtitle(for record: LaunchBoxRecord) -> String {
+        var parts: [String] = []
+        if let year = record.releaseYear {
+            parts.append(String(year))
+        }
+        let dev = record.developer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let pub = record.publisher?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !dev.isEmpty {
+            parts.append(dev)
+        }
+        if !pub.isEmpty, pub.caseInsensitiveCompare(dev) != .orderedSame {
+            parts.append(pub)
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private var isRetro: Bool {
         retroTheme || Self.layout(for: model.prefs.appTheme) == .retro
     }
@@ -219,7 +235,7 @@ struct FindMetadataSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Find Metadata…").font(.headline)
 
-            TextField("Search", text: $viewModel.query)
+            TextField("Search by title, publisher, developer, or year", text: $viewModel.query)
                 .textFieldStyle(.roundedBorder)
                 .disabled(viewModel.isApplying)
                 .onChange(of: viewModel.query) { _, _ in
@@ -299,10 +315,7 @@ struct FindMetadataSheet: View {
     private func standardCandidateRow(_ record: LaunchBoxRecord) -> some View {
         let patch = MetadataApplier.patch(from: record)
         let frontURL = patch.art[.front]
-        let subtitleParts = [
-            record.releaseYear.map(String.init),
-            record.developer,
-        ].compactMap { $0 }.filter { !$0.isEmpty }
+        let subtitle = Self.subtitle(for: record)
 
         return HStack(spacing: 10) {
             Group {
@@ -330,8 +343,8 @@ struct FindMetadataSheet: View {
                             .background(Color.accentColor.opacity(0.2), in: Capsule())
                     }
                 }
-                if !subtitleParts.isEmpty {
-                    Text(subtitleParts.joined(separator: " · "))
+                if !subtitle.isEmpty {
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -350,7 +363,7 @@ struct FindMetadataSheet: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 6) {
                         PixelSymbol("magnifyingglass", color: RetroPalette.bevelDark, pointSize: 16, scale: 1)
-                        TextField("Search", text: $viewModel.query)
+                        TextField("Search by title, publisher, developer, or year", text: $viewModel.query)
                             .textFieldStyle(RetroTextFieldStyle())
                             .disabled(viewModel.isApplying || viewModel.showsInSheetReplacePanel)
                             .onChange(of: viewModel.query) { _, _ in
@@ -487,10 +500,7 @@ struct FindMetadataSheet: View {
         let selected = (selectedID == record.id)
         let patch = MetadataApplier.patch(from: record)
         let frontURL = patch.art[.front]
-        let subtitleParts = [
-            record.releaseYear.map(String.init),
-            record.developer,
-        ].compactMap { $0 }.filter { !$0.isEmpty }
+        let subtitle = Self.subtitle(for: record)
 
         return HStack(spacing: 10) {
             Group {
@@ -522,8 +532,8 @@ struct FindMetadataSheet: View {
                             .background(RetroPalette.yellow)
                     }
                 }
-                if !subtitleParts.isEmpty {
-                    Text(subtitleParts.joined(separator: " · "))
+                if !subtitle.isEmpty {
+                    Text(subtitle)
                         .font(RetroFont.font())
                         .foregroundStyle(selected ? RetroPalette.highlightText : RetroPalette.cyan)
                         .lineLimit(1)
