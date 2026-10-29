@@ -22,3 +22,4 @@ rm -rf "$LICENSES_ROOT"
 mkdir -p "$LICENSES_ROOT/DOSBox-Staging"
 ditto "${SRCROOT}/App/Resources/Licenses" "$LICENSES_ROOT"
 ditto "$LICENSES_SRC" "$LICENSES_ROOT/DOSBox-Staging"
+xattr -dr com.apple.quarantine "$DEST" "$LICENSES_ROOT" 2>/dev/null || true

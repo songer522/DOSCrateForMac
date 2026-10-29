@@ -8,7 +8,7 @@ vendor:
 generate:
 	xcodegen generate
 
-test: vendor
+test: vendor generate
 	mkdir -p build
 	set -o pipefail; swift test --package-path Packages/DOSCrateKit 2>&1 | tee build/swift-test.log
 	set -o pipefail; $(XCB) test 2>&1 | tee build/test.log

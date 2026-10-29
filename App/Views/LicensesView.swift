@@ -37,8 +37,8 @@ enum StagingRelease {
 }
 
 struct LicensesView: View {
-    /// Where to ask for the corresponding source. Placeholder until the owner confirms it.
-    static let sourceOfferContact = "https://github.com/songer522/DOSCrate"
+    /// Where to ask for the corresponding source.
+    static let sourceOfferContact = "https://github.com/songer522/DOSCrateForMac"
 
     static let launchBoxCredit = "Game information and images from the LaunchBox Games Database"
 

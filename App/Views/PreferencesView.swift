@@ -168,5 +168,8 @@ private struct UpdatesPreferences: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            automatic = updater?.automaticallyChecksForUpdates ?? false
+        }
     }
 }

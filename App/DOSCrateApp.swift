@@ -9,13 +9,21 @@ import SwiftUI
 struct DOSCrateApp: App {
     @State private var model: AppModel
     private let updaterController: SPUStandardUpdaterController
-    /// Empty in Debug builds, which disables Sparkle.
-    private let appcastURL = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? ""
+    /// False in Debug builds (where SUFeedURL / SUPublicEDKey are empty), which disables Sparkle.
+    private let updatesEnabled: Bool
+
+    static func isSparkleConfigured(info: [String: Any]?) -> Bool {
+        let feedURL = (info?["SUFeedURL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let publicKey = (info?["SUPublicEDKey"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !feedURL.isEmpty && !publicKey.isEmpty
+    }
 
     init() {
         RetroFont.register()
+        let enabled = Self.isSparkleConfigured(info: Bundle.main.infoDictionary)
+        updatesEnabled = enabled
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: !appcastURL.isEmpty, updaterDelegate: nil, userDriverDelegate: nil)
+            startingUpdater: enabled, updaterDelegate: nil, userDriverDelegate: nil)
         let prefs = Preferences()
         let store = LibraryStore(library: prefs.libraryURL)
         _model = State(initialValue: AppModel(
@@ -49,11 +57,11 @@ struct DOSCrateApp: App {
             }
         }
         .commands {
-            AppCommands(model: model, updater: updaterController.updater, updatesEnabled: !appcastURL.isEmpty)
+            AppCommands(model: model, updater: updaterController.updater, updatesEnabled: updatesEnabled)
         }
 
         Settings {
-            PreferencesView(model: model, updater: appcastURL.isEmpty ? nil : updaterController.updater)
+            PreferencesView(model: model, updater: updatesEnabled ? updaterController.updater : nil)
         }
 
         Window("Licenses", id: AppCommands.licensesWindowID) {
@@ -88,9 +96,8 @@ struct AppCommands: Commands {
                 ])
             }
             Button("Licenses…") { openWindow(id: Self.licensesWindowID) }
-            if updatesEnabled {
-                Button("Check for Updates…") { updater.checkForUpdates() }
-            }
+            Button("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!updatesEnabled)
         }
         CommandMenu("Library") {
             Button("Find Missing Metadata") {
