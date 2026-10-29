@@ -227,10 +227,11 @@ fi
 APPCAST_DIR="$OUT/appcast"
 mkdir -p "$APPCAST_DIR"
 cp "$DMG" "$APPCAST_DIR/"
+DOWNLOAD_URL_PREFIX="${DOSCRATE_DOWNLOAD_URL_PREFIX:-https://github.com/songer522/DOSCrateForMac/releases/download/v$VERSION/}"
 if [ -n "${SPARKLE_PRIVATE_KEY_FILE:-}" ]; then
-    "$GENERATE_APPCAST" --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" -o "$OUT/appcast.xml" "$APPCAST_DIR"
+    "$GENERATE_APPCAST" --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" --download-url-prefix "$DOWNLOAD_URL_PREFIX" -o "$OUT/appcast.xml" "$APPCAST_DIR"
 else
-    "$GENERATE_APPCAST" -o "$OUT/appcast.xml" "$APPCAST_DIR"
+    "$GENERATE_APPCAST" --download-url-prefix "$DOWNLOAD_URL_PREFIX" -o "$OUT/appcast.xml" "$APPCAST_DIR"
 fi
 rm -rf "$APPCAST_DIR"
 
