@@ -257,6 +257,26 @@ struct RetroLibraryView: View {
             .buttonStyle(RetroButtonStyle(kind: .icon))
 
             Menu {
+                LibraryFilterMenuContent(model: model)
+            } label: {
+                iconLabel(
+                    "Filter",
+                    symbol: model.query.hasActiveMetadataFilter
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle",
+                    color: model.query.hasActiveMetadataFilter ? RetroPalette.green : RetroPalette.desktop
+                )
+                .font(RetroFont.font())
+                .foregroundStyle(RetroPalette.shadow)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RetroPalette.panel)
+                .retroBevel(.raised)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+
+            Menu {
                 sortButton("Title", .title)
                 sortButton("Year", .year)
                 sortButton("Last Played", .lastPlayed)
