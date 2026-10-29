@@ -214,6 +214,19 @@ struct LibraryView: View {
             .pickerStyle(.segmented)
         }
         ToolbarItem {
+            Menu {
+                LibraryFilterMenuContent(model: model)
+            } label: {
+                Label(
+                    "Filter",
+                    systemImage: model.query.hasActiveMetadataFilter
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle"
+                )
+            }
+            .help("Filter")
+        }
+        ToolbarItem {
             Menu("Sort", systemImage: "arrow.up.arrow.down") {
                 sortButton("Title", .title)
                 sortButton("Year", .year)
@@ -320,5 +333,125 @@ struct LibraryView: View {
             parts.append("\(games(skipped)) still running will be skipped.")
         }
         return parts.joined(separator: " ")
+    }
+}
+
+struct LibraryFilterMenuContent: View {
+    @Bindable var model: AppModel
+
+    private var genres: [String] {
+        Self.includingSelected(model.query.genre, in: allGenres(in: model.store.records))
+    }
+
+    private var years: [Int] {
+        var result = allYears(in: model.store.records)
+        if let selected = model.query.year, !result.contains(selected) {
+            result.append(selected)
+            result.sort()
+        }
+        return result
+    }
+
+    private var publishers: [String] {
+        Self.includingSelected(model.query.publisher, in: allPublishers(in: model.store.records))
+    }
+
+    private var developers: [String] {
+        Self.includingSelected(model.query.developer, in: allDevelopers(in: model.store.records))
+    }
+
+    var body: some View {
+        stringFilterMenu(
+            title: model.query.genre.map { "Genre: \($0)" } ?? "Genre",
+            allTitle: "All Genres",
+            options: genres,
+            selection: $model.query.genre
+        )
+        Menu(model.query.year.map { "Year: \(String($0))" } ?? "Year") {
+            Button {
+                model.query.year = nil
+            } label: {
+                if model.query.year == nil {
+                    Label("All Years", systemImage: "checkmark")
+                } else {
+                    Text("All Years")
+                }
+            }
+            if !years.isEmpty {
+                Divider()
+                ForEach(years, id: \.self) { year in
+                    let label = String(year)
+                    Button {
+                        model.query.year = (model.query.year == year) ? nil : year
+                    } label: {
+                        if model.query.year == year {
+                            Label(label, systemImage: "checkmark")
+                        } else {
+                            Text(label)
+                        }
+                    }
+                }
+            }
+        }
+        stringFilterMenu(
+            title: model.query.publisher.map { "Publisher: \($0)" } ?? "Publisher",
+            allTitle: "All Publishers",
+            options: publishers,
+            selection: $model.query.publisher
+        )
+        stringFilterMenu(
+            title: model.query.developer.map { "Developer: \($0)" } ?? "Developer",
+            allTitle: "All Developers",
+            options: developers,
+            selection: $model.query.developer
+        )
+        Divider()
+        Button("Clear Filters") {
+            model.query.clearMetadataFilters()
+        }
+        .disabled(!model.query.hasActiveMetadataFilter)
+    }
+
+    private func stringFilterMenu(
+        title: String,
+        allTitle: String,
+        options: [String],
+        selection: Binding<String?>
+    ) -> some View {
+        Menu(title) {
+            Button {
+                selection.wrappedValue = nil
+            } label: {
+                if selection.wrappedValue == nil {
+                    Label(allTitle, systemImage: "checkmark")
+                } else {
+                    Text(allTitle)
+                }
+            }
+            if !options.isEmpty {
+                Divider()
+                ForEach(options, id: \.self) { option in
+                    let isSelected = selection.wrappedValue.map {
+                        $0.localizedCaseInsensitiveCompare(option) == .orderedSame
+                    } ?? false
+                    Button {
+                        selection.wrappedValue = isSelected ? nil : option
+                    } label: {
+                        if isSelected {
+                            Label(option, systemImage: "checkmark")
+                        } else {
+                            Text(option)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    static func includingSelected(_ selected: String?, in values: [String]) -> [String] {
+        guard let selected else { return values }
+        let containsSelected = values.contains { $0.localizedCaseInsensitiveCompare(selected) == .orderedSame }
+        guard !containsSelected else { return values }
+        return (values + [selected]).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 }

@@ -24,19 +24,50 @@ public struct LibraryQuery: Sendable, Equatable {
     public var filter: SidebarFilter
     public var search: String
     public var sort: SortKey
+    public var genre: String?
+    public var year: Int?
+    public var publisher: String?
+    public var developer: String?
 
-    public init(filter: SidebarFilter = .all, search: String = "", sort: SortKey = .title) {
+    public init(
+        filter: SidebarFilter = .all,
+        search: String = "",
+        sort: SortKey = .title,
+        genre: String? = nil,
+        year: Int? = nil,
+        publisher: String? = nil,
+        developer: String? = nil
+    ) {
         self.filter = filter
         self.search = search
         self.sort = sort
+        self.genre = genre
+        self.year = year
+        self.publisher = publisher
+        self.developer = developer
     }
 
-    /// Filters, searches and sorts. Records that need repair always pass the sidebar filter, but still honour search.
+    public var hasActiveMetadataFilter: Bool {
+        genre != nil || year != nil || publisher != nil || developer != nil
+    }
+
+    public mutating func clearMetadataFilters() {
+        genre = nil
+        year = nil
+        publisher = nil
+        developer = nil
+    }
+
+    /// Filters, searches and sorts. Records that need repair always pass the sidebar filter, but still honour metadata filters and search.
     public func apply(to records: [GameRecord], now: Date) -> [GameRecord] {
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let visible = records.filter { record in
-            if case .needsRepair = record.status { return matchesSearch(record, needle: needle) }
-            return matchesFilter(record, now: now) && matchesSearch(record, needle: needle)
+            if case .needsRepair = record.status {
+                return matchesMetadataFilters(record) && matchesSearch(record, needle: needle)
+            }
+            return matchesFilter(record, now: now)
+                && matchesMetadataFilters(record)
+                && matchesSearch(record, needle: needle)
         }
         return visible.sorted { precedes($0, $1) }
     }
@@ -53,11 +84,37 @@ public struct LibraryQuery: Sendable, Equatable {
         }
     }
 
+    private func matchesMetadataFilters(_ record: GameRecord) -> Bool {
+        let game = record.game
+        if let targetGenre = genre {
+            let matchesGenre = splitGenres(in: game.genre).contains {
+                $0.localizedCaseInsensitiveCompare(targetGenre) == .orderedSame
+            }
+            if !matchesGenre { return false }
+        }
+        if let targetYear = year, game.year != targetYear {
+            return false
+        }
+        if let targetPublisher = publisher {
+            guard let gamePublisher = trimmedNonEmpty(game.publisher),
+                  gamePublisher.localizedCaseInsensitiveCompare(targetPublisher) == .orderedSame
+            else { return false }
+        }
+        if let targetDeveloper = developer {
+            guard let gameDeveloper = trimmedNonEmpty(game.developer),
+                  gameDeveloper.localizedCaseInsensitiveCompare(targetDeveloper) == .orderedSame
+            else { return false }
+        }
+        return true
+    }
+
     private func matchesSearch(_ record: GameRecord, needle: String) -> Bool {
         if needle.isEmpty { return true }
         let game = record.game
         var fields = [game.title] + game.tags
         if let developer = game.developer { fields.append(developer) }
+        if let publisher = game.publisher { fields.append(publisher) }
+        if let genre = game.genre { fields.append(genre) }
         if let year = game.year { fields.append(String(year)) }
         return fields.contains { $0.localizedStandardContains(needle) }
     }
@@ -98,4 +155,48 @@ public struct LibraryQuery: Sendable, Equatable {
 /// Every tag used by any record, unique and sorted.
 public func allTags(in records: [GameRecord]) -> [String] {
     Set(records.flatMap(\.game.tags)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+}
+
+/// Every genre used by any record (splitting comma- or semicolon-separated genre strings), unique and sorted.
+public func allGenres(in records: [GameRecord]) -> [String] {
+    uniqueSortedStrings(records.flatMap { splitGenres(in: $0.game.genre) })
+}
+
+/// Every release year used by any record, unique and sorted ascending.
+public func allYears(in records: [GameRecord]) -> [Int] {
+    Set(records.compactMap(\.game.year)).sorted()
+}
+
+/// Every publisher used by any record, unique and sorted.
+public func allPublishers(in records: [GameRecord]) -> [String] {
+    uniqueSortedStrings(records.compactMap { trimmedNonEmpty($0.game.publisher) })
+}
+
+/// Every developer used by any record, unique and sorted.
+public func allDevelopers(in records: [GameRecord]) -> [String] {
+    uniqueSortedStrings(records.compactMap { trimmedNonEmpty($0.game.developer) })
+}
+
+private func splitGenres(in raw: String?) -> [String] {
+    guard let raw else { return [] }
+    return raw
+        .components(separatedBy: CharacterSet(charactersIn: ",;"))
+        .compactMap(trimmedNonEmpty)
+}
+
+private func trimmedNonEmpty(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
+private func uniqueSortedStrings(_ values: [String]) -> [String] {
+    var seen: [String: String] = [:]
+    for item in values {
+        let key = item.lowercased()
+        if seen[key] == nil {
+            seen[key] = item
+        }
+    }
+    return seen.values.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
 }
