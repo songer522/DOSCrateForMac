@@ -46,6 +46,20 @@ final class ImportQueue {
         }
     }
 
+    struct SubfolderScan: Equatable, Sendable {
+        var urls: [URL]
+        var matches: [URL: DuplicateMatch] = [:]
+
+        var duplicateTitles: [String] {
+            urls.compactMap { matches[$0]?.record.game.title }
+        }
+        var duplicateCount: Int { matches.count }
+        var hasDuplicates: Bool { !matches.isEmpty }
+        var duplicateMessage: String {
+            "\(duplicateCount) of \(urls.count) items are already in your library"
+        }
+    }
+
     struct Progress: Equatable {
         var current: Int
         var total: Int
@@ -120,6 +134,84 @@ final class ImportQueue {
         return matches
     }
 
+    /// Returns the immediate importable items inside `url` (subfolders with DOS executables, plus archives and
+    /// disc/floppy images, preferring `.cue` over a same-name `.iso`), sorted in Finder order.
+    nonisolated static func scanFolder(_ url: URL) -> [URL] {
+        let fm = FileManager.default
+        guard let children = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        let visible = children.filter {
+            let name = $0.lastPathComponent
+            return !name.hasPrefix(".") && !name.hasPrefix("._")
+        }.sorted {
+            let order = $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent)
+            return order == .orderedSame ? $0.path < $1.path : order == .orderedAscending
+        }
+
+        let cueBases = Set(
+            visible.filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
+                    && $0.pathExtension.lowercased() == "cue"
+            }.map { $0.deletingPathExtension().lastPathComponent.lowercased() }
+        )
+
+        let allowedFiles: Set<String> = ["zip", "iso", "cue", "img", "ima"]
+        var urls: [URL] = []
+
+        for child in visible {
+            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true { continue }
+            let ext = child.pathExtension.lowercased()
+            if values?.isDirectory == true {
+                if ext == CrateIO.crateExtension { continue }
+                let candidates = (try? ExecutableRanker.rank(root: child, title: child.lastPathComponent)) ?? []
+                if !candidates.isEmpty {
+                    urls.append(child)
+                }
+            } else if allowedFiles.contains(ext) {
+                if ext == "iso", cueBases.contains(child.deletingPathExtension().lastPathComponent.lowercased()) {
+                    continue
+                }
+                urls.append(child)
+            }
+        }
+        return urls
+    }
+
+    nonisolated static func scanFolder(_ url: URL, in records: [GameRecord]) -> SubfolderScan {
+        let urls = scanFolder(url)
+        let matches = findDuplicates(for: urls, in: records)
+        return SubfolderScan(urls: urls, matches: matches)
+    }
+
+    nonisolated static func makeBatchEntries(
+        for urls: [URL],
+        mode: ImportMode,
+        matches: [URL: DuplicateMatch],
+        duplicateAction: DuplicateAction
+    ) -> [BatchEntry] {
+        var entries: [BatchEntry] = []
+        for url in urls {
+            if let match = matches[url] {
+                switch duplicateAction {
+                case .skip:
+                    continue
+                case .replace:
+                    entries.append(BatchEntry(url: url, mode: mode, replacing: match.record.id))
+                case .keepBoth:
+                    entries.append(BatchEntry(url: url, mode: mode, replacing: nil))
+                }
+            } else {
+                entries.append(BatchEntry(url: url, mode: mode, replacing: nil))
+            }
+        }
+        return entries
+    }
+
     @discardableResult
     func confirmBatch(
         mode: ImportMode? = nil,
@@ -133,21 +225,28 @@ final class ImportQueue {
             model.prefs.importLocation = resolvedMode == .reference ? .reference : .copy
         }
         advanceBatchPrompt()
-        var entries: [BatchEntry] = []
-        for url in prompt.urls {
-            if let match = prompt.matches[url] {
-                switch duplicateAction {
-                case .skip:
-                    continue
-                case .replace:
-                    entries.append(BatchEntry(url: url, mode: resolvedMode, replacing: match.record.id))
-                case .keepBoth:
-                    entries.append(BatchEntry(url: url, mode: resolvedMode, replacing: nil))
-                }
-            } else {
-                entries.append(BatchEntry(url: url, mode: resolvedMode, replacing: nil))
-            }
-        }
+        let entries = Self.makeBatchEntries(
+            for: prompt.urls,
+            mode: resolvedMode,
+            matches: prompt.matches,
+            duplicateAction: duplicateAction
+        )
+        return enqueue(entries, model: model)
+    }
+
+    @discardableResult
+    func importSubfolders(
+        _ scan: SubfolderScan,
+        mode: ImportMode,
+        duplicateAction: DuplicateAction = .skip,
+        model: AppModel
+    ) -> Task<Void, Never>? {
+        let entries = Self.makeBatchEntries(
+            for: scan.urls,
+            mode: mode,
+            matches: scan.matches,
+            duplicateAction: duplicateAction
+        )
         return enqueue(entries, model: model)
     }
 
@@ -343,6 +442,7 @@ struct ImportSheet: View {
     let model: AppModel
     let url: URL
     let onFinish: () -> Void
+    private let isDirectory: Bool
 
     @State private var prepared: PreparedImport?
     @State private var duplicateMatch: DuplicateMatch?
@@ -351,11 +451,17 @@ struct ImportSheet: View {
     @State private var executable: String?
     @State private var error: String?
     @State private var isCreating = false
+    @State private var importSubfolders = false
+    @State private var subfolderScan: ImportQueue.SubfolderScan?
+    @State private var isScanningSubfolders = false
+    @State private var duplicateAction = DuplicateAction.skip
+    @State private var showsDuplicates = false
 
     init(model: AppModel, url: URL, defaultMode: ImportMode? = nil, onFinish: @escaping () -> Void) {
         self.model = model
         self.url = url
         self.onFinish = onFinish
+        self.isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
         self._mode = State(initialValue: defaultMode ?? model.prefs.importLocation.defaultMode)
     }
 
@@ -371,20 +477,35 @@ struct ImportSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Import \(url.lastPathComponent)").font(.headline)
-            if let prepared {
-                form(prepared)
-            } else if error == nil {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Reading \(url.lastPathComponent)…")
-                }
+            if isDirectory {
+                Toggle("Import subfolders as separate games", isOn: $importSubfolders)
+                    .disabled(isCreating)
             }
-            if let error {
-                Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            if importSubfolders {
+                subfoldersForm
+            } else {
+                if let prepared {
+                    form(prepared)
+                } else if error == nil {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Reading \(url.lastPathComponent)…")
+                    }
+                }
+                if let error {
+                    Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
             }
             HStack {
                 Spacer()
-                if let match = duplicateMatch {
+                if importSubfolders {
+                    Button("Cancel", role: .cancel, action: cancel)
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(isCreating)
+                    Button("Import", action: createSubfolders)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(isCreating || isScanningSubfolders || (subfolderScan?.urls.isEmpty ?? true))
+                } else if let match = duplicateMatch {
                     Button("Skip", role: .cancel, action: cancel)
                         .keyboardShortcut(.cancelAction)
                         .keyboardShortcut(.defaultAction)
@@ -406,6 +527,64 @@ struct ImportSheet: View {
         .padding(20)
         .frame(width: 460)
         .task { await prepare() }
+        .task(id: importSubfolders) {
+            guard importSubfolders, subfolderScan == nil else { return }
+            await scanSubfolders()
+        }
+    }
+
+    @ViewBuilder private var subfoldersForm: some View {
+        Picker("Location", selection: $mode) {
+            Text("Copy into library").tag(ImportMode.copy)
+            Text("Keep in place").tag(ImportMode.reference)
+        }
+        .pickerStyle(.radioGroup)
+        .disabled(isCreating)
+        Text("Zips and disc images are always copied.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if isScanningSubfolders {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Looking for games in \(url.lastPathComponent)…")
+            }
+        } else if let scan = subfolderScan {
+            if scan.urls.isEmpty {
+                Text("No games were found in this folder.")
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(scan.urls.count == 1 ? "Found 1 game." : "Found \(scan.urls.count) games.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if scan.hasDuplicates {
+                    Divider()
+                    Text(scan.duplicateMessage).font(.subheadline.weight(.medium))
+                    DisclosureGroup("Already in library (\(scan.duplicateCount))", isExpanded: $showsDuplicates) {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(Array(scan.duplicateTitles.enumerated()), id: \.offset) { _, name in
+                                    Text(name).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 100)
+                    }
+                    .font(.caption)
+                    Picker("Duplicates", selection: $duplicateAction) {
+                        Text("Skip duplicates").tag(DuplicateAction.skip)
+                        Text("Replace").tag(DuplicateAction.replace)
+                        Text("Keep Both").tag(DuplicateAction.keepBoth)
+                    }
+                    .pickerStyle(.radioGroup)
+                    .disabled(isCreating)
+                    Text("Replace keeps saves, settings and play history. Copied games are replaced with a copy.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 
     @ViewBuilder private func form(_ prepared: PreparedImport) -> some View {
@@ -507,6 +686,29 @@ struct ImportSheet: View {
                 isCreating = false
             }
         }
+    }
+
+    private func scanSubfolders() async {
+        isScanningSubfolders = true
+        defer { isScanningSubfolders = false }
+        let source = url
+        let records = model.store.records
+        let result = await Task.detached {
+            ImportQueue.scanFolder(source, in: records)
+        }.value
+        guard !Task.isCancelled else { return }
+        subfolderScan = result
+    }
+
+    private func createSubfolders() {
+        guard let scan = subfolderScan, !scan.urls.isEmpty else { return }
+        isCreating = true
+        if let prepared {
+            model.importer.discard(prepared)
+            self.prepared = nil
+        }
+        model.imports.importSubfolders(scan, mode: mode, duplicateAction: duplicateAction, model: model)
+        onFinish()
     }
 
     private func cancel() {
