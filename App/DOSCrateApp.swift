@@ -19,7 +19,7 @@ final class AppTerminationDelegate: NSObject, NSApplicationDelegate {
         reply: @escaping @MainActor (Bool) -> Void
     ) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
-        model.stopAllSessions()
+        model.beginTermination()
         guard model.sessions.hasLiveProcesses else { return .terminateNow }
         Task { @MainActor in
             await model.sessions.waitForAllProcessesToExit()

@@ -823,21 +823,50 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
 
     @Test func appTerminationDelegateWaitsForLiveProcessesBeforeReplying() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
-        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        let release = DispatchSemaphore(value: 0)
+        let state = OSAllocatedUnfairLock(initialState: (armed: false, entered: false))
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { _ in } verify: { _ in
+            let shouldBlock = state.withLock { s -> Bool in
+                guard s.armed else { return false }
+                s.entered = true
+                return true
+            }
+            if shouldBlock { release.wait() }
+        }
         let delegate = AppTerminationDelegate()
         delegate.model = model
 
-        // When no sessions are running, termination proceeds immediately.
-        var replied = false
-        #expect(delegate.prepareForTermination { replied = $0 } == .terminateNow)
-        #expect(!replied)
+        // Add a second game to test an in-flight launch during termination.
+        let lib = model.store.library
+        let crate2 = try io.makeCrate(title: "Second Game", in: lib)
+        var game2 = Game(title: "Second Game", source: .managed)
+        game2.launch.executable = "GAME.EXE"
+        try io.save(game2, extra: [:], to: crate2)
+        let exe2 = crate2.appending(path: "files/GAME.EXE")
+        try FileManager.default.createDirectory(at: exe2.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: exe2)
+        await model.store.reload()
 
-        // When a session is running, prepareForTermination stops it, defers quit, and replies once exited.
+        // Start game 1 normally, then start game 2 blocked in preparation.
         await model.play(id)?.value
         #expect(model.sessions.running.contains(id))
+        state.withLock { $0.armed = true }
+        let pendingTask = model.play(game2.id)
+        await waitUntil { state.withLock { $0.entered } }
+        #expect(model.startingIDs.contains(game2.id))
+
+        var replied = false
         let replyDecision = delegate.prepareForTermination { replied = $0 }
         #expect(replyDecision == .terminateLater)
         #expect(model.sessions.running.isEmpty)
+        #expect(model.isTerminating)
+
+        // Release the in-flight launch preparation; it must be discarded and not launch DOSBox.
+        release.signal()
+        await pendingTask?.value
+        #expect(runner.processes.count == 1)
+        #expect(model.play(id) == nil)
+
         await waitUntil { replied }
         #expect(!model.sessions.hasLiveProcesses)
     }

@@ -82,6 +82,7 @@ final class AppModel {
     @ObservationIgnored private let verifyDosbox: @Sendable (URL) throws -> Void
     @ObservationIgnored let launchTimeout: Duration
     @ObservationIgnored private(set) var startupVerify: Task<Void, Never>?
+    @ObservationIgnored private(set) var isTerminating = false
     @ObservationIgnored private var startTokens: [UUID: UUID] = [:]
     /// Debounced editor writes not yet on disk, keyed by game; `play` runs them first.
     @ObservationIgnored private var pendingWrites: [UUID: [String: @MainActor () -> Void]] = [:]
@@ -260,13 +261,15 @@ final class AppModel {
 
     @discardableResult
     func play(_ id: UUID) -> Task<Void, Never>? {
-        guard !startingIDs.contains(id),
+        guard !isTerminating,
+              !startingIDs.contains(id),
               !sessions.running.contains(id),
               !imports.replacingIDs.contains(id)
         else { return nil }
         metadata.cancel(id)
         flushPendingWrites(for: id)
-        guard !pendingRemovalIDs.contains(id),
+        guard !isTerminating,
+              !pendingRemovalIDs.contains(id),
               !imports.replacingIDs.contains(id),
               !startingIDs.contains(id),
               !sessions.running.contains(id),
@@ -331,7 +334,7 @@ final class AppModel {
     private func finishPlay(id: UUID, token: UUID, record: GameRecord, outcome: PreparedLaunch) {
         // Play is refused while a game is starting, so this is the only attempt for `id`, expired or not.
         startingIDs.remove(id)
-        guard startTokens[id] == token else {
+        guard !isTerminating, startTokens[id] == token else {
             outcome.discard()
             return
         }
@@ -385,12 +388,20 @@ final class AppModel {
         sessions.stop(gameID: id)
     }
 
-    /// Flushes any pending inspector writes and stops all running DOSBox sessions, saving their play stats.
+    /// Flushes any pending inspector writes, invalidates in-flight launch preparations, and stops all running DOSBox sessions.
     func stopAllSessions() {
+        startTokens.removeAll()
+        chooseProgram = nil
         for id in Array(pendingWrites.keys) {
             flushPendingWrites(for: id)
         }
         sessions.stopAll()
+    }
+
+    /// Marks the app as terminating (blocking new or in-flight launches) and stops all running sessions.
+    func beginTermination() {
+        isTerminating = true
+        stopAllSessions()
     }
 
     func applyFix(_ fix: AppAlert.Fix, for id: UUID) {
