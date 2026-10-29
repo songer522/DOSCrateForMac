@@ -19,6 +19,7 @@ public final class SessionManager {
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let killGrace: Duration
     @ObservationIgnored private var processes: [UUID: any RunningProcess] = [:]
+    @ObservationIgnored private var activeSessions: [UUID: (started: Date, logURL: URL)] = [:]
     @ObservationIgnored private var stopped: Set<UUID> = []
 
     public init(runner: any ProcessRunner = FoundationProcessRunner(),
@@ -78,6 +79,7 @@ public final class SessionManager {
         }
         running.insert(gameID)
         processes[gameID] = process
+        activeSessions[gameID] = (prepared.started, prepared.logURL)
         stopped.remove(gameID)
         let started = prepared.started
         let logURL = prepared.logURL
@@ -107,15 +109,26 @@ public final class SessionManager {
         }
     }
 
+    /// Terminates every running session and immediately records its elapsed play time through `onEnded`.
+    public func stopAll() {
+        for gameID in Array(running) {
+            stop(gameID: gameID)
+            if let info = activeSessions[gameID] {
+                ended(gameID: gameID, code: 0, started: info.started, logURL: info.logURL)
+            }
+        }
+    }
+
     private func isSame(_ a: any RunningProcess, _ b: any RunningProcess) -> Bool {
         (a as AnyObject) === (b as AnyObject)
     }
 
     private func ended(gameID: UUID, code: Int32, started: Date, logURL: URL) {
+        guard running.remove(gameID) != nil else { return }
         let wasStopped = stopped.contains(gameID)
         processes[gameID] = nil
+        activeSessions[gameID] = nil
         stopped.remove(gameID)
-        running.remove(gameID)
         onEnded?(SessionResult(gameID: gameID, exitCode: code, duration: now().timeIntervalSince(started),
                                logURL: logURL, unexpected: code != 0 && !wasStopped))
     }

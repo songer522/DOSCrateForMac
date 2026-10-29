@@ -46,6 +46,9 @@ struct DOSCrateApp: App {
                 await model.store.reload()
                 model.store.startWatching()
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                model.stopAllSessions()
+            }
             .alert(item: $model.alert) { alert in
                 if let fix = alert.fix, let id = alert.gameID {
                     Alert(title: Text(alert.title), message: Text(alert.message),

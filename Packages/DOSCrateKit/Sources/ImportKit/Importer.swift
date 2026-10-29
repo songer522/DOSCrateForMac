@@ -134,16 +134,23 @@ public struct PreparedImport: Sendable {
 public struct Importer: Sendable {
     private let io: CrateIO
     private let stagingParent: URL
+    private let useItemReplacement: Bool
     /// Test hook: told where each commit builds its scratch crate.
     private let workObserver: (@Sendable (URL) -> Void)?
 
     public init(io: CrateIO = .init(), stagingParent: URL = FileManager.default.temporaryDirectory) {
-        self.init(io: io, stagingParent: stagingParent, workObserver: nil)
+        self.init(io: io, stagingParent: stagingParent, useItemReplacement: true, workObserver: nil)
     }
 
-    init(io: CrateIO, stagingParent: URL, workObserver: (@Sendable (URL) -> Void)? = nil) {
+    init(
+        io: CrateIO,
+        stagingParent: URL,
+        useItemReplacement: Bool = true,
+        workObserver: (@Sendable (URL) -> Void)? = nil
+    ) {
         self.io = io
         self.stagingParent = stagingParent
+        self.useItemReplacement = useItemReplacement
         self.workObserver = workObserver
     }
 
@@ -196,7 +203,7 @@ public struct Importer: Sendable {
         if mode == .reference, !p.allowsReference { throw ImportError.referenceNotAllowed }
         let fm = FileManager.default
 
-        let work = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: library, create: true)
+        let work = try makeWorkDirectory(appropriateFor: library, fallbackParent: library)
         defer { try? fm.removeItem(at: work) }
         workObserver?(work)
         let crate = work.appending(path: "crate.\(CrateIO.crateExtension)", directoryHint: .isDirectory)
@@ -268,7 +275,7 @@ public struct Importer: Sendable {
             return GameRecord(game: game, crateURL: crate, extra: extra, status: .ok)
         }
 
-        let work = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: crate, create: true)
+        let work = try makeWorkDirectory(appropriateFor: crate, fallbackParent: crate.deletingLastPathComponent())
         defer { try? fm.removeItem(at: work) }
         workObserver?(work)
 
@@ -345,6 +352,25 @@ public struct Importer: Sendable {
     }
 
     // MARK: Helpers
+
+    private func makeWorkDirectory(appropriateFor url: URL, fallbackParent: URL) throws -> URL {
+        let fm = FileManager.default
+        if useItemReplacement,
+           let work = try? fm.url(
+               for: .itemReplacementDirectory,
+               in: .userDomainMask,
+               appropriateFor: url,
+               create: true
+           ) {
+            return work
+        }
+        let fallback = fallbackParent.appending(
+            path: ".doscrate-tmp-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        try fm.createDirectory(at: fallback, withIntermediateDirectories: true)
+        return fallback
+    }
 
     private static func stageMedia(for p: PreparedImport, into media: URL) throws -> [MediaImage] {
         let fm = FileManager.default

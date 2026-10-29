@@ -3,10 +3,11 @@ import LauncherKit
 import LibraryKit
 import SwiftUI
 
-/// Play, Show in Finder, Favorite and Remove… for one game.
+/// Play, Edit, Show in Finder, Favorite and Remove… for one game.
 struct GameContextMenu: View {
     let model: AppModel
     let record: GameRecord
+    var onEdit: (() -> Void)?
     let onRemove: () -> Void
 
     var body: some View {
@@ -14,8 +15,18 @@ struct GameContextMenu: View {
             Button("Stop") { model.stop(record.id) }
         } else {
             let starting = model.startingIDs.contains(record.id)
+            let blocked = model.pendingRemovalIDs.contains(record.id)
+                || model.imports.replacingIDs.contains(record.id)
+                || starting
             Button(starting ? "Starting…" : "Play") { model.play(record.id) }
-                .disabled(model.pendingRemovalIDs.contains(record.id) || starting)
+                .disabled(blocked)
+        }
+        Button("Edit") {
+            if let onEdit {
+                onEdit()
+            } else {
+                model.selection = record.id
+            }
         }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([record.crateURL]) }
         Button(record.game.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
@@ -56,7 +67,13 @@ struct LibraryView: View {
     }
 
     private var commands: LibraryCommands {
-        LibraryCommands(model: model, records: records, removing: $removing, removingMany: $removingMany)
+        LibraryCommands(
+            model: model,
+            records: records,
+            removing: $removing,
+            removingMany: $removingMany,
+            showsInspector: $showsInspector
+        )
     }
 
     private var controllerStatus: ControllerStatus? {

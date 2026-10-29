@@ -8,6 +8,8 @@ import Testing
         #expect(PlaceholderCover.hue(for: "Doom") != PlaceholderCover.hue(for: "Commander Keen"))
         let hue = PlaceholderCover.hue(for: "Doom")
         #expect(hue >= 0 && hue < 1)
+        #expect(PlaceholderCover.yearText(for: nil) == nil)
+        #expect(PlaceholderCover.yearText(for: 1993) == "1993")
     }
 
     @Test func renamingATagMergesWithAnExistingOne() {

@@ -21,11 +21,7 @@ State as of the merge of PR #1 (`d07a896`, 2026-10-27). The code, tests (`make g
 
 From the final review, deferred as non-blocking:
 
-- Quitting DOSCrate does not end running DOSBox processes; their play time is lost. Changing the library mid-session loses stats the same way.
-- The code-signature check on DOSBox (`SecStaticCodeCheckValidity`) still runs on the main thread at app launch (`AppModel.init`); the Play-time check now runs off the main thread.
-  **Testing:** simulator (`AppModelTests` init and off-main Play verification tests).
-- Import can fail on non-APFS or network libraries (`.itemReplacementDirectory`). Fall back to a hidden temp folder inside the library.
-- Spec gaps: no "Edit" item in the context menu (§4.1), the placeholder cover doesn't show the year (§4.1), no extra folder mounts under Drives (§4.2).
+- Spec gaps: no extra folder mounts under Drives (§4.2).
 - Adding media can leave an orphan file in `media/` if the selection changes during the async copy.
 - The DMG has an Applications symlink and is stapled after notarization; the Staging and LGPL (`glib` / `gettext`) source tarballs are verified against pinned SHA-256 checksums in `scripts/staging.lock`.
 - iCloud "Optimize Storage" can evict files from the default `~/Documents/DOSCrate Library`. iCloud is out of scope (spec §9); worth a release-notes caveat.
@@ -36,13 +32,10 @@ From the final review, deferred as non-blocking:
 
 From the PR #4 review (duplicate handling), deferred:
 
-- A game can be launched while a batch is replacing it. The "already running" check happens before the copy starts, so Play during a long copy lets `Importer.replace` swap the files under the running game. Fix: track the IDs being replaced in `ImportQueue` and refuse Play for them until the replace finishes.
 - Replacing a kept-in-place game with another kept-in-place folder doesn't carry its saves into the new folder, because DOSCrate never writes into a kept-in-place folder. The old folder still has them.
 
 From PR #5 (multi-select and batch remove):
 
-- Grid ⌘-click, ⇧-click and ⌘A are covered by no automated test; only the removal logic is. ⌘A in the grid works only once the grid has focus, after a click on a game.
-- Clicking empty space in the grid doesn't clear the selection.
 - Batch removal can't be cancelled once it starts.
 - While a batch removal runs, Play is disabled for the games it will remove; double-clicking one (grid or list) does nothing, with no message.
 

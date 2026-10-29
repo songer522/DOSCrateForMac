@@ -95,6 +95,7 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
             AppModel(prefs: prefs, store: store, sessions: SessionManager(runner: runner),
                      importer: Importer(), dosbox: dosbox, verifyDosbox: verify)
         }
+        await model.startupVerify?.value
         return (model, id)
     }
 
@@ -367,9 +368,30 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
 
     @Test func dosboxVerifyFailureRaisesReinstallAlert() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
-        let (model, _) = try await makeModel(executable: nil, verify: { _ in throw LaunchError.dosboxMissing })
+        let ranOffMain = OSAllocatedUnfairLock(initialState: false)
+        let (model, _) = try await makeModel(executable: nil, verify: { _ in
+            ranOffMain.withLock { $0 = !Thread.isMainThread }
+            throw LaunchError.dosboxMissing
+        })
+        #expect(ranOffMain.withLock { $0 })
         #expect(model.alert != nil)
         #expect(model.alert?.fix == nil)
+    }
+
+    @Test func chooseLibraryStopsRunningSessionsAndSavesStatsToOldLibrary() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        let oldCrate = try #require(model.store.record(id)).crateURL
+        await model.play(id)?.value
+        #expect(model.sessions.running.contains(id))
+
+        let newLib = root.appending(path: "SecondLibrary", directoryHint: .isDirectory)
+        await model.chooseLibrary(newLib, create: true)?.value
+
+        #expect(model.sessions.running.isEmpty)
+        let savedInOldLib = io.loadRecord(at: oldCrate)
+        #expect(savedInOldLib.game.stats.launchCount == 1)
+        #expect(savedInOldLib.game.stats.lastPlayed != nil)
     }
 
     @Test func preferencesRoundTripAndBuildGlobalConfig() {

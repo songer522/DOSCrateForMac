@@ -17,17 +17,31 @@ struct RetroGameGrid: View {
                 }
             }
             .padding(16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { clearSelection() }
+            }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { clearSelection() }
         .background(RetroPalette.desktop)
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
+        .onAppear { isFocused = true }
         .onCommand(#selector(NSResponder.selectAll(_:))) {
             model.selectedIDs = Set(records.map(\.id))
         }
         .onDeleteCommand {
             commands.requestRemoval(model.selectedIDs)
         }
+    }
+
+    private func clearSelection() {
+        GridSelection.clear(selected: &model.selectedIDs, anchor: &anchor)
+        isFocused = true
     }
 
     private func tile(for record: GameRecord) -> some View {

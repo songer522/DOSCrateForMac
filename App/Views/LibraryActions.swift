@@ -20,6 +20,12 @@ struct LibraryCommands {
     let records: [GameRecord]
     @Binding var removing: UUID?
     @Binding var removingMany: Set<UUID>?
+    var showsInspector: Binding<Bool> = .constant(true)
+
+    func edit(_ id: UUID) {
+        model.selection = id
+        showsInspector.wrappedValue = true
+    }
 
     func requestRemoval(_ ids: Set<UUID>) {
         guard !model.isRemoving else { return }
@@ -29,9 +35,14 @@ struct LibraryCommands {
     }
 
     func menu(_ record: GameRecord) -> GameContextMenu {
-        GameContextMenu(model: model, record: record) {
-            requestRemoval(model.selectedIDs.contains(record.id) ? model.selectedIDs : [record.id])
-        }
+        GameContextMenu(
+            model: model,
+            record: record,
+            onEdit: { edit(record.id) },
+            onRemove: {
+                requestRemoval(model.selectedIDs.contains(record.id) ? model.selectedIDs : [record.id])
+            }
+        )
     }
 }
 

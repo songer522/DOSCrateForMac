@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 import LibraryKit
 @testable import ImportKit
@@ -665,5 +666,40 @@ struct ImporterTests {
         let outside = try await importer.replace(io.loadRecord(at: rec.crateURL), with: p3, mode: .copy)
         #expect(outside.game.launch.driveCRoot == "")
         #expect(outside.game.launch.executable == "RUN.EXE")
+    }
+
+    @Test func commitAndReplaceFallBackToHiddenLibraryTempFolderWhenItemReplacementUnavailable() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        let observed = OSAllocatedUnfairLock(initialState: [URL]())
+        let fallbackImporter = Importer(
+            io: io,
+            stagingParent: tmp,
+            useItemReplacement: false,
+            workObserver: { url in observed.withLock { $0.append(url) } }
+        )
+
+        let v1 = tmp.appending(path: "keen_v1", directoryHint: .isDirectory)
+        try touch(v1, "KEEN1.EXE")
+        let p1 = try await fallbackImporter.prepare(v1)
+        let rec = try await fallbackImporter.commit(
+            p1, mode: .copy, title: "Keen", executable: "KEEN1.EXE", into: lib
+        )
+        #expect(exists(rec.crateURL.appending(path: "files/KEEN1.EXE")))
+
+        let v2 = tmp.appending(path: "keen_v2", directoryHint: .isDirectory)
+        try touch(v2, "KEEN2.EXE")
+        let p2 = try await fallbackImporter.prepare(v2)
+        let replaced = try await fallbackImporter.replace(rec, with: p2, mode: .copy)
+        #expect(exists(replaced.crateURL.appending(path: "files/KEEN2.EXE")))
+
+        let workDirs = observed.withLock { $0 }
+        #expect(workDirs.count == 2)
+        for workDir in workDirs {
+            #expect(workDir.lastPathComponent.hasPrefix(".doscrate-tmp-"))
+            #expect(!exists(workDir))
+        }
     }
 }

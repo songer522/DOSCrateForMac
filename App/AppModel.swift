@@ -81,6 +81,7 @@ final class AppModel {
     @ObservationIgnored private let io = CrateIO()
     @ObservationIgnored private let verifyDosbox: @Sendable (URL) throws -> Void
     @ObservationIgnored let launchTimeout: Duration
+    @ObservationIgnored private(set) var startupVerify: Task<Void, Never>?
     @ObservationIgnored private var startTokens: [UUID: UUID] = [:]
     /// Debounced editor writes not yet on disk, keyed by game; `play` runs them first.
     @ObservationIgnored private var pendingWrites: [UUID: [String: @MainActor () -> Void]] = [:]
@@ -105,10 +106,16 @@ final class AppModel {
         resolvedMetadata.model = self
         store.afterReload = { [weak resolvedMetadata] in resolvedMetadata?.storeDidReload() }
         sessions.onEnded = { [weak self] result in self?.sessionEnded(result) }
-        do {
-            try verifyDosbox(dosbox)
-        } catch {
-            alert = Self.alert(for: .dosboxMissing)
+        let checkTask = Task.detached { () -> Bool in
+            (try? verifyDosbox(dosbox)) != nil
+        }
+        startupVerify = Task { [weak self] in
+            let valid = await checkTask.value
+            guard let self else { return }
+            self.startupVerify = nil
+            if !valid, self.alert == nil {
+                self.alert = Self.alert(for: .dosboxMissing)
+            }
         }
     }
 
@@ -130,6 +137,7 @@ final class AppModel {
                 return nil
             }
         }
+        stopAllSessions()
         prefs.libraryPath = url.path
         store.library = url
         needsLibrarySetup = !Self.isDirectory(url)
@@ -252,10 +260,16 @@ final class AppModel {
 
     @discardableResult
     func play(_ id: UUID) -> Task<Void, Never>? {
-        guard !startingIDs.contains(id), !sessions.running.contains(id) else { return nil }
+        guard !startingIDs.contains(id),
+              !sessions.running.contains(id),
+              !imports.replacingIDs.contains(id)
+        else { return nil }
         metadata.cancel(id)
         flushPendingWrites(for: id)
-        guard !pendingRemovalIDs.contains(id), !startingIDs.contains(id), !sessions.running.contains(id),
+        guard !pendingRemovalIDs.contains(id),
+              !imports.replacingIDs.contains(id),
+              !startingIDs.contains(id),
+              !sessions.running.contains(id),
               let record = store.record(id) else { return nil }
 
         let token = UUID()
@@ -369,6 +383,14 @@ final class AppModel {
 
     func stop(_ id: UUID) {
         sessions.stop(gameID: id)
+    }
+
+    /// Flushes any pending inspector writes and stops all running DOSBox sessions, saving their play stats.
+    func stopAllSessions() {
+        for id in Array(pendingWrites.keys) {
+            flushPendingWrites(for: id)
+        }
+        sessions.stopAll()
     }
 
     func applyFix(_ fix: AppAlert.Fix, for id: UUID) {
