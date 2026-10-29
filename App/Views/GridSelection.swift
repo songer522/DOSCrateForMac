@@ -12,6 +12,11 @@ struct GridSelection {
         selected.count == 1 ? selected.first : nil
     }
 
+    static func clear(selected: inout Set<UUID>, anchor: inout UUID?) {
+        selected.removeAll()
+        anchor = nil
+    }
+
     static func toggle(_ id: UUID, in selected: Set<UUID>) -> Set<UUID> {
         var result = selected
         if result.contains(id) {

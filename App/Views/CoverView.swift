@@ -16,9 +16,13 @@ enum PlaceholderCover {
     static func color(for title: String) -> Color {
         Color(hue: hue(for: title), saturation: 0.45, brightness: 0.55)
     }
+
+    static func yearText(for year: Int?) -> String? {
+        year.map(String.init)
+    }
 }
 
-/// A game's cover at 3:4, or a colored placeholder with the title when there is none.
+/// A game's cover at 3:4, or a colored placeholder with the title (and year, when set) when there is none.
 struct CoverView: View {
     let record: GameRecord
     var isRunning = false
@@ -38,11 +42,18 @@ struct CoverView: View {
                 } else {
                     PlaceholderCover.color(for: record.game.title)
                         .overlay {
-                            Text(record.game.title)
-                                .font(.headline)
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.white)
-                                .padding(8)
+                            VStack(spacing: 4) {
+                                Text(record.game.title)
+                                    .font(.headline)
+                                    .multilineTextAlignment(.center)
+                                    .foregroundStyle(.white)
+                                if let yearText = PlaceholderCover.yearText(for: record.game.year) {
+                                    Text(yearText)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.white.opacity(0.8))
+                                }
+                            }
+                            .padding(8)
                         }
                 }
             }

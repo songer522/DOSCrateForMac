@@ -75,6 +75,8 @@ final class ImportQueue {
     private(set) var current: Item?
     private(set) var batchPrompt: BatchPrompt?
     private(set) var progress: Progress?
+    /// Games currently being replaced by a single or batch import; they can't be launched until the replace finishes.
+    private(set) var replacingIDs: Set<UUID> = []
     var isCheckingDuplicates: Bool { checkingCount > 0 }
     /// Index in `batchEntries` of the item the running batch is importing.
     private var batchIndex = 0
@@ -276,11 +278,13 @@ final class ImportQueue {
                 importer.discard(prepared)
                 return nil
             }
-            guard !model.isActive(existing.id) else {
+            guard !model.isActive(existing.id), !replacingIDs.contains(existing.id) else {
                 model.alert = AppModel.alert(for: .alreadyRunning, gameID: existing.id, game: existing.game)
                 importer.discard(prepared)
                 return nil
             }
+            replacingIDs.insert(existing.id)
+            defer { replacingIDs.remove(existing.id) }
             let fresh = CrateIO().loadRecord(at: existing.crateURL)
             let record = try await Task.detached {
                 try await importer.replace(fresh, with: prepared, mode: effectiveMode)
@@ -354,13 +358,21 @@ final class ImportQueue {
             progress = Progress(current: batchIndex + 1, total: batchEntries.count)
             do {
                 var replaceTarget: GameRecord?
+                let activeReplaceID: UUID?
                 if let replaceID = entry.replacing {
-                    if model.isActive(replaceID) {
+                    if model.isActive(replaceID) || replacingIDs.contains(replaceID) {
                         throw ImportError.alreadyRunning
                     }
+                    replacingIDs.insert(replaceID)
+                    activeReplaceID = replaceID
                     if let currentRecord = model.store.record(replaceID) {
                         replaceTarget = io.loadRecord(at: currentRecord.crateURL)
                     }
+                } else {
+                    activeReplaceID = nil
+                }
+                defer {
+                    if let activeReplaceID { replacingIDs.remove(activeReplaceID) }
                 }
                 let target = replaceTarget
                 let record = try await Task.detached {

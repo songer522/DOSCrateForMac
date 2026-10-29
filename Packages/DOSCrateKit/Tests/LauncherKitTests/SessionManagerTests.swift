@@ -251,4 +251,51 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         let text = try String(contentsOf: prepared.logURL, encoding: .utf8)
         #expect(text.contains("prepared-ok"))
     }
+
+    @Test func stopAllEscalatesToKillAfterGrace() async throws {
+        let runner = FakeRunner()
+        let m = SessionManager(runner: runner, killGrace: .milliseconds(50))
+        let id = UUID()
+        var results: [SessionResult] = []
+        m.onEnded = { results.append($0) }
+        try m.start(gameID: id, plan: plan())
+        m.stopAll()
+        #expect(m.running.isEmpty)
+        #expect(results.count == 1)
+        #expect(m.hasLiveProcesses)
+        let p = runner.started[0].process
+        await m.waitForAllProcessesToExit()
+        #expect(p.terminateCalled && p.killCalled)
+        #expect(!m.hasLiveProcesses)
+        #expect(results.count == 1)
+    }
+
+    @Test func restartingGameAfterStopAllBeforeFirstProcessExitsKeepsSecondSessionAlive() async throws {
+        let runner = FakeRunner()
+        let m = SessionManager(runner: runner, killGrace: .seconds(5))
+        let id = UUID()
+        var results: [SessionResult] = []
+        m.onEnded = { results.append($0) }
+
+        try m.start(gameID: id, plan: plan())
+        let firstProcess = runner.started[0].process
+
+        m.stopAll()
+        #expect(m.running.isEmpty)
+        #expect(results.count == 1)
+
+        try m.start(gameID: id, plan: plan())
+        let secondProcess = runner.started[1].process
+        #expect(m.running == [id])
+
+        // First process exits late; it must not clobber the active second session or emit a second result.
+        firstProcess.finish(143)
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(m.running == [id])
+        #expect(results.count == 1)
+
+        secondProcess.finish(0)
+        await waitUntil { m.running.isEmpty }
+        #expect(results.count == 2)
+    }
 }

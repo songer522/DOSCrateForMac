@@ -74,4 +74,13 @@ struct GridSelectionTests {
         )!
         #expect(collapse == SelectionStep(selected: [d], anchor: d, cursor: d))
     }
+
+    @Test func clearRemovesSelectionAndAnchor() {
+        let a = UUID(), b = UUID()
+        var selected: Set<UUID> = [a, b]
+        var anchor: UUID? = a
+        GridSelection.clear(selected: &selected, anchor: &anchor)
+        #expect(selected.isEmpty)
+        #expect(anchor == nil)
+    }
 }

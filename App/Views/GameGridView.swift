@@ -44,13 +44,27 @@ struct GameGridView: View {
                 }
             }
             .padding()
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { clearSelection() }
+            }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { clearSelection() }
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
+        .onAppear { isFocused = true }
         .onCommand(#selector(NSResponder.selectAll(_:))) {
             model.selectedIDs = Set(records.map(\.id))
         }
+    }
+
+    private func clearSelection() {
+        GridSelection.clear(selected: &model.selectedIDs, anchor: &anchor)
+        isFocused = true
     }
 
     private func selectOnly(_ id: UUID) {

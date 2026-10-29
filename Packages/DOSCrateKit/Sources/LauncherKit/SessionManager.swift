@@ -19,7 +19,13 @@ public final class SessionManager {
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let killGrace: Duration
     @ObservationIgnored private var processes: [UUID: any RunningProcess] = [:]
+    @ObservationIgnored private var activeSessions: [UUID: (started: Date, logURL: URL)] = [:]
+    @ObservationIgnored private var liveProcesses: Set<ObjectIdentifier> = []
+    @ObservationIgnored private var liveTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
     @ObservationIgnored private var stopped: Set<UUID> = []
+
+    /// True while any launched process has not yet exited, including processes still shutting down after `stopAll()`.
+    public var hasLiveProcesses: Bool { !liveProcesses.isEmpty }
 
     public init(runner: any ProcessRunner = FoundationProcessRunner(),
                 now: @escaping @Sendable () -> Date = Date.init,
@@ -76,15 +82,20 @@ public final class SessionManager {
         } catch {
             throw .launchFailed(error.localizedDescription)
         }
+        let pid = ObjectIdentifier(process as AnyObject)
         running.insert(gameID)
         processes[gameID] = process
+        activeSessions[gameID] = (prepared.started, prepared.logURL)
+        liveProcesses.insert(pid)
         stopped.remove(gameID)
         let started = prepared.started
         let logURL = prepared.logURL
-        Task { @MainActor [weak self] in
+        let exitTask = Task { @MainActor [weak self] in
             let code = await process.waitForExit()
-            self?.ended(gameID: gameID, code: code, started: started, logURL: logURL)
+            self?.processExited(pid: pid, gameID: gameID, process: process,
+                                code: code, started: started, logURL: logURL)
         }
+        liveTasks[pid] = exitTask
     }
 
     public func start(gameID: UUID, plan: LaunchPlan) throws(LaunchError) {
@@ -95,15 +106,35 @@ public final class SessionManager {
 
     public func stop(gameID: UUID) {
         guard let process = processes[gameID] else { return }
+        let pid = ObjectIdentifier(process as AnyObject)
         stopped.insert(gameID)
         process.terminate()
         let grace = killGrace
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: grace)
-            // Only escalate if this same process is still the running session.
-            if let self, let current = self.processes[gameID], self.isSame(current, process) {
+            // Escalate if this process instance has still not exited, even after stopAll() cleared session state.
+            if let self, self.liveProcesses.contains(pid) {
                 process.kill()
             }
+        }
+    }
+
+    /// Terminates every running session and immediately records its elapsed play time through `onEnded`.
+    public func stopAll() {
+        for gameID in Array(running) {
+            guard let process = processes[gameID] else { continue }
+            stop(gameID: gameID)
+            if let info = activeSessions[gameID] {
+                finishSession(gameID: gameID, process: process, code: 0,
+                              started: info.started, logURL: info.logURL)
+            }
+        }
+    }
+
+    /// Suspends until every launched process has exited (including any `killGrace` escalation).
+    public func waitForAllProcessesToExit() async {
+        while let task = liveTasks.values.first {
+            await task.value
         }
     }
 
@@ -111,11 +142,21 @@ public final class SessionManager {
         (a as AnyObject) === (b as AnyObject)
     }
 
-    private func ended(gameID: UUID, code: Int32, started: Date, logURL: URL) {
+    private func processExited(pid: ObjectIdentifier, gameID: UUID, process: any RunningProcess,
+                               code: Int32, started: Date, logURL: URL) {
+        liveProcesses.remove(pid)
+        liveTasks[pid] = nil
+        finishSession(gameID: gameID, process: process, code: code, started: started, logURL: logURL)
+    }
+
+    private func finishSession(gameID: UUID, process: any RunningProcess,
+                               code: Int32, started: Date, logURL: URL) {
+        guard let current = processes[gameID], isSame(current, process),
+              running.remove(gameID) != nil else { return }
         let wasStopped = stopped.contains(gameID)
         processes[gameID] = nil
+        activeSessions[gameID] = nil
         stopped.remove(gameID)
-        running.remove(gameID)
         onEnded?(SessionResult(gameID: gameID, exitCode: code, duration: now().timeIntervalSince(started),
                                logURL: logURL, unexpected: code != 0 && !wasStopped))
     }

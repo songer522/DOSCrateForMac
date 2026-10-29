@@ -689,4 +689,48 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         #expect(keenAfter.game.stats.launchCount == 3)
         #expect(try String(contentsOf: keenAfter.crateURL.appending(path: "files/DATA.DAT"), encoding: .utf8) == "v2")
     }
+
+    @Test func batchReplaceBlocksPlayWhileInProgress() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel()
+        let queue = model.imports
+
+        let keen = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(keen, "KEEN1.EXE")
+        let pSeed = try await model.importer.prepare(keen)
+        let seeded = try await model.importer.commit(
+            pSeed, mode: .copy, title: "Keen", executable: "KEEN1.EXE", into: model.store.library
+        )
+        await model.store.reload()
+
+        let state = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        queue.itemHook = { _ in
+            state.withLock { $0.entered = true }
+            while !state.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+        }
+
+        let task = queue.enqueue(
+            [ImportQueue.BatchEntry(url: keen, mode: .copy, replacing: seeded.id)],
+            model: model
+        )
+        await waitUntil { state.withLock { $0.entered } }
+
+        #expect(queue.replacingIDs.contains(seeded.id))
+        #expect(model.play(seeded.id) == nil)
+        #expect(
+            RetroLibraryView.playTarget(
+                selected: [seeded.id],
+                running: [],
+                starting: [],
+                pendingRemoval: [],
+                replacing: queue.replacingIDs
+            ) == nil
+        )
+
+        state.withLock { $0.released = true }
+        await task?.value
+        #expect(queue.replacingIDs.isEmpty)
+    }
 }

@@ -132,10 +132,14 @@ struct RetroLibraryView: View {
         selected: Set<UUID>,
         running: Set<UUID>,
         starting: Set<UUID>,
-        pendingRemoval: Set<UUID>
+        pendingRemoval: Set<UUID>,
+        replacing: Set<UUID> = []
     ) -> UUID? {
         guard selected.count == 1, let id = selected.first else { return nil }
-        guard !running.contains(id), !starting.contains(id), !pendingRemoval.contains(id) else {
+        guard !running.contains(id),
+              !starting.contains(id),
+              !pendingRemoval.contains(id),
+              !replacing.contains(id) else {
             return nil
         }
         return id
@@ -146,7 +150,8 @@ struct RetroLibraryView: View {
             selected: model.selectedIDs,
             running: model.sessions.running,
             starting: model.startingIDs,
-            pendingRemoval: model.pendingRemovalIDs
+            pendingRemoval: model.pendingRemovalIDs,
+            replacing: model.imports.replacingIDs
         )
     }
 
