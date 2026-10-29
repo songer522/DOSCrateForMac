@@ -214,8 +214,12 @@ xcrun stapler staple "$DMG"
 spctl -a -t open --context context:primary-signature -vv "$DMG"
 
 echo "==> Appcast (Sparkle EdDSA)"
-DERIVED_DATA="$(xcodebuild -project DOSCrate.xcodeproj -scheme DOSCrate -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*BUILD_DIR = / { sub(/\/Build\/Products$/, "", $2); print $2; exit }')"
-GENERATE_APPCAST="${SPARKLE_GENERATE_APPCAST:-$DERIVED_DATA/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast}"
+if [ -n "${SPARKLE_GENERATE_APPCAST:-}" ]; then
+    GENERATE_APPCAST="$SPARKLE_GENERATE_APPCAST"
+else
+    DERIVED_DATA="$(xcodebuild -project DOSCrate.xcodeproj -scheme DOSCrate -showBuildSettings 2>/dev/null | awk -F' = ' '!found && /^[[:space:]]*BUILD_DIR = / { sub(/\/Build\/Products$/, "", $2); print $2; found=1 }')"
+    GENERATE_APPCAST="$DERIVED_DATA/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast"
+fi
 if [ ! -x "$GENERATE_APPCAST" ]; then
     echo "error: Sparkle generate_appcast not found at $GENERATE_APPCAST" >&2
     exit 1
