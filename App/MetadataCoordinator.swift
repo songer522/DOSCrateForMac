@@ -126,6 +126,8 @@ final class MetadataCoordinator {
     @ObservationIgnored private var failedQueueIDs: Set<UUID> = []
     @ObservationIgnored private var findMissingTask: Task<Void, Never>?
     @ObservationIgnored private var findMissingCancelled = false
+    /// Test hook invoked when index-wide title matching runs.
+    @ObservationIgnored var matchHook: (@Sendable () -> Void)?
 
     init(provider: any MetadataProviding, prefs: Preferences) {
         self.provider = provider
@@ -332,7 +334,11 @@ final class MetadataCoordinator {
             Self.logger.debug("ensureReady in candidates took \(clock.now - start, privacy: .public)")
             phase = .ready
             lastUpdated = await provider.downloadedAt
-            return TitleMatcher.search(for: title, in: records, limit: 8)
+            let hook = matchHook
+            return await Task.detached {
+                hook?()
+                return TitleMatcher.search(for: title, in: records, limit: 8)
+            }.value
         } catch {
             if case .failed = phase {} else {
                 phase = .failed(error.localizedDescription)
@@ -492,7 +498,19 @@ final class MetadataCoordinator {
         model.flushPendingWrites(for: id)
         guard let currentRecord = model.store.record(id), currentRecord.game.metadataSource == nil else { return }
 
-        guard let matched = TitleMatcher.autoMatch(for: currentRecord.game.title, in: records) else {
+        let titleToMatch = currentRecord.game.title
+        let hook = matchHook
+        let matched = await Task.detached {
+            hook?()
+            return TitleMatcher.autoMatch(for: titleToMatch, in: records)
+        }.value
+
+        guard !Task.isCancelled else { return }
+        guard !model.isActive(id), !model.pendingRemovalIDs.contains(id) else { return }
+        model.flushPendingWrites(for: id)
+        guard let postMatchRecord = model.store.record(id), postMatchRecord.game.metadataSource == nil else { return }
+
+        guard let matched else {
             addUnmatched(id)
             return
         }

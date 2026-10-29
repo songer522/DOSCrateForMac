@@ -94,9 +94,11 @@ public enum TitleMatcher {
         candidates.reserveCapacity(records.count)
 
         for record in records {
-            var best = score(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, against: record.name)
+            let nameNorm = normalize(record.name)
+            var best = scoreNormalized(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, candNorm: nameNorm)
             for alt in record.alternateNames {
-                let s = score(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, against: alt)
+                let altNorm = normalize(alt)
+                let s = scoreNormalized(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, candNorm: altNorm)
                 if s > best { best = s }
             }
             guard best > 0 else { continue }
@@ -104,7 +106,7 @@ public enum TitleMatcher {
             if yearMatched {
                 best = min(1.0, best + 0.05)
             }
-            let nameWordCount = normalize(record.name).split(separator: " ").count
+            let nameWordCount = nameNorm.split(separator: " ").count
             candidates.append((MatchCandidate(record: record, score: best), yearMatched, nameWordCount))
         }
 
@@ -172,8 +174,7 @@ public enum TitleMatcher {
                 record: record
             )
             guard result.score + 1e-12 >= searchFloor else { continue }
-            let nameWordCount = normalize(record.name).split(separator: " ").count
-            candidates.append((MatchCandidate(record: record, score: result.score), result.yearMatched, nameWordCount))
+            candidates.append((MatchCandidate(record: record, score: result.score), result.yearMatched, result.nameWordCount))
         }
 
         candidates.sort { lhs, rhs in
@@ -213,13 +214,12 @@ public enum TitleMatcher {
         return best.record
     }
 
-    private static func score(
+    private static func scoreNormalized(
         queryNorm: String,
         queryWords: [String],
         queryBigrams: Set<String>,
-        against candidateTitle: String
+        candNorm: String
     ) -> Double {
-        let candNorm = normalize(candidateTitle)
         guard !candNorm.isEmpty else { return 0 }
         if queryNorm == candNorm {
             return 1.0
@@ -267,32 +267,34 @@ public enum TitleMatcher {
         queryTrigrams: Set<String>,
         queryYear: Int?,
         record: LaunchBoxRecord
-    ) -> (score: Double, yearMatched: Bool) {
+    ) -> (score: Double, yearMatched: Bool, nameWordCount: Int) {
+        let nameNorm = normalize(record.name)
         var best = max(
-            score(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, against: record.name),
-            trigramDice(queryNorm: queryNorm, queryTrigrams: queryTrigrams, against: record.name)
+            scoreNormalized(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, candNorm: nameNorm),
+            trigramDiceNormalized(queryNorm: queryNorm, queryTrigrams: queryTrigrams, candNorm: nameNorm)
         )
         for alt in record.alternateNames {
+            let altNorm = normalize(alt)
             let s = max(
-                score(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, against: alt),
-                trigramDice(queryNorm: queryNorm, queryTrigrams: queryTrigrams, against: alt)
+                scoreNormalized(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, candNorm: altNorm),
+                trigramDiceNormalized(queryNorm: queryNorm, queryTrigrams: queryTrigrams, candNorm: altNorm)
             )
             if s > best { best = s }
         }
-        guard best > 0 else { return (0, false) }
+        guard best > 0 else { return (0, false, 0) }
         let yearMatched = (queryYear != nil && queryYear == record.releaseYear)
         if yearMatched {
             best = min(1.0, best + 0.05)
         }
-        return (best, yearMatched)
+        let nameWordCount = nameNorm.split(separator: " ").count
+        return (best, yearMatched, nameWordCount)
     }
 
-    private static func trigramDice(
+    private static func trigramDiceNormalized(
         queryNorm: String,
         queryTrigrams: Set<String>,
-        against candidateTitle: String
+        candNorm: String
     ) -> Double {
-        let candNorm = normalize(candidateTitle)
         guard !candNorm.isEmpty else { return 0 }
         if queryNorm == candNorm {
             return 1.0

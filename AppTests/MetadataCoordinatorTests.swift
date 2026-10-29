@@ -1019,6 +1019,37 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         #expect(afterInFlight.developer == "Manual Choice")
         #expect(afterInFlight.year == nil)
     }
+
+    @Test func titleMatchingRunsOffMainActor() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Doom", fetchOnImport: false)
+
+        let flags = MainThreadTracker()
+        model.metadata.matchHook = {
+            flags.record(isMainThread: Thread.isMainThread)
+        }
+
+        let candidates = try await model.metadata.candidates(for: "Doom")
+        #expect(candidates.first?.record.id == 101)
+        #expect(flags.values == [false])
+
+        await model.metadata.enqueueAutoFetch(id)?.value
+        #expect(model.store.record(id)?.game.metadataSource?.id == 101)
+        #expect(flags.values == [false, false])
+    }
+}
+
+private final class MainThreadTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Bool] = []
+
+    func record(isMainThread: Bool) {
+        lock.withLock { storage.append(isMainThread) }
+    }
+
+    var values: [Bool] {
+        lock.withLock { storage }
+    }
 }
 
 private final class Gate: @unchecked Sendable {
