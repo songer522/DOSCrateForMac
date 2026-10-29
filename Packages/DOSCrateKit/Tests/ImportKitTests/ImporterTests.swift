@@ -702,4 +702,27 @@ struct ImporterTests {
             #expect(!exists(workDir))
         }
     }
+
+    @Test func fallbackScratchDirectoryIsExcludedWhenImportingFolderContainingLibrary() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let source = tmp.appending(path: "source", directoryHint: .isDirectory)
+        let lib = source.appending(path: "nested-lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+        try touch(source, "KEEN1.EXE")
+
+        let fallbackImporter = Importer(
+            io: io,
+            stagingParent: tmp,
+            useItemReplacement: false
+        )
+
+        let prepared = try await fallbackImporter.prepare(source)
+        let rec = try await fallbackImporter.commit(
+            prepared, mode: .copy, title: "Keen", executable: "KEEN1.EXE", into: lib
+        )
+        #expect(exists(rec.crateURL.appending(path: "files/KEEN1.EXE")))
+        let copiedLib = rec.crateURL.appending(path: "files/nested-lib", directoryHint: .isDirectory)
+        let copiedLibEntries = (try? FileManager.default.contentsOfDirectory(atPath: copiedLib.path)) ?? []
+        #expect(copiedLibEntries.allSatisfy { !$0.hasPrefix(".doscrate-tmp-") })
+    }
 }

@@ -219,7 +219,7 @@ public struct Importer: Sendable {
             } else {
                 game = Game(title: title, source: .managed)
                 try fm.createDirectory(at: files, withIntermediateDirectories: true)
-                try Self.copyTree(from: p.stagingRoot ?? p.source, to: files)
+                try Self.copyTree(from: p.stagingRoot ?? p.source, to: files, excluding: work)
             }
         case .discImage, .floppyImage:
             game = Game(title: title, source: .managed)
@@ -293,12 +293,12 @@ public struct Importer: Sendable {
         switch p.kind {
         case .folder, .zip:
             let newRoot = p.stagingRoot ?? p.source
-            try Self.copyTree(from: newRoot, to: stagedFiles)
-            if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles) }
+            try Self.copyTree(from: newRoot, to: stagedFiles, excluding: work)
+            if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles, excluding: work) }
             game.media = []
             game.launch = Self.updatedLaunch(game.launch, newRoot: newRoot, candidates: p.candidates)
         case .discImage, .floppyImage:
-            if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles) }
+            if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles, excluding: work) }
             let mediaDir = work.appending(path: "media", directoryHint: .isDirectory)
             try fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
             game.media = try Self.stageMedia(for: p, into: mediaDir)
@@ -441,8 +441,10 @@ public struct Importer: Sendable {
     }
 
     /// Copies files that exist only in `oldDir` into `newDir`; files already present in `newDir` win.
-    private static func carryOver(from oldDir: URL, to newDir: URL) throws {
+    private static func carryOver(from oldDir: URL, to newDir: URL, excluding excluded: URL? = nil) throws {
         let fm = FileManager.default
+        let excludedURL = excluded?.resolvingSymlinksInPath().standardizedFileURL
+        let destinationURL = newDir.resolvingSymlinksInPath().standardizedFileURL
         let newEntries = (try? fm.contentsOfDirectory(at: newDir, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
         var byLowerName: [String: URL] = [:]
         for entry in newEntries {
@@ -451,11 +453,14 @@ public struct Importer: Sendable {
         for child in try fm.contentsOfDirectory(at: oldDir, includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey]) {
             let values = try child.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
             if values.isSymbolicLink == true { continue }
+            if child.lastPathComponent.hasPrefix(".doscrate-tmp-") { continue }
+            let standardizedChild = child.resolvingSymlinksInPath().standardizedFileURL
+            if standardizedChild == excludedURL || standardizedChild == destinationURL { continue }
             let key = child.lastPathComponent.lowercased()
             if let existing = byLowerName[key] {
                 let existingIsDir = (try? existing.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
                 if values.isDirectory == true, existingIsDir {
-                    try carryOver(from: child, to: existing)
+                    try carryOver(from: child, to: existing, excluding: excluded)
                 }
                 continue
             }
@@ -465,7 +470,7 @@ public struct Importer: Sendable {
             )
             if values.isDirectory == true {
                 try fm.createDirectory(at: target, withIntermediateDirectories: true)
-                try copyTree(from: child, to: target)
+                try copyTree(from: child, to: target, excluding: excluded)
             } else {
                 try fm.copyItem(at: child, to: target)
             }
@@ -531,15 +536,20 @@ public struct Importer: Sendable {
     }
 
     /// Copies a directory tree, dropping symlinks so a crate never points at host paths.
-    private static func copyTree(from source: URL, to destination: URL) throws {
+    private static func copyTree(from source: URL, to destination: URL, excluding excluded: URL? = nil) throws {
         let fm = FileManager.default
+        let excludedURL = excluded?.resolvingSymlinksInPath().standardizedFileURL
+        let destinationURL = destination.resolvingSymlinksInPath().standardizedFileURL
         for child in try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey]) {
             let values = try child.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
             if values.isSymbolicLink == true { continue }
+            if child.lastPathComponent.hasPrefix(".doscrate-tmp-") { continue }
+            let standardizedChild = child.resolvingSymlinksInPath().standardizedFileURL
+            if standardizedChild == excludedURL || standardizedChild == destinationURL { continue }
             let target = destination.appending(path: child.lastPathComponent, directoryHint: values.isDirectory == true ? .isDirectory : .notDirectory)
             if values.isDirectory == true {
                 try fm.createDirectory(at: target, withIntermediateDirectories: true)
-                try copyTree(from: child, to: target)
+                try copyTree(from: child, to: target, excluding: excluded)
             } else {
                 try fm.copyItem(at: child, to: target)
             }
