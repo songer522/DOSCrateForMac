@@ -448,7 +448,7 @@ struct LibraryFilterMenuContent: View {
         }
     }
 
-    private static func includingSelected(_ selected: String?, in values: [String]) -> [String] {
+    static func includingSelected(_ selected: String?, in values: [String]) -> [String] {
         guard let selected else { return values }
         let containsSelected = values.contains { $0.localizedCaseInsensitiveCompare(selected) == .orderedSame }
         guard !containsSelected else { return values }

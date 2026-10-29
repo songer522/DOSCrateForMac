@@ -256,9 +256,7 @@ struct RetroLibraryView: View {
             }
             .buttonStyle(RetroButtonStyle(kind: .icon))
 
-            Menu {
-                LibraryFilterMenuContent(model: model)
-            } label: {
+            RetroMenuButton(buildMenu: { buildFilterMenu() }) {
                 iconLabel(
                     "Filter",
                     symbol: model.query.hasActiveMetadataFilter
@@ -266,32 +264,11 @@ struct RetroLibraryView: View {
                         : "line.3.horizontal.decrease.circle",
                     color: model.query.hasActiveMetadataFilter ? RetroPalette.green : RetroPalette.desktop
                 )
-                .font(RetroFont.font())
-                .foregroundStyle(RetroPalette.shadow)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(RetroPalette.panel)
-                .retroBevel(.raised)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
 
-            Menu {
-                sortButton("Title", .title)
-                sortButton("Year", .year)
-                sortButton("Last Played", .lastPlayed)
-                sortButton("Play Time", .playTime)
-            } label: {
+            RetroMenuButton(buildMenu: { buildSortMenu() }) {
                 iconLabel("Sort", symbol: "arrow.up.arrow.down", color: RetroPalette.desktop)
-                    .font(RetroFont.font())
-                    .foregroundStyle(RetroPalette.shadow)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(RetroPalette.panel)
-                    .retroBevel(.raised)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
 
             Button {
                 showsInspector.toggle()
@@ -328,12 +305,148 @@ struct RetroLibraryView: View {
         }
     }
 
-    private func sortButton(_ title: String, _ key: SortKey) -> some View {
-        Button {
-            model.query.sort = key
-        } label: {
-            if model.query.sort == key { Label(title, systemImage: "checkmark") } else { Text(title) }
+    private func buildSortMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let items: [(String, SortKey)] = [
+            ("Title", .title),
+            ("Year", .year),
+            ("Last Played", .lastPlayed),
+            ("Play Time", .playTime),
+        ]
+        for (title, key) in items {
+            menu.addItem(
+                RetroMenuAction.makeItem(title: title, checked: model.query.sort == key) { [model] in
+                    model.query.sort = key
+                }
+            )
         }
+        return menu
+    }
+
+    private func buildFilterMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let records = model.store.records
+
+        let genres = LibraryFilterMenuContent.includingSelected(
+            model.query.genre,
+            in: allGenres(in: records)
+        )
+        menu.addItem(
+            makeStringFilterSubmenuItem(
+                title: model.query.genre.map { "Genre: \($0)" } ?? "Genre",
+                allTitle: "All Genres",
+                options: genres,
+                current: model.query.genre
+            ) { [model] newValue in
+                model.query.genre = newValue
+            }
+        )
+
+        var years = allYears(in: records)
+        if let selectedYear = model.query.year, !years.contains(selectedYear) {
+            years.append(selectedYear)
+            years.sort()
+        }
+        let yearItem = NSMenuItem(
+            title: model.query.year.map { "Year: \(String($0))" } ?? "Year",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let yearSubmenu = NSMenu()
+        yearSubmenu.autoenablesItems = false
+        yearSubmenu.addItem(
+            RetroMenuAction.makeItem(title: "All Years", checked: model.query.year == nil) { [model] in
+                model.query.year = nil
+            }
+        )
+        if !years.isEmpty {
+            yearSubmenu.addItem(.separator())
+            for year in years {
+                let isSelected = model.query.year == year
+                yearSubmenu.addItem(
+                    RetroMenuAction.makeItem(title: String(year), checked: isSelected) { [model] in
+                        model.query.year = isSelected ? nil : year
+                    }
+                )
+            }
+        }
+        yearItem.submenu = yearSubmenu
+        menu.addItem(yearItem)
+
+        let publishers = LibraryFilterMenuContent.includingSelected(
+            model.query.publisher,
+            in: allPublishers(in: records)
+        )
+        menu.addItem(
+            makeStringFilterSubmenuItem(
+                title: model.query.publisher.map { "Publisher: \($0)" } ?? "Publisher",
+                allTitle: "All Publishers",
+                options: publishers,
+                current: model.query.publisher
+            ) { [model] newValue in
+                model.query.publisher = newValue
+            }
+        )
+
+        let developers = LibraryFilterMenuContent.includingSelected(
+            model.query.developer,
+            in: allDevelopers(in: records)
+        )
+        menu.addItem(
+            makeStringFilterSubmenuItem(
+                title: model.query.developer.map { "Developer: \($0)" } ?? "Developer",
+                allTitle: "All Developers",
+                options: developers,
+                current: model.query.developer
+            ) { [model] newValue in
+                model.query.developer = newValue
+            }
+        )
+
+        menu.addItem(.separator())
+        let clearItem = RetroMenuAction.makeItem(
+            title: "Clear Filters",
+            checked: false,
+            enabled: model.query.hasActiveMetadataFilter
+        ) { [model] in
+            model.query.clearMetadataFilters()
+        }
+        menu.addItem(clearItem)
+        return menu
+    }
+
+    private func makeStringFilterSubmenuItem(
+        title: String,
+        allTitle: String,
+        options: [String],
+        current: String?,
+        onSelect: @escaping @MainActor (String?) -> Void
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        submenu.addItem(
+            RetroMenuAction.makeItem(title: allTitle, checked: current == nil) {
+                onSelect(nil)
+            }
+        )
+        if !options.isEmpty {
+            submenu.addItem(.separator())
+            for option in options {
+                let isSelected = current.map {
+                    $0.localizedCaseInsensitiveCompare(option) == .orderedSame
+                } ?? false
+                submenu.addItem(
+                    RetroMenuAction.makeItem(title: option, checked: isSelected) {
+                        onSelect(isSelected ? nil : option)
+                    }
+                )
+            }
+        }
+        item.submenu = submenu
+        return item
     }
 
     @ViewBuilder private var desktop: some View {
@@ -397,5 +510,75 @@ struct RetroLibraryView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+}
+
+private struct RetroMenuButton<Label: View>: View {
+    let buildMenu: @MainActor () -> NSMenu
+    @ViewBuilder let label: () -> Label
+    @State private var anchorView: NSView?
+
+    var body: some View {
+        Button {
+            guard let anchorView else { return }
+            let menu = buildMenu()
+            menu.popUp(
+                positioning: nil,
+                at: NSPoint(x: 0, y: -2),
+                in: anchorView
+            )
+        } label: {
+            label()
+        }
+        .buttonStyle(RetroButtonStyle(kind: .icon))
+        .background(RetroMenuAnchor(anchorView: $anchorView))
+    }
+}
+
+private struct RetroMenuAnchor: NSViewRepresentable {
+    @Binding var anchorView: NSView?
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            anchorView = view
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if anchorView !== nsView {
+            DispatchQueue.main.async {
+                anchorView = nsView
+            }
+        }
+    }
+}
+
+@MainActor
+private final class RetroMenuAction: NSObject {
+    private let handler: @MainActor () -> Void
+
+    init(_ handler: @escaping @MainActor () -> Void) {
+        self.handler = handler
+    }
+
+    @objc func invoke() {
+        handler()
+    }
+
+    static func makeItem(
+        title: String,
+        checked: Bool,
+        enabled: Bool = true,
+        handler: @escaping @MainActor () -> Void
+    ) -> NSMenuItem {
+        let target = RetroMenuAction(handler)
+        let item = NSMenuItem(title: title, action: #selector(RetroMenuAction.invoke), keyEquivalent: "")
+        item.target = target
+        item.representedObject = target
+        item.state = checked ? .on : .off
+        item.isEnabled = enabled
+        return item
     }
 }
