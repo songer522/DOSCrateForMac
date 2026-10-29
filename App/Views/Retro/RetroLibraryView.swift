@@ -161,7 +161,7 @@ struct RetroLibraryView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if showsInspector {
                     inspectorPanel
-                        .frame(minWidth: 300, idealWidth: 360, maxWidth: 520)
+                        .frame(minWidth: 340, idealWidth: 400, maxWidth: 560)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

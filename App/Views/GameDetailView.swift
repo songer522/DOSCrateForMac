@@ -6,6 +6,8 @@ import SwiftUI
 /// The inspector for one game. Edits go to a draft that is saved 500 ms after the last change.
 /// Create it with `.id(record.id)` so the draft resets when the selection changes.
 struct GameDetailView: View {
+    static let headerCoverWidth: CGFloat = 140
+
     enum Tab: String, CaseIterable, Identifiable {
         case info = "Info", settings = "Settings", advanced = "Advanced"
         var id: Self { self }
@@ -218,7 +220,13 @@ private struct GameHeader: View {
             artRevision: model.metadata.artRevision[record.id, default: 0]
         )
             .id(coverRevision)
-            .frame(width: 90)
+            .frame(width: GameDetailView.headerCoverWidth)
+            .onTapGesture {
+                let coverURL = CrateIO().coverURL(record.crateURL)
+                if FileManager.default.fileExists(atPath: coverURL.path) {
+                    ArtQuickLookController.shared.present(urls: [coverURL], startingAt: 0)
+                }
+            }
         if retroTheme {
             base
                 .retroBevel(.sunken)

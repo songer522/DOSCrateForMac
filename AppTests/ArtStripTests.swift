@@ -33,6 +33,8 @@ struct ArtStripTests {
         #expect(items.map(\.lastPathComponent) == ["back.png", "disc.png", "logo.png", "01.png", "02.png"])
         #expect(items.map(\.standardizedFileURL) == [back, disc, logo, s1, s2].map(\.standardizedFileURL))
         #expect(!ArtStripView.isHidden(in: crate))
+        #expect(GameDetailView.headerCoverWidth == 140)
+        #expect(ArtStripView.thumbnailSize == CGSize(width: 112, height: 84))
     }
 
     @Test func noArtMeansHidden() throws {
