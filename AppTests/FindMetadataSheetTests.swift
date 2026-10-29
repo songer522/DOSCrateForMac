@@ -290,6 +290,29 @@ import Testing
         #expect(!sheetModel.isLoading)
         #expect(sheetModel.errorText == nil)
     }
+
+    @Test func searchByPublisherDeveloperYearAndSubtitleFormatting() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, _, id) = try await makeEnv(title: "Unknown")
+        let sheetModel = FindMetadataModel(model: model, gameID: id)
+
+        sheetModel.query = "Apogee"
+        await sheetModel.searchNow()
+        #expect(sheetModel.results.map(\.record.id) == [99])
+
+        sheetModel.query = "Origin Systems"
+        await sheetModel.searchNow()
+        #expect(Set(sheetModel.results.map(\.record.id)) == [1, 3])
+
+        sheetModel.query = "1982"
+        await sheetModel.searchNow()
+        #expect(sheetModel.results.map(\.record.id) == [2])
+
+        // Subtitle includes distinct publisher and deduplicates when publisher matches developer.
+        #expect(FindMetadataSheet.subtitle(for: Self.sampleRecords[0]) == "1981 · Origin Systems · California Pacific")
+        #expect(FindMetadataSheet.subtitle(for: Self.sampleRecords[1]) == "1982 · Sierra On-Line")
+        #expect(FindMetadataSheet.subtitle(for: Self.sampleRecords[3]) == "1992 · id Software · Apogee")
+    }
 }
 
 private final class SearchGate: @unchecked Sendable {

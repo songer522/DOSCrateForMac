@@ -338,7 +338,7 @@ final class MetadataCoordinator {
             let hook = matchHook
             return await Task.detached {
                 hook?()
-                return TitleMatcher.search(for: title, in: records, limit: 8)
+                return TitleMatcher.search(for: title, in: records, limit: 25)
             }.value
         } catch {
             if case .failed = phase {} else {

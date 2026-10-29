@@ -131,21 +131,8 @@ public enum TitleMatcher {
     }
 
     public static func searchScore(_ query: String, _ record: LaunchBoxRecord) -> Double {
-        let queryNorm = normalize(query)
-        guard !queryNorm.isEmpty else { return 0 }
-        let queryWords = queryNorm.split(separator: " ").map(String.init)
-        let queryBigrams = bigrams(for: queryWords)
-        let queryTrigrams = charTrigrams(for: queryNorm)
-        let queryYear = parseYear(query)
-
-        return searchScorePrecomputed(
-            queryNorm: queryNorm,
-            queryWords: queryWords,
-            queryBigrams: queryBigrams,
-            queryTrigrams: queryTrigrams,
-            queryYear: queryYear,
-            record: record
-        ).score
+        guard let precomputed = PrecomputedSearchQuery(query) else { return 0 }
+        return searchScorePrecomputed(precomputed, record: record).score
     }
 
     public static func search(
@@ -153,26 +140,13 @@ public enum TitleMatcher {
         in records: [LaunchBoxRecord],
         limit: Int
     ) -> [MatchCandidate] {
-        guard limit > 0 else { return [] }
-        let queryNorm = normalize(title)
-        guard !queryNorm.isEmpty else { return [] }
-        let queryWords = queryNorm.split(separator: " ").map(String.init)
-        let queryBigrams = bigrams(for: queryWords)
-        let queryTrigrams = charTrigrams(for: queryNorm)
-        let queryYear = parseYear(title)
+        guard limit > 0, let precomputed = PrecomputedSearchQuery(title) else { return [] }
 
         var candidates: [(candidate: MatchCandidate, yearMatched: Bool, wordCount: Int)] = []
         candidates.reserveCapacity(records.count)
 
         for record in records {
-            let result = searchScorePrecomputed(
-                queryNorm: queryNorm,
-                queryWords: queryWords,
-                queryBigrams: queryBigrams,
-                queryTrigrams: queryTrigrams,
-                queryYear: queryYear,
-                record: record
-            )
+            let result = searchScorePrecomputed(precomputed, record: record)
             guard result.score + 1e-12 >= searchFloor else { continue }
             candidates.append((MatchCandidate(record: record, score: result.score), result.yearMatched, result.nameWordCount))
         }
@@ -260,34 +234,169 @@ public enum TitleMatcher {
         return out
     }
 
+    private struct PrecomputedSearchQuery {
+        let queryNorm: String
+        let queryWords: [String]
+        let queryBigrams: Set<String>
+        let queryTrigrams: Set<String>
+        let effectiveYear: Int?
+        let nonYearNorm: String
+        let nonYearWords: [String]
+        let nonYearBigrams: Set<String>
+
+        init?(_ raw: String) {
+            let parenthesizedYear = TitleMatcher.parseYear(raw)
+            let norm = TitleMatcher.normalize(raw)
+            let words = norm.isEmpty ? [] : norm.split(separator: " ").map(String.init)
+            let standaloneYear = words.lazy.compactMap { word -> Int? in
+                guard word.count == 4, let y = Int(word), (1970...2099).contains(y) else { return nil }
+                return y
+            }.first
+            let year = parenthesizedYear ?? standaloneYear
+            guard !norm.isEmpty || year != nil else { return nil }
+            self.queryNorm = norm
+            self.queryWords = words
+            self.queryBigrams = TitleMatcher.bigrams(for: words)
+            self.queryTrigrams = norm.isEmpty ? [] : TitleMatcher.charTrigrams(for: norm)
+            self.effectiveYear = year
+            let strippedWords = standaloneYear != nil ? words.filter { Int($0) != standaloneYear } : words
+            self.nonYearWords = strippedWords
+            self.nonYearNorm = strippedWords.joined(separator: " ")
+            self.nonYearBigrams = TitleMatcher.bigrams(for: strippedWords)
+        }
+    }
+
     private static func searchScorePrecomputed(
-        queryNorm: String,
-        queryWords: [String],
-        queryBigrams: Set<String>,
-        queryTrigrams: Set<String>,
-        queryYear: Int?,
+        _ q: PrecomputedSearchQuery,
         record: LaunchBoxRecord
     ) -> (score: Double, yearMatched: Bool, nameWordCount: Int) {
         let nameNorm = normalize(record.name)
-        var best = max(
-            scoreNormalized(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, candNorm: nameNorm),
-            trigramDiceNormalized(queryNorm: queryNorm, queryTrigrams: queryTrigrams, candNorm: nameNorm)
-        )
-        for alt in record.alternateNames {
-            let altNorm = normalize(alt)
-            let s = max(
-                scoreNormalized(queryNorm: queryNorm, queryWords: queryWords, queryBigrams: queryBigrams, candNorm: altNorm),
-                trigramDiceNormalized(queryNorm: queryNorm, queryTrigrams: queryTrigrams, candNorm: altNorm)
+        let altNorms = record.alternateNames.map(normalize)
+
+        var titleBest = 0.0
+        if !q.queryNorm.isEmpty {
+            titleBest = max(
+                scoreNormalized(queryNorm: q.queryNorm, queryWords: q.queryWords, queryBigrams: q.queryBigrams, candNorm: nameNorm),
+                trigramDiceNormalized(queryNorm: q.queryNorm, queryTrigrams: q.queryTrigrams, candNorm: nameNorm)
             )
-            if s > best { best = s }
+            for altNorm in altNorms {
+                let s = max(
+                    scoreNormalized(queryNorm: q.queryNorm, queryWords: q.queryWords, queryBigrams: q.queryBigrams, candNorm: altNorm),
+                    trigramDiceNormalized(queryNorm: q.queryNorm, queryTrigrams: q.queryTrigrams, candNorm: altNorm)
+                )
+                if s > titleBest { titleBest = s }
+            }
         }
+
+        let yearMatchesRecord = (q.effectiveYear != nil && q.effectiveYear == record.releaseYear)
+
+        if yearMatchesRecord, !q.nonYearNorm.isEmpty, q.nonYearNorm != q.queryNorm {
+            let strippedMain = scoreNormalized(
+                queryNorm: q.nonYearNorm,
+                queryWords: q.nonYearWords,
+                queryBigrams: q.nonYearBigrams,
+                candNorm: nameNorm
+            )
+            if strippedMain > titleBest { titleBest = strippedMain }
+            for altNorm in altNorms {
+                let s = scoreNormalized(
+                    queryNorm: q.nonYearNorm,
+                    queryWords: q.nonYearWords,
+                    queryBigrams: q.nonYearBigrams,
+                    candNorm: altNorm
+                )
+                if s > titleBest { titleBest = s }
+            }
+        }
+
+        let yearOnlyBest: Double = (q.nonYearWords.isEmpty && yearMatchesRecord) ? 0.85 : 0.0
+
+        var makerBest = 0.0
+        var combinedBest = 0.0
+        if !q.nonYearWords.isEmpty, q.effectiveYear == nil || yearMatchesRecord {
+            let pubNorm = record.publisher.map(normalize) ?? ""
+            let devNorm = record.developer.map(normalize) ?? ""
+            makerBest = max(
+                scoreMaker(queryNorm: q.nonYearNorm, queryWords: q.nonYearWords, makerNorm: pubNorm),
+                scoreMaker(queryNorm: q.nonYearNorm, queryWords: q.nonYearWords, makerNorm: devNorm)
+            )
+
+            if q.nonYearWords.count >= 2, !pubNorm.isEmpty || !devNorm.isEmpty {
+                let makerWords = Set(pubNorm.split(separator: " ").map(String.init))
+                    .union(devNorm.split(separator: " ").map(String.init))
+                let inMaker = q.nonYearWords.filter { wordMatchesMaker($0, in: makerWords) }
+                let notInMaker = q.nonYearWords.filter { !wordMatchesMaker($0, in: makerWords) }
+                if !inMaker.isEmpty, !notInMaker.isEmpty {
+                    let titlePartNorm = notInMaker.joined(separator: " ")
+                    let titlePartBigrams = bigrams(for: notInMaker)
+                    var titlePartScore = scoreQueryWordsInTitle(
+                        queryNorm: titlePartNorm,
+                        queryWords: notInMaker,
+                        queryBigrams: titlePartBigrams,
+                        candNorm: nameNorm
+                    )
+                    for altNorm in altNorms {
+                        let s = scoreQueryWordsInTitle(
+                            queryNorm: titlePartNorm,
+                            queryWords: notInMaker,
+                            queryBigrams: titlePartBigrams,
+                            candNorm: altNorm
+                        )
+                        if s > titlePartScore { titlePartScore = s }
+                    }
+                    if titlePartScore >= 0.5 {
+                        combinedBest = min(1.0, titlePartScore + 0.10)
+                    }
+                }
+            }
+        }
+
+        var best = max(titleBest, yearOnlyBest, makerBest, combinedBest)
         guard best > 0 else { return (0, false, 0) }
-        let yearMatched = (queryYear != nil && queryYear == record.releaseYear)
-        if yearMatched {
+        if yearMatchesRecord {
             best = min(1.0, best + 0.05)
         }
         let nameWordCount = nameNorm.split(separator: " ").count
-        return (best, yearMatched, nameWordCount)
+        return (best, yearMatchesRecord, nameWordCount)
+    }
+
+    private static func wordMatchesMaker(_ word: String, in makerWords: Set<String>) -> Bool {
+        if makerWords.contains(word) { return true }
+        guard word.count >= 4 else { return false }
+        return makerWords.contains { $0.hasPrefix(word) }
+    }
+
+    private static func scoreMaker(queryNorm: String, queryWords: [String], makerNorm: String) -> Double {
+        guard !makerNorm.isEmpty, !queryWords.isEmpty else { return 0 }
+        if queryNorm == makerNorm {
+            return 0.85
+        }
+        let makerWords = Set(makerNorm.split(separator: " ").map(String.init))
+        guard queryWords.allSatisfy({ wordMatchesMaker($0, in: makerWords) }) else {
+            return 0
+        }
+        return 0.75
+    }
+
+    private static func scoreQueryWordsInTitle(
+        queryNorm: String,
+        queryWords: [String],
+        queryBigrams: Set<String>,
+        candNorm: String
+    ) -> Double {
+        guard !candNorm.isEmpty, !queryWords.isEmpty else { return 0 }
+        if queryNorm == candNorm {
+            return 1.0
+        }
+        let candWords = candNorm.split(separator: " ").map(String.init)
+        let candSet = Set(candWords)
+        if queryWords.allSatisfy({ candSet.contains($0) }) {
+            return 0.85
+        }
+        let candBigrams = bigrams(for: candWords)
+        guard !queryBigrams.isEmpty, !candBigrams.isEmpty else { return 0 }
+        let shared = queryBigrams.intersection(candBigrams).count
+        return (2.0 * Double(shared)) / Double(queryBigrams.count + candBigrams.count)
     }
 
     private static func trigramDiceNormalized(

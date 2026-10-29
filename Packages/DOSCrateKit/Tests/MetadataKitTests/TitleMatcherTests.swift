@@ -129,4 +129,64 @@ struct TitleMatcherTests {
         let results = TitleMatcher.search(for: "Aladin", in: records, limit: 8)
         #expect(results.isEmpty)
     }
+
+    @Test func searchFindsByPublisherDeveloperYearAndCombinations() {
+        let records = [
+            LaunchBoxRecord(
+                id: 1,
+                name: "Nobunaga's Ambition",
+                releaseYear: 1988,
+                developer: "Koei Co., Ltd.",
+                publisher: "Koei"
+            ),
+            LaunchBoxRecord(
+                id: 2,
+                name: "Romance of the Three Kingdoms",
+                releaseYear: 1989,
+                developer: "Koei Co., Ltd.",
+                publisher: "Koei"
+            ),
+            LaunchBoxRecord(
+                id: 3,
+                name: "Bandit Kings of Ancient China",
+                releaseYear: 1989,
+                developer: "Koei Co., Ltd.",
+                publisher: "Koei"
+            ),
+            LaunchBoxRecord(
+                id: 4,
+                name: "Prince of Persia",
+                releaseYear: 1989,
+                developer: "Brøderbund",
+                publisher: "Brøderbund"
+            ),
+            LaunchBoxRecord(
+                id: 5,
+                name: "Doom",
+                releaseYear: 1993,
+                developer: "id Software",
+                publisher: "id Software"
+            ),
+        ]
+
+        // 1. Search by publisher ("Koei") finds all 3 Koei games and excludes non-Koei games.
+        let koeiResults = TitleMatcher.search(for: "Koei", in: records, limit: 10)
+        #expect(Set(koeiResults.map(\.record.id)) == [1, 2, 3])
+
+        // 2. Search by year ("1989") finds all 1989 games and excludes 1988/1993 games.
+        let yearResults = TitleMatcher.search(for: "1989", in: records, limit: 10)
+        #expect(Set(yearResults.map(\.record.id)) == [2, 3, 4])
+
+        // 3. Search by publisher + year ("Koei 1989") finds only Koei games from 1989.
+        let koei1989 = TitleMatcher.search(for: "Koei 1989", in: records, limit: 10)
+        #expect(Set(koei1989.map(\.record.id)) == [2, 3])
+
+        // 4. Search by title word + publisher ("Nobunaga Koei") finds only Nobunaga's Ambition.
+        let nobunagaKoei = TitleMatcher.search(for: "Nobunaga Koei", in: records, limit: 10)
+        #expect(nobunagaKoei.map(\.record.id) == [1])
+
+        // 5. autoMatch remains strict on title and does NOT auto-match on publisher or year alone.
+        #expect(TitleMatcher.autoMatch(for: "Koei", in: [records[0]]) == nil)
+        #expect(TitleMatcher.autoMatch(for: "1988", in: [records[0]]) == nil)
+    }
 }
