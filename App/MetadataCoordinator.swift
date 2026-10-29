@@ -128,6 +128,7 @@ final class MetadataCoordinator {
     @ObservationIgnored private var findMissingCancelled = false
     /// Test hook invoked when index-wide title matching runs.
     @ObservationIgnored var matchHook: (@Sendable () -> Void)?
+    @ObservationIgnored var matchGate: (@Sendable () async -> Void)?
 
     init(provider: any MetadataProviding, prefs: Preferences) {
         self.provider = provider
@@ -493,22 +494,31 @@ final class MetadataCoordinator {
             return
         }
 
-        guard !Task.isCancelled else { return }
-        guard !model.isActive(id), !model.pendingRemovalIDs.contains(id) else { return }
-        model.flushPendingWrites(for: id)
-        guard let currentRecord = model.store.record(id), currentRecord.game.metadataSource == nil else { return }
+        var matched: LaunchBoxRecord?
+        while true {
+            guard !Task.isCancelled else { return }
+            guard !model.isActive(id), !model.pendingRemovalIDs.contains(id) else { return }
+            model.flushPendingWrites(for: id)
+            guard let currentRecord = model.store.record(id), currentRecord.game.metadataSource == nil else { return }
 
-        let titleToMatch = currentRecord.game.title
-        let hook = matchHook
-        let matched = await Task.detached {
-            hook?()
-            return TitleMatcher.autoMatch(for: titleToMatch, in: records)
-        }.value
+            let titleToMatch = currentRecord.game.title
+            let hook = matchHook
+            let gate = matchGate
+            let candidate = await Task.detached {
+                hook?()
+                await gate?()
+                return TitleMatcher.autoMatch(for: titleToMatch, in: records)
+            }.value
 
-        guard !Task.isCancelled else { return }
-        guard !model.isActive(id), !model.pendingRemovalIDs.contains(id) else { return }
-        model.flushPendingWrites(for: id)
-        guard let postMatchRecord = model.store.record(id), postMatchRecord.game.metadataSource == nil else { return }
+            guard !Task.isCancelled else { return }
+            guard !model.isActive(id), !model.pendingRemovalIDs.contains(id) else { return }
+            model.flushPendingWrites(for: id)
+            guard let postMatchRecord = model.store.record(id), postMatchRecord.game.metadataSource == nil else { return }
+            if postMatchRecord.game.title == titleToMatch {
+                matched = candidate
+                break
+            }
+        }
 
         guard let matched else {
             addUnmatched(id)

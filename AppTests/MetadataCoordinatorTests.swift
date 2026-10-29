@@ -1037,6 +1037,55 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         #expect(model.store.record(id)?.game.metadataSource?.id == 101)
         #expect(flags.values == [false, false])
     }
+
+    @Test func autoFetchRevalidatesTitleChangedDuringDetachedMatch() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let doomRecord = LaunchBoxRecord(
+            id: 101,
+            name: "Doom",
+            releaseYear: 1993,
+            developer: "id Software"
+        )
+        let quakeRecord = LaunchBoxRecord(
+            id: 202,
+            name: "Quake",
+            releaseYear: 1996,
+            developer: "id Software Quake"
+        )
+        let (model, _, id) = try await makeEnv(
+            title: "Doom",
+            records: [doomRecord, quakeRecord],
+            fetchOnImport: false
+        )
+
+        let entered = Gate()
+        let release = Gate()
+        let counter = Counter()
+        model.metadata.matchGate = {
+            if counter.increment() == 1 {
+                entered.open()
+                await release.wait()
+            }
+        }
+
+        let autoTask = model.metadata.enqueueAutoFetch(id)
+        await entered.wait()
+
+        // Simulate user editing the title in the inspector while detached title matching is in flight.
+        var edited = try #require(model.store.record(id)?.game)
+        edited.title = "Quake"
+        let saveTask = GameDetailView.scheduleDraftSave(draft: edited, in: model)
+        defer { saveTask?.cancel() }
+
+        release.open()
+        await autoTask?.value
+
+        let saved = try #require(model.store.record(id)?.game)
+        #expect(saved.title == "Quake")
+        #expect(saved.metadataSource?.id == 202)
+        #expect(saved.year == 1996)
+        #expect(saved.developer == "id Software Quake")
+    }
 }
 
 private final class MainThreadTracker: @unchecked Sendable {
