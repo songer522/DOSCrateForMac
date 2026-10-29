@@ -60,6 +60,7 @@ public struct ArtDownloader: Sendable {
                 kind: frontKind,
                 url: frontURL,
                 into: crate,
+                mode: mode,
                 session: session,
                 onWrite: onWrite
             ) {
@@ -86,6 +87,7 @@ public struct ArtDownloader: Sendable {
                         kind: kind,
                         url: url,
                         into: crate,
+                        mode: mode,
                         session: session,
                         onWrite: onWrite
                     )
@@ -108,6 +110,7 @@ public struct ArtDownloader: Sendable {
                             kind: kind,
                             url: url,
                             into: crate,
+                            mode: mode,
                             session: session,
                             onWrite: onWrite
                         )
@@ -123,6 +126,7 @@ public struct ArtDownloader: Sendable {
         kind: ArtKind,
         url: URL,
         into crate: URL,
+        mode: ApplyMode,
         session: URLSession,
         onWrite: @Sendable (ArtKind) -> Void
     ) async -> (ArtKind, Bool)? {
@@ -192,10 +196,22 @@ public struct ArtDownloader: Sendable {
             try pngData.write(to: tempFile)
             try Task.checkCancellation()
 
-            if fm.fileExists(atPath: destination.path) {
-                _ = try fm.replaceItemAt(destination, withItemAt: tempFile)
-            } else {
-                try fm.moveItem(at: tempFile, to: destination)
+            switch mode {
+            case .fillEmpty:
+                if fm.fileExists(atPath: destination.path) {
+                    return nil
+                }
+                do {
+                    try fm.moveItem(at: tempFile, to: destination)
+                } catch let error as CocoaError where error.code == .fileWriteFileExists {
+                    return nil
+                }
+            case .replace:
+                if fm.fileExists(atPath: destination.path) {
+                    _ = try fm.replaceItemAt(destination, withItemAt: tempFile)
+                } else {
+                    try fm.moveItem(at: tempFile, to: destination)
+                }
             }
             let writeElapsed = clock.now - encodeStart
             logger.debug("Art encode+write (\(String(describing: kind), privacy: .public)) took \(writeElapsed, privacy: .public)")

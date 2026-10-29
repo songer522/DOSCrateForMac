@@ -240,6 +240,37 @@ struct ArtDownloaderTests {
         #expect(result.written.count == 4)
         #expect(recorder.items.first == .front)
     }
+
+    @Test func fillEmptyDoesNotOverwriteFileCreatedDuringDownload() async throws {
+        let (lib, crate) = try makeTempCrate()
+        defer { try? FileManager.default.removeItem(at: lib) }
+
+        let userDroppedBytes = Data("user-dropped-cover-during-download".utf8)
+        let coverURL = io.coverURL(crate)
+        let png = StubURLProtocol.makeOnePixelPNG()
+
+        let session = StubURLProtocol.makeSession { req in
+            if req.url?.lastPathComponent == "front.png" {
+                try? userDroppedBytes.write(to: coverURL)
+            }
+            return .init(statusCode: 200, data: png)
+        }
+        let downloader = ArtDownloader(session: session)
+        let art: [ArtKind: URL] = [
+            .front: URL(string: "https://images.launchbox-app.com/front.png")!,
+            .back: URL(string: "https://images.launchbox-app.com/back.png")!,
+        ]
+
+        let recorder = OrderRecorder()
+        let result = await downloader.download(art, into: crate, mode: .fillEmpty) { kind in
+            recorder.append(kind)
+        }
+
+        #expect(result.written == [.back])
+        #expect(result.failed.isEmpty)
+        #expect(recorder.items == [.back])
+        #expect(try Data(contentsOf: coverURL) == userDroppedBytes)
+    }
 }
 
 private final class OrderRecorder: @unchecked Sendable {
