@@ -85,4 +85,76 @@ struct RetroThemeTests {
             }
         }
     }
+
+    @Test func preferencesAndSheetsRenderInStandardAndRetro() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "sheets-smoke-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let defaults = UserDefaults(suiteName: "doscrate-sheets-\(UUID().uuidString)")!
+        let prefs = Preferences(defaults: defaults)
+        let store = LibraryStore(library: root)
+        let model = AppModel(
+            prefs: prefs,
+            store: store,
+            sessions: SessionManager(runner: FakeRunner()),
+            importer: Importer(),
+            dosbox: root.appending(path: "dosbox"),
+            verifyDosbox: { _ in }
+        )
+
+        #expect(ImportSheet.locationLabel(for: .copy) == "Copy into library")
+        #expect(ImportSheet.locationLabel(for: .reference) == "Keep in place")
+        #expect(ImportSheet.duplicateActionLabel(for: .skip) == "Skip duplicates")
+        #expect(ImportSheet.duplicateActionLabel(for: .replace) == "Replace")
+        #expect(ImportSheet.duplicateActionLabel(for: .keepBoth) == "Keep Both")
+
+        let game = Game(title: "Doom", source: .managed)
+        let record = GameRecord(game: game, crateURL: root.appending(path: "Doom.doscrate"), status: .ok)
+        let prompt = ImportQueue.BatchPrompt(
+            urls: [root.appending(path: "Doom"), root.appending(path: "Keen")],
+            presetMode: nil,
+            matches: [root.appending(path: "Doom"): DuplicateMatch(record: record, kind: .sameTitle)]
+        )
+        let chooseRequest = ChooseProgramRequest(
+            gameID: game.id,
+            title: "Doom",
+            candidates: [ExecutableCandidate(relativePath: "DOOM.EXE", score: 100)]
+        )
+        let alert = AppAlert(title: "Test Alert", message: "Alert body", fix: .chooseExecutable, gameID: game.id)
+
+        for theme in AppTheme.allCases {
+            prefs.appTheme = theme
+
+            for tab in PreferencesView.Tab.allCases {
+                let prefsHosting = NSHostingView(rootView: PreferencesView(model: model, updater: nil, initialTab: tab))
+                prefsHosting.frame = NSRect(x: 0, y: 0, width: 520, height: 460)
+                prefsHosting.layoutSubtreeIfNeeded()
+            }
+
+            let importHosting = NSHostingView(rootView: ImportSheet(model: model, url: root) {})
+            importHosting.frame = NSRect(x: 0, y: 0, width: 460, height: 360)
+            importHosting.layoutSubtreeIfNeeded()
+
+            let batchHosting = NSHostingView(rootView: BatchImportSheet(model: model, prompt: prompt))
+            batchHosting.frame = NSRect(x: 0, y: 0, width: 420, height: 360)
+            batchHosting.layoutSubtreeIfNeeded()
+
+            let chooseHosting = NSHostingView(rootView: ChooseProgramSheet(model: model, request: chooseRequest))
+            chooseHosting.frame = NSRect(x: 0, y: 0, width: 440, height: 320)
+            chooseHosting.layoutSubtreeIfNeeded()
+
+            let firstRunHosting = NSHostingView(rootView: FirstRunView(model: model))
+            firstRunHosting.frame = NSRect(x: 0, y: 0, width: 480, height: 240)
+            firstRunHosting.layoutSubtreeIfNeeded()
+
+            let licensesHosting = NSHostingView(rootView: LicensesView(prefs: prefs))
+            licensesHosting.frame = NSRect(x: 0, y: 0, width: 640, height: 420)
+            licensesHosting.layoutSubtreeIfNeeded()
+
+            let alertHosting = NSHostingView(rootView: RetroAlertModal(model: model, alert: alert))
+            alertHosting.frame = NSRect(x: 0, y: 0, width: 420, height: 200)
+            alertHosting.layoutSubtreeIfNeeded()
+        }
+    }
 }

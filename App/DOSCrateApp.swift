@@ -77,7 +77,17 @@ struct DOSCrateApp: App {
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 model.stopAllSessions()
             }
-            .alert(item: $model.alert) { alert in
+            .overlay {
+                if LibraryLayout(theme: model.prefs.appTheme) == .retro, let alert = model.alert {
+                    RetroAlertModal(model: model, alert: alert)
+                }
+            }
+            .alert(
+                item: Binding(
+                    get: { LibraryLayout(theme: model.prefs.appTheme) == .standard ? model.alert : nil },
+                    set: { model.alert = $0 }
+                )
+            ) { alert in
                 if let fix = alert.fix, let id = alert.gameID {
                     Alert(title: Text(alert.title), message: Text(alert.message),
                           primaryButton: .default(Text(Self.label(fix))) { model.applyFix(fix, for: id) },
@@ -96,11 +106,11 @@ struct DOSCrateApp: App {
         }
 
         Window("Licenses", id: AppCommands.licensesWindowID) {
-            LicensesView()
+            LicensesView(prefs: model.prefs)
         }
     }
 
-    private static func label(_ fix: AppAlert.Fix) -> String {
+    static func label(_ fix: AppAlert.Fix) -> String {
         switch fix {
         case .chooseExecutable: "Choose Executable…"
         case .locateFolder: "Locate Folder…"
@@ -108,6 +118,48 @@ struct DOSCrateApp: App {
         case .resetCRoot: "Use Whole Folder as C:"
         case .recreate: "Recreate…"
         case .reinstall: "OK"
+        }
+    }
+}
+
+struct RetroAlertModal: View {
+    let model: AppModel
+    let alert: AppAlert
+
+    var body: some View {
+        ZStack {
+            RetroPalette.shadow.opacity(0.45)
+                .ignoresSafeArea()
+            RetroPanel(title: alert.title) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(alert.message)
+                        .font(RetroFont.font())
+                        .foregroundStyle(RetroPalette.shadow)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Spacer()
+                        if let fix = alert.fix, let id = alert.gameID {
+                            Button("Cancel") {
+                                model.alert = nil
+                            }
+                            .keyboardShortcut(.cancelAction)
+                            Button(DOSCrateApp.label(fix)) {
+                                model.alert = nil
+                                model.applyFix(fix, for: id)
+                            }
+                            .keyboardShortcut(.defaultAction)
+                        } else {
+                            Button("OK") {
+                                model.alert = nil
+                            }
+                            .keyboardShortcut(.defaultAction)
+                        }
+                    }
+                }
+                .padding(14)
+            }
+            .retroControls()
+            .frame(width: 420)
         }
     }
 }

@@ -6,20 +6,81 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct PreferencesView: View {
+    enum Tab: String, CaseIterable, Identifiable {
+        case general = "General"
+        case defaults = "Defaults"
+        case audio = "Audio"
+        case updates = "Updates"
+
+        var id: Self { self }
+    }
+
     let model: AppModel
     /// Nil when updates are not configured (Debug builds).
     let updater: SPUUpdater?
+    @State private var selectedTab: Tab
+    @Environment(\.retroTheme) private var retroTheme
+
+    init(model: AppModel, updater: SPUUpdater?, initialTab: Tab = .general) {
+        self.model = model
+        self.updater = updater
+        self._selectedTab = State(initialValue: initialTab)
+    }
+
+    private var isRetro: Bool {
+        retroTheme || LibraryLayout(theme: model.prefs.appTheme) == .retro
+    }
 
     var body: some View {
-        TabView {
-            GeneralPreferences(model: model)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            DefaultsPreferences(prefs: model.prefs)
-                .tabItem { Label("Defaults", systemImage: "slider.horizontal.3") }
-            AudioPreferences(prefs: model.prefs)
-                .tabItem { Label("Audio", systemImage: "speaker.wave.2") }
-            UpdatesPreferences(updater: updater)
-                .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
+        Group {
+            if isRetro {
+                RetroPanel(title: "Settings") {
+                    VStack(spacing: 0) {
+                        ThemedSegmented(
+                            "Section",
+                            showsTitle: false,
+                            selection: $selectedTab,
+                            options: Tab.allCases,
+                            label: \.rawValue
+                        )
+                        .padding(.horizontal, 12)
+                        .padding(.top, 10)
+                        .padding(.bottom, 8)
+
+                        RetroPalette.bevelDark.frame(height: 1)
+
+                        Group {
+                            switch selectedTab {
+                            case .general:
+                                GeneralPreferences(model: model)
+                            case .defaults:
+                                DefaultsPreferences(prefs: model.prefs)
+                            case .audio:
+                                AudioPreferences(prefs: model.prefs)
+                            case .updates:
+                                UpdatesPreferences(updater: updater)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                .retroControls()
+            } else {
+                TabView(selection: $selectedTab) {
+                    GeneralPreferences(model: model)
+                        .tabItem { Label("General", systemImage: "gearshape") }
+                        .tag(Tab.general)
+                    DefaultsPreferences(prefs: model.prefs)
+                        .tabItem { Label("Defaults", systemImage: "slider.horizontal.3") }
+                        .tag(Tab.defaults)
+                    AudioPreferences(prefs: model.prefs)
+                        .tabItem { Label("Audio", systemImage: "speaker.wave.2") }
+                        .tag(Tab.audio)
+                    UpdatesPreferences(updater: updater)
+                        .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
+                        .tag(Tab.updates)
+                }
+            }
         }
         .frame(width: 520, height: 460)
     }
@@ -32,13 +93,20 @@ private struct PathRow: View {
     var placeholder = "None"
     var onChoose: () -> Void
     var onClear: (() -> Void)?
+    @Environment(\.retroTheme) private var retroTheme
 
     var body: some View {
-        LabeledContent(title) {
-            HStack {
+        ThemedLabeledRow(title) {
+            HStack(spacing: 6) {
                 Text(path.isEmpty ? placeholder : path)
-                    .foregroundStyle(path.isEmpty ? .secondary : .primary)
-                    .lineLimit(1).truncationMode(.middle)
+                    .font(retroTheme ? RetroFont.font() : .body)
+                    .foregroundStyle(
+                        retroTheme
+                            ? (path.isEmpty ? RetroPalette.secondaryText : RetroPalette.shadow)
+                            : (path.isEmpty ? Color.secondary : Color.primary)
+                    )
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .textSelection(.enabled)
                 Button("Choose…", action: onChoose)
                 if let onClear, !path.isEmpty { Button("Clear", action: onClear) }
@@ -49,35 +117,38 @@ private struct PathRow: View {
 
 struct GeneralPreferences: View {
     let model: AppModel
+    @Environment(\.retroTheme) private var retroTheme
 
     var body: some View {
         @Bindable var prefs = model.prefs
-        Form {
-            PathRow(title: "Library location", path: prefs.libraryPath, onChoose: chooseLibrary)
-            Picker("Theme", selection: $prefs.appTheme) {
-                ForEach(AppTheme.allCases, id: \.self) { Text($0.displayName).tag($0) }
-            }
-            Picker("Default preset", selection: $prefs.defaultPreset) {
-                ForEach(Preset.allCases, id: \.self) { Text($0.displayName).tag($0) }
-            }
-            Picker("When importing", selection: $prefs.importLocation) {
-                ForEach(ImportLocationPreference.allCases, id: \.self) { Text($0.displayName).tag($0) }
-            }
-            Toggle("Fetch metadata on import", isOn: $prefs.fetchMetadataOnImport)
-            LabeledContent("LaunchBox database") {
-                HStack(spacing: 8) {
-                    Text(Self.lastUpdatedText(model.metadata.lastUpdated))
-                        .foregroundStyle(.secondary)
-                    Button("Refresh LaunchBox data") {
-                        Self.refreshLaunchBox(model: model)
+        ThemedForm {
+            ThemedSection {
+                PathRow(title: "Library location", path: prefs.libraryPath, onChoose: chooseLibrary)
+                ThemedValuePicker("Theme", selection: $prefs.appTheme, options: AppTheme.allCases, label: \.displayName)
+                ThemedValuePicker("Default preset", selection: $prefs.defaultPreset, options: Preset.allCases, label: \.displayName)
+                ThemedValuePicker(
+                    "When importing",
+                    selection: $prefs.importLocation,
+                    options: ImportLocationPreference.allCases,
+                    label: \.displayName
+                )
+                Toggle("Fetch metadata on import", isOn: $prefs.fetchMetadataOnImport)
+                ThemedLabeledRow("LaunchBox database") {
+                    HStack(spacing: 8) {
+                        Text(Self.lastUpdatedText(model.metadata.lastUpdated))
+                            .font(retroTheme ? RetroFont.font() : .body)
+                            .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
+                        Button("Refresh LaunchBox data") {
+                            Self.refreshLaunchBox(model: model)
+                        }
                     }
                 }
+                Toggle("Use game controllers", isOn: $prefs.useControllers)
+                Text("Maps the d-pad, left stick, A/B/X/Y and Start to keyboard keys.")
+                    .font(retroTheme ? RetroFont.font() : .caption)
+                    .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
             }
-            Toggle("Use game controllers", isOn: $prefs.useControllers)
-            Text("Maps the d-pad, left stick, A/B/X/Y and Start to keyboard keys.")
-                .font(.caption).foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
     }
 
     static func lastUpdatedText(_ date: Date?) -> String {
@@ -103,20 +174,33 @@ struct GeneralPreferences: View {
 
 private struct DefaultsPreferences: View {
     @Bindable var prefs: Preferences
+    @Environment(\.retroTheme) private var retroTheme
 
     var body: some View {
-        Form {
-            Text("Applied to every game before its own settings.").foregroundStyle(.secondary)
+        ThemedForm {
+            Text("Applied to every game before its own settings.")
+                .font(retroTheme ? RetroFont.font() : .body)
+                .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
             CuratedSettingsSections(settings: $prefs.globalOverrides, showsPreset: false)
-            Section("Raw DOSBox settings") {
-                TextEditor(text: $prefs.rawGlobalOverrides)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 80)
-                    .scrollContentBackground(.hidden)
-                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 4))
+            ThemedSection("Raw DOSBox settings") {
+                if retroTheme {
+                    TextEditor(text: $prefs.rawGlobalOverrides)
+                        .font(RetroFont.font())
+                        .foregroundStyle(RetroPalette.shadow)
+                        .frame(minHeight: 80)
+                        .scrollContentBackground(.hidden)
+                        .padding(4)
+                        .background(RetroPalette.bevelLight)
+                        .retroBevel(.sunken)
+                } else {
+                    TextEditor(text: $prefs.rawGlobalOverrides)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 80)
+                        .scrollContentBackground(.hidden)
+                        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 4))
+                }
             }
         }
-        .formStyle(.grouped)
     }
 }
 
@@ -124,13 +208,14 @@ private struct AudioPreferences: View {
     @Bindable var prefs: Preferences
 
     var body: some View {
-        Form {
-            PathRow(title: "SoundFont (.sf2)", path: prefs.soundfontPath, onChoose: chooseSoundfont,
-                    onClear: { prefs.soundfontPath = "" })
-            PathRow(title: "MT-32 ROM folder", path: prefs.mt32RomDir, onChoose: chooseRomFolder,
-                    onClear: { prefs.mt32RomDir = "" })
+        ThemedForm {
+            ThemedSection {
+                PathRow(title: "SoundFont (.sf2)", path: prefs.soundfontPath, onChoose: chooseSoundfont,
+                        onClear: { prefs.soundfontPath = "" })
+                PathRow(title: "MT-32 ROM folder", path: prefs.mt32RomDir, onChoose: chooseRomFolder,
+                        onClear: { prefs.mt32RomDir = "" })
+            }
         }
-        .formStyle(.grouped)
     }
 
     private func chooseSoundfont() {
@@ -152,6 +237,7 @@ private struct AudioPreferences: View {
 private struct UpdatesPreferences: View {
     let updater: SPUUpdater?
     @State private var automatic: Bool
+    @Environment(\.retroTheme) private var retroTheme
 
     init(updater: SPUUpdater?) {
         self.updater = updater
@@ -159,15 +245,18 @@ private struct UpdatesPreferences: View {
     }
 
     var body: some View {
-        Form {
-            Toggle("Automatically check for updates", isOn: $automatic)
-                .disabled(updater == nil)
-                .onChange(of: automatic) { _, new in updater?.automaticallyChecksForUpdates = new }
-            if updater == nil {
-                Text("Updates are not configured in this build.").foregroundStyle(.secondary)
+        ThemedForm {
+            ThemedSection {
+                Toggle("Automatically check for updates", isOn: $automatic)
+                    .disabled(updater == nil)
+                    .onChange(of: automatic) { _, new in updater?.automaticallyChecksForUpdates = new }
+                if updater == nil {
+                    Text("Updates are not configured in this build.")
+                        .font(retroTheme ? RetroFont.font() : .body)
+                        .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
+                }
             }
         }
-        .formStyle(.grouped)
         .onAppear {
             automatic = updater?.automaticallyChecksForUpdates ?? false
         }

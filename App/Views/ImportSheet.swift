@@ -468,6 +468,7 @@ struct ImportSheet: View {
     @State private var isScanningSubfolders = false
     @State private var duplicateAction = DuplicateAction.skip
     @State private var showsDuplicates = false
+    @Environment(\.retroTheme) private var retroTheme
 
     init(model: AppModel, url: URL, defaultMode: ImportMode? = nil, onFinish: @escaping () -> Void) {
         self.model = model
@@ -486,9 +487,51 @@ struct ImportSheet: View {
         }
     }
 
+    nonisolated static func locationLabel(for mode: ImportMode) -> String {
+        switch mode {
+        case .copy: "Copy into library"
+        case .reference: "Keep in place"
+        }
+    }
+
+    nonisolated static func duplicateActionLabel(for action: DuplicateAction) -> String {
+        switch action {
+        case .skip: "Skip duplicates"
+        case .replace: "Replace"
+        case .keepBoth: "Keep Both"
+        }
+    }
+
+    private var isRetro: Bool {
+        retroTheme || LibraryLayout(theme: model.prefs.appTheme) == .retro
+    }
+
     var body: some View {
+        Group {
+            if isRetro {
+                RetroPanel(title: "Import \(url.lastPathComponent)") {
+                    sheetContent(inRetroPanel: true)
+                        .padding(14)
+                }
+                .retroControls()
+            } else {
+                sheetContent(inRetroPanel: false)
+                    .padding(20)
+            }
+        }
+        .frame(width: 460)
+        .task { await prepare() }
+        .task(id: importSubfolders) {
+            guard importSubfolders, subfolderScan == nil else { return }
+            await scanSubfolders()
+        }
+    }
+
+    @ViewBuilder private func sheetContent(inRetroPanel: Bool) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Import \(url.lastPathComponent)").font(.headline)
+            if !inRetroPanel {
+                Text("Import \(url.lastPathComponent)").font(.headline)
+            }
             if isDirectory {
                 Toggle("Import subfolders as separate games", isOn: $importSubfolders)
                     .disabled(isCreating)
@@ -500,15 +543,21 @@ struct ImportSheet: View {
                     form(prepared)
                 } else if error == nil {
                     HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
+                        if inRetroPanel {
+                            RetroSpinner()
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
                         Text("Reading \(url.lastPathComponent)…")
                     }
                 }
                 if let error {
-                    Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                    Text(error)
+                        .foregroundStyle(inRetroPanel ? RetroPalette.red : .red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            HStack {
+            HStack(spacing: 8) {
                 Spacer()
                 if importSubfolders {
                     Button("Cancel", role: .cancel, action: cancel)
@@ -536,64 +585,60 @@ struct ImportSheet: View {
                 }
             }
         }
-        .padding(20)
-        .frame(width: 460)
-        .task { await prepare() }
-        .task(id: importSubfolders) {
-            guard importSubfolders, subfolderScan == nil else { return }
-            await scanSubfolders()
-        }
     }
 
     @ViewBuilder private var subfoldersForm: some View {
-        Picker("Location", selection: $mode) {
-            Text("Copy into library").tag(ImportMode.copy)
-            Text("Keep in place").tag(ImportMode.reference)
-        }
-        .pickerStyle(.radioGroup)
+        ThemedRadioGroup(
+            "Location",
+            selection: $mode,
+            options: [.copy, .reference],
+            label: Self.locationLabel
+        )
         .disabled(isCreating)
         Text("Zips and disc images are always copied.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(isRetro ? RetroFont.font() : .caption)
+            .foregroundStyle(isRetro ? RetroPalette.secondaryText : .secondary)
         if isScanningSubfolders {
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+                if isRetro {
+                    RetroSpinner()
+                } else {
+                    ProgressView().controlSize(.small)
+                }
                 Text("Looking for games in \(url.lastPathComponent)…")
             }
         } else if let scan = subfolderScan {
             if scan.urls.isEmpty {
                 Text("No games were found in this folder.")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(isRetro ? RetroPalette.red : .red)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(scan.urls.count == 1 ? "Found 1 game." : "Found \(scan.urls.count) games.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(isRetro ? RetroFont.font() : .callout)
+                    .foregroundStyle(isRetro ? RetroPalette.secondaryText : .secondary)
                 if scan.hasDuplicates {
-                    Divider()
-                    Text(scan.duplicateMessage).font(.subheadline.weight(.medium))
-                    DisclosureGroup("Already in library (\(scan.duplicateCount))", isExpanded: $showsDuplicates) {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 2) {
-                                ForEach(Array(scan.duplicateTitles.enumerated()), id: \.offset) { _, name in
-                                    Text(name).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 100)
+                    if isRetro {
+                        RetroPalette.bevelDark.frame(height: 1)
+                    } else {
+                        Divider()
                     }
-                    .font(.caption)
-                    Picker("Duplicates", selection: $duplicateAction) {
-                        Text("Skip duplicates").tag(DuplicateAction.skip)
-                        Text("Replace").tag(DuplicateAction.replace)
-                        Text("Keep Both").tag(DuplicateAction.keepBoth)
-                    }
-                    .pickerStyle(.radioGroup)
+                    Text(scan.duplicateMessage)
+                        .font(isRetro ? RetroFont.font() : .subheadline.weight(.medium))
+                    ThemedDuplicatesDisclosure(
+                        count: scan.duplicateCount,
+                        titles: scan.duplicateTitles,
+                        isExpanded: $showsDuplicates
+                    )
+                    ThemedRadioGroup(
+                        "Duplicates",
+                        selection: $duplicateAction,
+                        options: [.skip, .replace, .keepBoth],
+                        label: Self.duplicateActionLabel
+                    )
                     .disabled(isCreating)
                     Text("Replace keeps saves, settings and play history. Copied games are replaced with a copy.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(isRetro ? RetroFont.font() : .caption)
+                        .foregroundStyle(isRetro ? RetroPalette.secondaryText : .secondary)
                 }
             }
         }
@@ -603,36 +648,50 @@ struct ImportSheet: View {
         if let match = duplicateMatch {
             VStack(alignment: .leading, spacing: 2) {
                 Text(Self.duplicateNotice(for: match))
-                    .font(.callout.weight(.medium))
+                    .font(isRetro ? RetroFont.font() : .callout.weight(.medium))
                 Text(match.record.game.source == .managed
                      ? "Replace keeps saves, settings and play history. It copies the new files so the saves are kept."
                      : "Replace keeps saves, settings and play history.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(isRetro ? RetroFont.font() : .caption)
+                    .foregroundStyle(isRetro ? RetroPalette.secondaryText : .secondary)
             }
         }
-        Picker("Location", selection: $mode) {
-            Text("Copy into library").tag(ImportMode.copy)
-            Text("Keep in place").tag(ImportMode.reference)
-        }
-        .pickerStyle(.radioGroup)
+        ThemedRadioGroup(
+            "Location",
+            selection: $mode,
+            options: [.copy, .reference],
+            label: Self.locationLabel
+        )
         .disabled(!prepared.allowsReference || isCreating)
         if !prepared.allowsReference {
-            Text("Archives and images are always copied.").font(.caption).foregroundStyle(.secondary)
+            Text("Archives and images are always copied.")
+                .font(isRetro ? RetroFont.font() : .caption)
+                .foregroundStyle(isRetro ? RetroPalette.secondaryText : .secondary)
         }
         if !prepared.candidates.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Program")
-                List(prepared.candidates, id: \.relativePath, selection: $executable) { candidate in
-                    Text(candidate.relativePath).tag(candidate.relativePath)
+                if isRetro {
+                    RetroCandidateList(candidates: prepared.candidates, selection: $executable)
+                        .frame(height: 140)
+                } else {
+                    List(prepared.candidates, id: \.relativePath, selection: $executable) { candidate in
+                        Text(candidate.relativePath).tag(candidate.relativePath)
+                    }
+                    .frame(height: 140)
+                    .border(Color.secondary.opacity(0.3))
                 }
-                .frame(height: 140)
-                .border(Color.secondary.opacity(0.3))
             }
         } else {
-            Text("Install the game from D: after it is created.").font(.caption).foregroundStyle(.secondary)
+            Text("Install the game from D: after it is created.")
+                .font(isRetro ? RetroFont.font() : .caption)
+                .foregroundStyle(isRetro ? RetroPalette.secondaryText : .secondary)
         }
-        TextField("Title", text: $title)
+        if isRetro {
+            ThemedTextField(title: "Title", text: $title)
+        } else {
+            TextField("Title", text: $title)
+        }
     }
 
     private func prepare() async {
@@ -738,49 +797,71 @@ struct BatchImportSheet: View {
     @State private var remember = false
     @State private var duplicateAction = DuplicateAction.skip
     @State private var showsDuplicates = false
+    @Environment(\.retroTheme) private var retroTheme
+
+    private var isRetro: Bool {
+        retroTheme || LibraryLayout(theme: model.prefs.appTheme) == .retro
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(prompt.title).font(.headline)
-            if prompt.presetMode == nil {
-                Picker("Location", selection: $mode) {
-                    Text("Copy into library").tag(ImportMode.copy)
-                    Text("Keep in place").tag(ImportMode.reference)
+        Group {
+            if isRetro {
+                RetroPanel(title: prompt.title) {
+                    sheetContent(inRetroPanel: true)
+                        .padding(14)
                 }
-                .pickerStyle(.radioGroup)
+                .retroControls()
+            } else {
+                sheetContent(inRetroPanel: false)
+                    .padding(20)
+            }
+        }
+        .frame(width: 420)
+    }
+
+    @ViewBuilder private func sheetContent(inRetroPanel: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if !inRetroPanel {
+                Text(prompt.title).font(.headline)
+            }
+            if prompt.presetMode == nil {
+                ThemedRadioGroup(
+                    "Location",
+                    selection: $mode,
+                    options: [.copy, .reference],
+                    label: ImportSheet.locationLabel
+                )
                 Text("Zips and disc images are always copied.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(inRetroPanel ? RetroFont.font() : .caption)
+                    .foregroundStyle(inRetroPanel ? RetroPalette.secondaryText : .secondary)
                 Toggle("Remember my choice", isOn: $remember)
             }
             if prompt.hasDuplicates {
                 if prompt.presetMode == nil {
-                    Divider()
-                    Text(prompt.duplicateMessage).font(.subheadline.weight(.medium))
-                }
-                DisclosureGroup("Already in library (\(prompt.duplicateCount))", isExpanded: $showsDuplicates) {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(prompt.duplicateTitles.enumerated()), id: \.offset) { _, name in
-                                Text(name).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if inRetroPanel {
+                        RetroPalette.bevelDark.frame(height: 1)
+                    } else {
+                        Divider()
                     }
-                    .frame(maxHeight: 100)
+                    Text(prompt.duplicateMessage)
+                        .font(inRetroPanel ? RetroFont.font() : .subheadline.weight(.medium))
                 }
-                .font(.caption)
-                Picker("Duplicates", selection: $duplicateAction) {
-                    Text("Skip duplicates").tag(DuplicateAction.skip)
-                    Text("Replace").tag(DuplicateAction.replace)
-                    Text("Keep Both").tag(DuplicateAction.keepBoth)
-                }
-                .pickerStyle(.radioGroup)
+                ThemedDuplicatesDisclosure(
+                    count: prompt.duplicateCount,
+                    titles: prompt.duplicateTitles,
+                    isExpanded: $showsDuplicates
+                )
+                ThemedRadioGroup(
+                    "Duplicates",
+                    selection: $duplicateAction,
+                    options: [.skip, .replace, .keepBoth],
+                    label: ImportSheet.duplicateActionLabel
+                )
                 Text("Replace keeps saves, settings and play history. Copied games are replaced with a copy.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(inRetroPanel ? RetroFont.font() : .caption)
+                    .foregroundStyle(inRetroPanel ? RetroPalette.secondaryText : .secondary)
             }
-            HStack {
+            HStack(spacing: 8) {
                 Spacer()
                 Button("Cancel", role: .cancel) {
                     model.imports.cancelBatch()
@@ -797,8 +878,6 @@ struct BatchImportSheet: View {
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(20)
-        .frame(width: 420)
     }
 }
 
@@ -807,6 +886,7 @@ struct ChooseProgramSheet: View {
     let request: ChooseProgramRequest
 
     @State private var selection: String?
+    @Environment(\.retroTheme) private var retroTheme
 
     init(model: AppModel, request: ChooseProgramRequest) {
         self.model = model
@@ -814,16 +894,48 @@ struct ChooseProgramSheet: View {
         self._selection = State(initialValue: request.candidates.first?.relativePath)
     }
 
+    private var isRetro: Bool {
+        retroTheme || LibraryLayout(theme: model.prefs.appTheme) == .retro
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(request.title).font(.headline)
-            Text("Choose which program starts this game.").font(.subheadline).foregroundStyle(.secondary)
-            List(request.candidates, id: \.relativePath, selection: $selection) { candidate in
-                Text(candidate.relativePath).tag(candidate.relativePath)
+        Group {
+            if isRetro {
+                RetroPanel(title: request.title) {
+                    sheetContent(inRetroPanel: true)
+                        .padding(14)
+                }
+                .retroControls()
+            } else {
+                sheetContent(inRetroPanel: false)
+                    .padding(20)
             }
-            .frame(height: 160)
-            .border(Color.secondary.opacity(0.3))
-            HStack {
+        }
+        .frame(width: 440)
+    }
+
+    @ViewBuilder private func sheetContent(inRetroPanel: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if !inRetroPanel {
+                Text(request.title).font(.headline)
+            }
+            Text("Choose which program starts this game.")
+                .font(inRetroPanel ? RetroFont.font() : .subheadline)
+                .foregroundStyle(inRetroPanel ? RetroPalette.secondaryText : .secondary)
+            if inRetroPanel {
+                RetroCandidateList(candidates: request.candidates, selection: $selection) { chosen in
+                    selection = chosen
+                    model.confirmProgram(chosen)
+                }
+                .frame(height: 160)
+            } else {
+                List(request.candidates, id: \.relativePath, selection: $selection) { candidate in
+                    Text(candidate.relativePath).tag(candidate.relativePath)
+                }
+                .frame(height: 160)
+                .border(Color.secondary.opacity(0.3))
+            }
+            HStack(spacing: 8) {
                 Button("Choose another file…") { model.chooseAnotherProgram() }
                 Spacer()
                 Button("Cancel", role: .cancel) { model.cancelChooseProgram() }
@@ -835,7 +947,108 @@ struct ChooseProgramSheet: View {
                 .disabled(selection == nil)
             }
         }
-        .padding(20)
-        .frame(width: 440)
+    }
+}
+
+private struct RetroCandidateList: View {
+    let candidates: [ExecutableCandidate]
+    @Binding var selection: String?
+    var onDoubleClick: ((String) -> Void)?
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(candidates, id: \.relativePath) { candidate in
+                    let path = candidate.relativePath
+                    let selected = (selection == path)
+                    HStack {
+                        Text(path)
+                            .font(RetroFont.font())
+                            .foregroundStyle(RetroPalette.highlightText)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(selected ? RetroPalette.highlight : RetroPalette.desktop)
+                    .overlay {
+                        if selected {
+                            Rectangle()
+                                .strokeBorder(RetroPalette.highlightText, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        selection = path
+                        onDoubleClick?(path)
+                    }
+                    .onTapGesture {
+                        selection = path
+                    }
+                }
+            }
+        }
+        .background(RetroPalette.desktop)
+        .retroBevel(.sunken)
+    }
+}
+
+private struct ThemedDuplicatesDisclosure: View {
+    let count: Int
+    let titles: [String]
+    @Binding var isExpanded: Bool
+    @Environment(\.retroTheme) private var retroTheme
+
+    var body: some View {
+        if retroTheme {
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(isExpanded ? "▼" : "▶")
+                            .font(RetroFont.font())
+                            .foregroundStyle(RetroPalette.shadow)
+                        Text("Already in library (\(count))")
+                            .font(RetroFont.font())
+                            .foregroundStyle(RetroPalette.shadow)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if isExpanded {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(Array(titles.enumerated()), id: \.offset) { _, name in
+                                Text(name)
+                                    .font(RetroFont.font())
+                                    .foregroundStyle(RetroPalette.highlightText)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 100)
+                    .background(RetroPalette.desktop)
+                    .retroBevel(.sunken)
+                }
+            }
+        } else {
+            DisclosureGroup("Already in library (\(count))", isExpanded: $isExpanded) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(titles.enumerated()), id: \.offset) { _, name in
+                            Text(name).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 100)
+            }
+            .font(.caption)
+        }
     }
 }
