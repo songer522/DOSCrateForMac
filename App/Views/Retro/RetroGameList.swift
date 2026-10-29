@@ -9,6 +9,7 @@ struct RetroGameList: View {
     @State private var anchor: UUID?
     @State private var cursor: UUID?
     @FocusState private var isFocused: Bool
+    @Environment(\.isEnabled) private var isEnabled
 
     static let titleMinWidth: CGFloat = 200
     static let columnWidths: [CGFloat] = [60, 160, 120, 100]
@@ -50,10 +51,22 @@ struct RetroGameList: View {
                 .background(RetroPalette.desktop)
             }
             .retroBevel(.sunken)
-            .focusable()
+            .focusable(isEnabled)
             .focusEffectDisabled()
             .focused($isFocused)
+            .onAppear {
+                if isEnabled { isFocused = true }
+            }
+            .onChange(of: isEnabled) { _, enabled in
+                isFocused = enabled
+                if enabled {
+                    DispatchQueue.main.async {
+                        isFocused = true
+                    }
+                }
+            }
             .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
+                guard isEnabled else { return .ignored }
                 let delta = press.key == .upArrow ? -1 : 1
                 guard let next = moveSelection(by: delta, extend: press.modifiers.contains(.shift)) else {
                     return .ignored
@@ -62,11 +75,12 @@ struct RetroGameList: View {
                 return .handled
             }
             .onKeyPress(.return) {
-                guard let id = GridSelection.activationTarget(model.selectedIDs) else { return .ignored }
+                guard isEnabled, let id = GridSelection.activationTarget(model.selectedIDs) else { return .ignored }
                 model.play(id)
                 return .handled
             }
             .onMoveCommand { direction in
+                guard isEnabled else { return }
                 let delta: Int
                 switch direction {
                 case .up: delta = -1
@@ -79,9 +93,11 @@ struct RetroGameList: View {
                 }
             }
             .onCommand(#selector(NSResponder.selectAll(_:))) {
+                guard isEnabled else { return }
                 model.selectedIDs = Set(records.map(\.id))
             }
             .onDeleteCommand {
+                guard isEnabled else { return }
                 commands.requestRemoval(model.selectedIDs)
             }
         }
@@ -186,6 +202,7 @@ struct RetroGameList: View {
     }
 
     private func selectOnly(_ id: UUID) {
+        guard isEnabled else { return }
         model.selection = id
         anchor = id
         cursor = id
@@ -193,6 +210,7 @@ struct RetroGameList: View {
     }
 
     private func toggle(_ id: UUID) {
+        guard isEnabled else { return }
         model.selectedIDs = GridSelection.toggle(id, in: model.selectedIDs)
         anchor = id
         cursor = id
@@ -200,6 +218,7 @@ struct RetroGameList: View {
     }
 
     private func extend(to id: UUID) {
+        guard isEnabled else { return }
         isFocused = true
         guard let selected = GridSelection.extend(from: anchor, to: id, in: records.map(\.id)) else {
             return selectOnly(id)

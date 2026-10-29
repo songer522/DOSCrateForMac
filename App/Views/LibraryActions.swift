@@ -58,11 +58,26 @@ struct LibraryActions: ViewModifier {
         LibraryLayout(theme: model.prefs.appTheme) == .retro
     }
 
+    static func isShowingRetroRemoval(
+        isRetro: Bool,
+        removingRecord: GameRecord?,
+        removingMany: Set<UUID>?
+    ) -> Bool {
+        isRetro && (removingRecord != nil || removingMany != nil)
+    }
+
     func body(content: Content) -> some View {
+        let removingRecord = removing.flatMap(model.store.record)
+        let showingRetroRemoval = Self.isShowingRetroRemoval(
+            isRetro: isRetro,
+            removingRecord: removingRecord,
+            removingMany: removingMany
+        )
         content
+            .disabled(showingRetroRemoval)
             .overlay {
                 if isRetro {
-                    if let record = removing.flatMap(model.store.record) {
+                    if let record = removingRecord {
                         retroRemoveSingleOverlay(record)
                     } else if let ids = removingMany {
                         retroRemoveManyOverlay(ids)
@@ -167,44 +182,43 @@ struct LibraryActions: ViewModifier {
 
     @ViewBuilder private func retroRemoveSingleOverlay(_ record: GameRecord) -> some View {
         let running = model.sessions.running.contains(record.id)
-        ZStack {
-            RetroPalette.shadow.opacity(0.45)
-                .ignoresSafeArea()
-            RetroPanel(title: "Remove this game?") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(LibraryView.removalMessage(for: record, running: model.isActive(record.id)))
-                        .font(RetroFont.font())
-                        .foregroundStyle(RetroPalette.shadow)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        Spacer()
-                        Button("Cancel") {
-                            removing = nil
+        RetroModalContainer(
+            title: "Remove this game?",
+            width: 440,
+            onCancel: { removing = nil },
+            onDefaultAction: running ? nil : { remove(record, trashFiles: true) }
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(LibraryView.removalMessage(for: record, running: model.isActive(record.id)))
+                    .font(RetroFont.font())
+                    .foregroundStyle(RetroPalette.shadow)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button("Cancel") {
+                        removing = nil
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    if case .referenced = record.game.source {
+                        Button("Remove from Library") {
+                            remove(record, trashFiles: false)
                         }
-                        .keyboardShortcut(.cancelAction)
-                        if case .referenced = record.game.source {
-                            Button("Remove from Library") {
-                                remove(record, trashFiles: false)
-                            }
-                            .disabled(running)
-                            Button("Move Files to Trash") {
-                                remove(record, trashFiles: true)
-                            }
-                            .disabled(running)
-                            .keyboardShortcut(.defaultAction)
-                        } else {
-                            Button("Move to Trash") {
-                                remove(record, trashFiles: true)
-                            }
-                            .disabled(running)
-                            .keyboardShortcut(.defaultAction)
+                        .disabled(running)
+                        Button("Move Files to Trash") {
+                            remove(record, trashFiles: true)
                         }
+                        .disabled(running)
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("Move to Trash") {
+                            remove(record, trashFiles: true)
+                        }
+                        .disabled(running)
+                        .keyboardShortcut(.defaultAction)
                     }
                 }
-                .padding(14)
             }
-            .retroControls()
-            .frame(width: 440)
+            .padding(14)
         }
     }
 
@@ -214,47 +228,53 @@ struct LibraryActions: ViewModifier {
             if case .referenced = $0.game.source { return true }
             return false
         }
-        ZStack {
-            RetroPalette.shadow.opacity(0.45)
-                .ignoresSafeArea()
-            RetroPanel(title: "Remove \(ids.count) games?") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(
-                        LibraryView.removalMessage(
-                            for: ids.compactMap(model.store.record),
-                            running: model.sessions.running.union(model.startingIDs)
-                        )
+        let defaultAction: (() -> Void)? = if hasReferenced {
+            { removeMany(ids, trashFolders: true) }
+        } else if !targets.isEmpty {
+            { removeMany(ids, trashFolders: false) }
+        } else {
+            nil
+        }
+        RetroModalContainer(
+            title: "Remove \(ids.count) games?",
+            width: 460,
+            onCancel: { removingMany = nil },
+            onDefaultAction: defaultAction
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(
+                    LibraryView.removalMessage(
+                        for: ids.compactMap(model.store.record),
+                        running: model.sessions.running.union(model.startingIDs)
                     )
-                    .font(RetroFont.font())
-                    .foregroundStyle(RetroPalette.shadow)
-                    .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        Spacer()
-                        Button("Cancel") {
-                            removingMany = nil
+                )
+                .font(RetroFont.font())
+                .foregroundStyle(RetroPalette.shadow)
+                .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button("Cancel") {
+                        removingMany = nil
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    if hasReferenced {
+                        Button("Remove from Library") {
+                            removeMany(ids, trashFolders: false)
                         }
-                        .keyboardShortcut(.cancelAction)
-                        if hasReferenced {
-                            Button("Remove from Library") {
-                                removeMany(ids, trashFolders: false)
-                            }
-                            Button("Also Move Folders to Trash") {
-                                removeMany(ids, trashFolders: true)
-                            }
-                            .keyboardShortcut(.defaultAction)
-                        } else {
-                            Button("Move to Trash") {
-                                removeMany(ids, trashFolders: false)
-                            }
-                            .disabled(targets.isEmpty)
-                            .keyboardShortcut(.defaultAction)
+                        Button("Also Move Folders to Trash") {
+                            removeMany(ids, trashFolders: true)
                         }
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("Move to Trash") {
+                            removeMany(ids, trashFolders: false)
+                        }
+                        .disabled(targets.isEmpty)
+                        .keyboardShortcut(.defaultAction)
                     }
                 }
-                .padding(14)
             }
-            .retroControls()
-            .frame(width: 460)
+            .padding(14)
         }
     }
 

@@ -8,6 +8,7 @@ struct RetroGameGrid: View {
     let commands: LibraryCommands
     @State private var anchor: UUID?
     @FocusState private var isFocused: Bool
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         ScrollView {
@@ -27,19 +28,32 @@ struct RetroGameGrid: View {
         .contentShape(Rectangle())
         .onTapGesture { clearSelection() }
         .background(RetroPalette.desktop)
-        .focusable()
+        .focusable(isEnabled)
         .focusEffectDisabled()
         .focused($isFocused)
-        .onAppear { isFocused = true }
+        .onAppear {
+            if isEnabled { isFocused = true }
+        }
+        .onChange(of: isEnabled) { _, enabled in
+            isFocused = enabled
+            if enabled {
+                DispatchQueue.main.async {
+                    isFocused = true
+                }
+            }
+        }
         .onCommand(#selector(NSResponder.selectAll(_:))) {
+            guard isEnabled else { return }
             model.selectedIDs = Set(records.map(\.id))
         }
         .onDeleteCommand {
+            guard isEnabled else { return }
             commands.requestRemoval(model.selectedIDs)
         }
     }
 
     private func clearSelection() {
+        guard isEnabled else { return }
         GridSelection.clear(selected: &model.selectedIDs, anchor: &anchor)
         isFocused = true
     }
@@ -85,18 +99,21 @@ struct RetroGameGrid: View {
     }
 
     private func selectOnly(_ id: UUID) {
+        guard isEnabled else { return }
         model.selection = id
         anchor = id
         isFocused = true
     }
 
     private func toggle(_ id: UUID) {
+        guard isEnabled else { return }
         model.selectedIDs = GridSelection.toggle(id, in: model.selectedIDs)
         anchor = id
         isFocused = true
     }
 
     private func extend(to id: UUID) {
+        guard isEnabled else { return }
         isFocused = true
         guard let selected = GridSelection.extend(from: anchor, to: id, in: records.map(\.id)) else {
             return selectOnly(id)

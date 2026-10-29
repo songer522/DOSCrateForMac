@@ -950,46 +950,103 @@ struct ChooseProgramSheet: View {
     }
 }
 
-private struct RetroCandidateList: View {
+struct RetroCandidateList: View {
     let candidates: [ExecutableCandidate]
     @Binding var selection: String?
     var onDoubleClick: ((String) -> Void)?
+    @FocusState private var isFocused: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    static func steppedSelection(
+        in candidates: [ExecutableCandidate],
+        current: String?,
+        by delta: Int
+    ) -> String? {
+        guard !candidates.isEmpty, delta != 0 else { return nil }
+        let paths = candidates.map(\.relativePath)
+        guard let current, let index = paths.firstIndex(of: current) else {
+            return delta > 0 ? paths.first : paths.last
+        }
+        let nextIndex = min(max(index + delta, 0), paths.count - 1)
+        return paths[nextIndex]
+    }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(candidates, id: \.relativePath) { candidate in
-                    let path = candidate.relativePath
-                    let selected = (selection == path)
-                    HStack {
-                        Text(path)
-                            .font(RetroFont.font())
-                            .foregroundStyle(RetroPalette.highlightText)
-                            .lineLimit(1)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(selected ? RetroPalette.highlight : RetroPalette.desktop)
-                    .overlay {
-                        if selected {
-                            Rectangle()
-                                .strokeBorder(RetroPalette.highlightText, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(candidates, id: \.relativePath) { candidate in
+                        let path = candidate.relativePath
+                        let selected = (selection == path)
+                        HStack {
+                            Text(path)
+                                .font(RetroFont.font())
+                                .foregroundStyle(RetroPalette.highlightText)
+                                .lineLimit(1)
+                            Spacer()
                         }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) {
-                        selection = path
-                        onDoubleClick?(path)
-                    }
-                    .onTapGesture {
-                        selection = path
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(selected ? RetroPalette.highlight : RetroPalette.desktop)
+                        .overlay {
+                            if selected {
+                                Rectangle()
+                                    .strokeBorder(RetroPalette.highlightText, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .id(path)
+                        .onTapGesture(count: 2) {
+                            guard isEnabled else { return }
+                            selection = path
+                            isFocused = true
+                            onDoubleClick?(path)
+                        }
+                        .onTapGesture {
+                            guard isEnabled else { return }
+                            selection = path
+                            isFocused = true
+                        }
                     }
                 }
             }
+            .background(RetroPalette.desktop)
+            .retroBevel(.sunken)
+            .focusable(isEnabled)
+            .focusEffectDisabled()
+            .focused($isFocused)
+            .onAppear {
+                if isEnabled { isFocused = true }
+            }
+            .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
+                guard isEnabled else { return .ignored }
+                let delta = press.key == .upArrow ? -1 : 1
+                guard let next = Self.steppedSelection(in: candidates, current: selection, by: delta) else {
+                    return .ignored
+                }
+                selection = next
+                proxy.scrollTo(next)
+                return .handled
+            }
+            .onKeyPress(.return) {
+                guard isEnabled, let selection, let onDoubleClick else { return .ignored }
+                onDoubleClick(selection)
+                return .handled
+            }
+            .onMoveCommand { direction in
+                guard isEnabled else { return }
+                let delta: Int
+                switch direction {
+                case .up: delta = -1
+                case .down: delta = 1
+                default: return
+                }
+                if let next = Self.steppedSelection(in: candidates, current: selection, by: delta) {
+                    selection = next
+                    proxy.scrollTo(next)
+                }
+            }
         }
-        .background(RetroPalette.desktop)
-        .retroBevel(.sunken)
     }
 }
 

@@ -488,6 +488,69 @@ struct ThemedLabeledRow<Content: View>: View {
     }
 }
 
+struct RetroModalContainer<Content: View>: View {
+    let title: String
+    let width: CGFloat
+    var onCancel: (() -> Void)?
+    var onDefaultAction: (() -> Void)?
+    private let content: Content
+    @FocusState private var isFocused: Bool
+
+    init(
+        title: String,
+        width: CGFloat,
+        onCancel: (() -> Void)? = nil,
+        onDefaultAction: (() -> Void)? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.width = width
+        self.onCancel = onCancel
+        self.onDefaultAction = onDefaultAction
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack {
+            RetroPalette.shadow.opacity(0.45)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    isFocused = true
+                }
+            RetroPanel(title: title) {
+                content
+            }
+            .retroControls()
+            .frame(width: width)
+        }
+        .focusSection()
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isFocused)
+        .onAppear {
+            isFocused = true
+            DispatchQueue.main.async {
+                isFocused = true
+            }
+        }
+        .onExitCommand {
+            onCancel?()
+        }
+        .onKeyPress(.escape) {
+            onCancel?()
+            return .handled
+        }
+        .onKeyPress(.return) {
+            onDefaultAction?()
+            return .handled
+        }
+        .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow, .space], phases: [.down, .repeat]) { _ in
+            .handled
+        }
+    }
+}
+
 struct RetroSpinner: View {
     private static let frames = ["|", "/", "-", "\\"]
     @State private var index = 0

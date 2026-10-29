@@ -43,6 +43,10 @@ struct DOSCrateApp: App {
         return !feedURL.isEmpty && !publicKey.isEmpty
     }
 
+    static func isShowingRetroAlert(theme: AppTheme, alert: AppAlert?) -> Bool {
+        LibraryLayout(theme: theme) == .retro && alert != nil
+    }
+
     init() {
         RetroFont.register()
         let enabled = Self.isSparkleConfigured(info: Bundle.main.infoDictionary)
@@ -68,6 +72,7 @@ struct DOSCrateApp: App {
                         .frame(minWidth: 700, minHeight: 450)
                 }
             }
+            .disabled(Self.isShowingRetroAlert(theme: model.prefs.appTheme, alert: model.alert))
             .task {
                 appDelegate.model = model
                 guard !model.needsLibrarySetup else { return }
@@ -126,40 +131,50 @@ struct RetroAlertModal: View {
     let model: AppModel
     let alert: AppAlert
 
+    private func dismiss() {
+        model.alert = nil
+    }
+
+    private func accept() {
+        model.alert = nil
+        if let fix = alert.fix, let id = alert.gameID {
+            model.applyFix(fix, for: id)
+        }
+    }
+
     var body: some View {
-        ZStack {
-            RetroPalette.shadow.opacity(0.45)
-                .ignoresSafeArea()
-            RetroPanel(title: alert.title) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(alert.message)
-                        .font(RetroFont.font())
-                        .foregroundStyle(RetroPalette.shadow)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        Spacer()
-                        if let fix = alert.fix, let id = alert.gameID {
-                            Button("Cancel") {
-                                model.alert = nil
-                            }
-                            .keyboardShortcut(.cancelAction)
-                            Button(DOSCrateApp.label(fix)) {
-                                model.alert = nil
-                                model.applyFix(fix, for: id)
-                            }
-                            .keyboardShortcut(.defaultAction)
-                        } else {
-                            Button("OK") {
-                                model.alert = nil
-                            }
-                            .keyboardShortcut(.defaultAction)
+        RetroModalContainer(
+            title: alert.title,
+            width: 420,
+            onCancel: { dismiss() },
+            onDefaultAction: { accept() }
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(alert.message)
+                    .font(RetroFont.font())
+                    .foregroundStyle(RetroPalette.shadow)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Spacer()
+                    if let fix = alert.fix, let id = alert.gameID {
+                        Button("Cancel") {
+                            dismiss()
                         }
+                        .keyboardShortcut(.cancelAction)
+                        Button(DOSCrateApp.label(fix)) {
+                            model.alert = nil
+                            model.applyFix(fix, for: id)
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("OK") {
+                            dismiss()
+                        }
+                        .keyboardShortcut(.defaultAction)
                     }
                 }
-                .padding(14)
             }
-            .retroControls()
-            .frame(width: 420)
+            .padding(14)
         }
     }
 }

@@ -157,4 +157,47 @@ struct RetroThemeTests {
             alertHosting.layoutSubtreeIfNeeded()
         }
     }
+
+    @Test func retroCandidateListAndLicensesSteppedSelection() {
+        let candidates = [
+            ExecutableCandidate(relativePath: "SETUP.EXE", score: 50),
+            ExecutableCandidate(relativePath: "DOOM.EXE", score: 100),
+            ExecutableCandidate(relativePath: "README.COM", score: 10),
+        ]
+
+        #expect(RetroCandidateList.steppedSelection(in: [], current: nil, by: 1) == nil)
+        #expect(RetroCandidateList.steppedSelection(in: candidates, current: "DOOM.EXE", by: 0) == nil)
+        #expect(RetroCandidateList.steppedSelection(in: candidates, current: nil, by: 1) == "SETUP.EXE")
+        #expect(RetroCandidateList.steppedSelection(in: candidates, current: nil, by: -1) == "README.COM")
+        #expect(RetroCandidateList.steppedSelection(in: candidates, current: "SETUP.EXE", by: -1) == "SETUP.EXE")
+        #expect(RetroCandidateList.steppedSelection(in: candidates, current: "SETUP.EXE", by: 1) == "DOOM.EXE")
+        #expect(RetroCandidateList.steppedSelection(in: candidates, current: "DOOM.EXE", by: 1) == "README.COM")
+        #expect(RetroCandidateList.steppedSelection(in: candidates, current: "README.COM", by: 1) == "README.COM")
+        #expect(RetroCandidateList.steppedSelection(in: candidates, current: "README.COM", by: -1) == "DOOM.EXE")
+
+        let files = [
+            LicenseFile(url: URL(fileURLWithPath: "/tmp/a.txt"), name: "a.txt"),
+            LicenseFile(url: URL(fileURLWithPath: "/tmp/b.txt"), name: "b.txt"),
+        ]
+        #expect(LicensesView.steppedSelection(in: [], current: nil, by: 1) == nil)
+        #expect(LicensesView.steppedSelection(in: files, current: nil, by: 1) == files[0].id)
+        #expect(LicensesView.steppedSelection(in: files, current: files[0].id, by: 1) == files[1].id)
+        #expect(LicensesView.steppedSelection(in: files, current: files[1].id, by: 1) == files[1].id)
+        #expect(LicensesView.steppedSelection(in: files, current: files[1].id, by: -1) == files[0].id)
+    }
+
+    @Test func retroModalIsolationState() {
+        let game = Game(title: "Doom", source: .managed)
+        let record = GameRecord(game: game, crateURL: URL(fileURLWithPath: "/tmp/Doom.doscrate"), status: .ok)
+        let alert = AppAlert(title: "Error", message: "Details")
+
+        #expect(!LibraryActions.isShowingRetroRemoval(isRetro: false, removingRecord: record, removingMany: nil))
+        #expect(!LibraryActions.isShowingRetroRemoval(isRetro: true, removingRecord: nil, removingMany: nil))
+        #expect(LibraryActions.isShowingRetroRemoval(isRetro: true, removingRecord: record, removingMany: nil))
+        #expect(LibraryActions.isShowingRetroRemoval(isRetro: true, removingRecord: nil, removingMany: [game.id]))
+
+        #expect(!DOSCrateApp.isShowingRetroAlert(theme: .standard, alert: alert))
+        #expect(!DOSCrateApp.isShowingRetroAlert(theme: .dos, alert: nil))
+        #expect(DOSCrateApp.isShowingRetroAlert(theme: .dos, alert: alert))
+    }
 }
