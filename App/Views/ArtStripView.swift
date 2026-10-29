@@ -5,6 +5,8 @@ import QuickLookUI
 import SwiftUI
 
 struct ArtStripView: View {
+    static let thumbnailSize = CGSize(width: 112, height: 84)
+
     let crateURL: URL
     var isLoadingArt = false
     var artRevision = 0
@@ -43,14 +45,14 @@ struct ArtStripView: View {
                     }
                     if !urls.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 8) {
                                 ForEach(Array(urls.enumerated()), id: \.element) { index, url in
                                     ArtThumbnailButton(url: url, retro: true, revision: artRevision) {
                                         ArtQuickLookController.shared.present(urls: urls, startingAt: index)
                                     }
                                 }
                             }
-                            .padding(4)
+                            .padding(6)
                         }
                         .background(RetroPalette.panel)
                         .retroBevel(.sunken)
@@ -68,7 +70,7 @@ struct ArtStripView: View {
                     }
                     if !urls.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 8) {
                                 ForEach(Array(urls.enumerated()), id: \.element) { index, url in
                                     ArtThumbnailButton(url: url, retro: false, revision: artRevision) {
                                         ArtQuickLookController.shared.present(urls: urls, startingAt: index)
@@ -106,7 +108,7 @@ private struct ArtThumbnailButton: View {
                     Color.secondary.opacity(0.15)
                 }
             }
-            .frame(width: 60, height: 44)
+            .frame(width: ArtStripView.thumbnailSize.width, height: ArtStripView.thumbnailSize.height)
             .clipped()
             .modifier(ThumbnailChrome(retro: retro))
         }
