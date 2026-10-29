@@ -1,0 +1,120 @@
+<?xml version="1.0" standalone="yes"?>
+<LaunchBox>
+  <GameAlternateName>
+    <DatabaseID>101</DatabaseID>
+    <AlternateName>Commander Keen 4</AlternateName>
+  </GameAlternateName>
+  <Game>
+    <DatabaseID>101</DatabaseID>
+    <Name>Commander Keen in Goodbye, Galaxy!</Name>
+    <ReleaseYear>1991</ReleaseYear>
+    <Overview>Episode four of Commander Keen.</Overview>
+    <Platform>MS-DOS</Platform>
+    <Developer>id Software</Developer>
+    <Publisher>Apogee Software</Publisher>
+    <Genres>Action;Platform</Genres>
+  </Game>
+  <GameAlternateName>
+    <DatabaseID>101</DatabaseID>
+    <AlternateName>Keen 4: Secret of the Oracle</AlternateName>
+  </GameAlternateName>
+  <Game>
+    <DatabaseID>102</DatabaseID>
+    <Name>Doom II</Name>
+    <ReleaseDate>1994-09-30T00:00:00-05:00</ReleaseDate>
+    <Overview>Hell on Earth.</Overview>
+    <Platform>MS-DOS</Platform>
+    <Developer>id Software</Developer>
+    <Publisher>GT Interactive</Publisher>
+    <Genres>Shooter</Genres>
+  </Game>
+  <Game>
+    <DatabaseID>103</DatabaseID>
+    <Name>The Secret of Monkey Island</Name>
+    <ReleaseYear>1990</ReleaseYear>
+    <Platform>MS-DOS</Platform>
+    <Developer>Lucasfilm Games</Developer>
+    <Publisher>Lucasfilm Games</Publisher>
+    <Genres>Adventure</Genres>
+  </Game>
+  <Game>
+    <DatabaseID>200</DatabaseID>
+    <Name>Super Mario Bros.</Name>
+    <ReleaseYear>1985</ReleaseYear>
+    <Platform>Nintendo Entertainment System</Platform>
+    <Developer>Nintendo</Developer>
+    <Publisher>Nintendo</Publisher>
+    <Genres>Platform</Genres>
+  </Game>
+  <GameAlternateName>
+    <DatabaseID>200</DatabaseID>
+    <AlternateName>SMB</AlternateName>
+  </GameAlternateName>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-front.png</FileName>
+    <Type>Box - Front</Type>
+    <Region>North America</Region>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-back.png</FileName>
+    <Type>Box - Back</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-disc.png</FileName>
+    <Type>Disc</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-logo.png</FileName>
+    <Type>Clear Logo</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-gp1.png</FileName>
+    <Type>Screenshot - Gameplay</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-gp2.png</FileName>
+    <Type>Screenshot - Gameplay</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-gp3.png</FileName>
+    <Type>Screenshot - Gameplay</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-gp4.png</FileName>
+    <Type>Screenshot - Gameplay</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-gp5.png</FileName>
+    <Type>Screenshot - Gameplay</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-gp6.png</FileName>
+    <Type>Screenshot - Gameplay</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-gp7.png</FileName>
+    <Type>Screenshot - Gameplay</Type>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>101</DatabaseID>
+    <FileName>keen4-title.png</FileName>
+    <Type>Screenshot - Game Title</Type>
+    <Region>United States</Region>
+  </GameImage>
+  <GameImage>
+    <DatabaseID>200</DatabaseID>
+    <FileName>smb-front.png</FileName>
+    <Type>Box - Front</Type>
+  </GameImage>
+</LaunchBox>

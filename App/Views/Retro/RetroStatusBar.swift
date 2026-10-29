@@ -27,9 +27,46 @@ struct RetroStatusBar: View {
                 progressBar(current: removal.done, total: removal.total)
                 Text("Removing \(removal.done) of \(removal.total)…")
             }
+        } else if let metadataText = model.metadata.statusText {
+            bar(cancellable: false) {
+                if case .downloading(let fraction) = model.metadata.phase {
+                    progressBar(current: Int((min(1.0, max(0.0, fraction)) * 100).rounded()), total: 100)
+                } else if case .building = model.metadata.phase {
+                    RetroSpinner()
+                } else if let findProgress = model.metadata.findMissingProgress {
+                    progressBar(current: findProgress.current, total: findProgress.total)
+                }
+                Text(metadataText)
+                if Self.showsMetadataRetry(for: model) {
+                    Button("Retry") { model.metadata.retry() }
+                        .buttonStyle(RetroButtonStyle(kind: .text))
+                } else if Self.showsFindMissingCancel(for: model) {
+                    Button("Cancel") { model.metadata.cancelFindMissing() }
+                        .buttonStyle(RetroButtonStyle(kind: .text))
+                } else if Self.showsUnmatchedReview(for: model) {
+                    Button("Review") { model.showingUnmatchedMetadata = true }
+                        .buttonStyle(RetroButtonStyle(kind: .text))
+                }
+            }
         } else if controllerStatus != nil {
             bar(cancellable: false) {}
         }
+    }
+
+    static func leadingText(for model: AppModel) -> String? {
+        LibraryView.statusBarLeadingText(for: model)
+    }
+
+    static func showsMetadataRetry(for model: AppModel) -> Bool {
+        LibraryView.showsMetadataRetry(for: model)
+    }
+
+    static func showsUnmatchedReview(for model: AppModel) -> Bool {
+        LibraryView.showsUnmatchedReview(for: model)
+    }
+
+    static func showsFindMissingCancel(for model: AppModel) -> Bool {
+        LibraryView.showsFindMissingCancel(for: model)
     }
 
     private func bar(cancellable: Bool, @ViewBuilder _ items: () -> some View) -> some View {

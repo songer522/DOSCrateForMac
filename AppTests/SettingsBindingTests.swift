@@ -1,5 +1,6 @@
 import ConfigKit
 import Foundation
+import ImportKit
 import LauncherKit
 import LibraryKit
 import SwiftUI
@@ -56,6 +57,43 @@ struct SettingsBindingTests {
         let pad = GamepadInfo(vendorID: 0x054c, productID: 0x0ce6, transport: "USB", product: "DualSense Wireless Controller", usagePage: 1, usage: 5)
         #expect(p.launchConfig(gamepads: [pad]).controllerLayout == .standard)
         p.useControllers = false; #expect(p.launchConfig(gamepads: [pad]).controllerLayout == nil)
+    }
+
+    @Test func fetchMetadataOnImportDefaultsTrue() {
+        let d = UserDefaults(suiteName: #function)!; d.removePersistentDomain(forName: #function)
+        let p = Preferences(defaults: d)
+        #expect(p.fetchMetadataOnImport == true)
+        p.fetchMetadataOnImport = false
+        #expect(Preferences(defaults: d).fetchMetadataOnImport == false)
+    }
+
+    @Test func refreshButtonCallsCoordinator() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "settings-refresh-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let d = UserDefaults(suiteName: #function)!; d.removePersistentDomain(forName: #function)
+        let prefs = Preferences(defaults: d)
+        let store = LibraryStore(library: root)
+        let provider = StubMetadataProvider(records: [], downloadedAt: nil)
+        let coordinator = MetadataCoordinator(provider: provider, prefs: prefs)
+        let model = AppModel(
+            prefs: prefs,
+            store: store,
+            sessions: SessionManager(runner: FakeRunner()),
+            importer: Importer(),
+            dosbox: root.appending(path: "dosbox"),
+            verifyDosbox: { _ in },
+            metadata: coordinator
+        )
+
+        #expect(GeneralPreferences.lastUpdatedText(nil) == "Never")
+        let sampleDate = Date(timeIntervalSince1970: 1_700_000_000)
+        #expect(GeneralPreferences.lastUpdatedText(sampleDate).hasPrefix("Last updated "))
+
+        GeneralPreferences.refreshLaunchBox(model: model)
+        await waitUntil { provider.refreshCalls == 1 }
+        #expect(provider.refreshCalls == 1)
     }
 }
 

@@ -154,6 +154,18 @@ public struct ImportOrigin: Sendable, Equatable, Codable {
     }
 }
 
+public struct MetadataSource: Sendable, Equatable, Codable {
+    public var provider: String
+    public var id: Int
+    public var fetchedAt: Date
+
+    public init(provider: String = "launchbox", id: Int, fetchedAt: Date) {
+        self.provider = provider
+        self.id = id
+        self.fetchedAt = fetchedAt
+    }
+}
+
 public struct Game: Sendable, Equatable, Codable, Identifiable {
     public var id: UUID
     public var title: String
@@ -161,11 +173,13 @@ public struct Game: Sendable, Equatable, Codable, Identifiable {
     public var developer: String?
     public var publisher: String?
     public var genre: String?
+    public var description: String
     public var notes: String
     public var tags: [String]
     public var isFavorite: Bool
     public var source: GameSource
     public var origin: ImportOrigin?
+    public var metadataSource: MetadataSource?
     public var media: [MediaImage]
     public var launch: LaunchSpec
     public var settings: GameSettings
@@ -178,11 +192,13 @@ public struct Game: Sendable, Equatable, Codable, Identifiable {
         self.developer = nil
         self.publisher = nil
         self.genre = nil
+        self.description = ""
         self.notes = ""
         self.tags = []
         self.isFavorite = false
         self.source = source
         self.origin = origin
+        self.metadataSource = nil
         self.media = []
         self.launch = LaunchSpec()
         self.settings = GameSettings()
@@ -191,13 +207,13 @@ public struct Game: Sendable, Equatable, Codable, Identifiable {
 
     /// Top-level `game.json` keys this type owns; everything else is carried as `extra`.
     static let knownKeys: Set<String> = [
-        "id", "title", "year", "developer", "publisher", "genre", "notes", "tags",
-        "isFavorite", "source", "origin", "media", "launch", "settings", "stats",
+        "id", "title", "year", "developer", "publisher", "genre", "description", "notes", "tags",
+        "isFavorite", "source", "origin", "metadataSource", "media", "launch", "settings", "stats",
     ]
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, year, developer, publisher, genre, notes, tags
-        case isFavorite, source, origin, media, launch, settings, stats
+        case id, title, year, developer, publisher, genre, description, notes, tags
+        case isFavorite, source, origin, metadataSource, media, launch, settings, stats
     }
 
     public init(from decoder: Decoder) throws {
@@ -208,11 +224,13 @@ public struct Game: Sendable, Equatable, Codable, Identifiable {
         developer = try c.decodeIfPresent(String.self, forKey: .developer)
         publisher = try c.decodeIfPresent(String.self, forKey: .publisher)
         genre = try c.decodeIfPresent(String.self, forKey: .genre)
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         isFavorite = try c.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         source = try c.decode(GameSource.self, forKey: .source)
         origin = try c.decodeIfPresent(ImportOrigin.self, forKey: .origin)
+        metadataSource = try c.decodeIfPresent(MetadataSource.self, forKey: .metadataSource)
         media = try c.decodeIfPresent([MediaImage].self, forKey: .media) ?? []
         launch = try c.decodeIfPresent(LaunchSpec.self, forKey: .launch) ?? LaunchSpec()
         settings = try c.decodeIfPresent(GameSettings.self, forKey: .settings) ?? GameSettings()

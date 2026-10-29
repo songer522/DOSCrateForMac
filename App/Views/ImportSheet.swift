@@ -189,6 +189,7 @@ final class ImportQueue {
             importer.discard(prepared)
             await model.store.reload()
             model.selection = record.id
+            model.metadata.importedGame(record.id)
             return record
         case .keepBoth:
             let record = try await Task.detached {
@@ -199,6 +200,7 @@ final class ImportQueue {
             importer.discard(prepared)
             await model.store.reload()
             model.selection = record.id
+            model.metadata.importedGame(record.id)
             return record
         }
     }
@@ -275,11 +277,13 @@ final class ImportQueue {
                         prepared, mode: mode, title: prepared.suggestedTitle, executable: executable, into: library
                     )
                 }.value
+                model.metadata.importedGame(record.id)
                 if firstID == nil { firstID = record.id }
                 dirtyCount += 1
                 let now = ContinuousClock.now
                 if dirtyCount >= 10 || now - lastReload >= .seconds(1) {
                     await model.store.reload()
+                    model.metadata.storeDidReload()
                     dirtyCount = 0
                     lastReload = ContinuousClock.now
                     if !selectedFirst, let firstID {
@@ -294,6 +298,7 @@ final class ImportQueue {
             // A batch enqueued during this final reload is picked up by the loop instead of being dropped.
             if batchIndex == batchEntries.count, dirtyCount > 0 {
                 await model.store.reload()
+                model.metadata.storeDidReload()
                 dirtyCount = 0
             }
         }

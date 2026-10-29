@@ -40,11 +40,14 @@ struct LicensesView: View {
     /// Where to ask for the corresponding source. Placeholder until the owner confirms it.
     static let sourceOfferContact = "https://github.com/songer522/DOSCrate"
 
+    static let launchBoxCredit = "Game information and images from the LaunchBox Games Database"
+
     static let notice = "DOSCrate bundles DOSBox Staging \(StagingRelease.version), licensed under GPL-2.0-or-later, "
         + "which uses the LGPL-2.1-or-later libraries GLib and gettext (libintl). "
         + "Source: \(StagingRelease.tagURL) — a copy of the corresponding source of each is attached to every "
         + "DOSCrate release, and for three years we will provide it on request at \(sourceOfferContact). "
-        + "The DOS theme uses the PxPlus IBM VGA 8x16 font from The Ultimate Oldschool PC Font Pack by VileR (int10h.org), licensed under CC BY-SA 4.0."
+        + "The DOS theme uses the PxPlus IBM VGA 8x16 font from The Ultimate Oldschool PC Font Pack by VileR (int10h.org), licensed under CC BY-SA 4.0. "
+        + "\(launchBoxCredit)."
 
     private let files = LicenseFile.bundled
     @State private var selection: LicenseFile.ID?

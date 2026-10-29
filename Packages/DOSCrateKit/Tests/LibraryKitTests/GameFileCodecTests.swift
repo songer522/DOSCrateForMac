@@ -122,4 +122,41 @@ struct GameFileCodecTests {
         """
         #expect(throws: DecodingError.self) { try GameFileCodec.decodeLenient(Data(wrongType.utf8)) }
     }
+
+    @Test func roundTripsDescriptionAndMetadataSource() throws {
+        var game = Game(title: "Doom", source: .managed)
+        game.description = "Rip and tear."
+        game.metadataSource = MetadataSource(
+            provider: "launchbox",
+            id: 42,
+            fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let data = try GameFileCodec.encode(game, extra: [:])
+        let decoded = try GameFileCodec.decode(data)
+        #expect(decoded.game == game)
+        #expect(decoded.game.description == "Rip and tear.")
+        #expect(decoded.game.metadataSource == game.metadataSource)
+    }
+
+    @Test func decodesOldFileWithoutNewKeys() throws {
+        let json = """
+        {"id":"\(UUID())","title":"Old","source":{"type":"managed"}}
+        """
+        let decoded = try GameFileCodec.decode(Data(json.utf8))
+        #expect(decoded.game.description == "")
+        #expect(decoded.game.metadataSource == nil)
+    }
+
+    @Test func newKeysAreKnownNotExtra() throws {
+        var game = Game(title: "Doom", source: .managed)
+        game.description = "Rip and tear."
+        game.metadataSource = MetadataSource(
+            provider: "launchbox",
+            id: 42,
+            fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let data = try GameFileCodec.encode(game, extra: [:])
+        let decoded = try GameFileCodec.decode(data)
+        #expect(decoded.extra.isEmpty)
+    }
 }

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct InfoTab: View {
     @Binding var game: Game
+    var onFindMetadata: (() -> Void)? = nil
     @Environment(\.retroTheme) private var retroTheme
 
     var body: some View {
@@ -26,6 +27,39 @@ struct InfoTab: View {
                         TokenField(tokens: $game.tags)
                     }
                 }
+                if game.metadataSource != nil || onFindMetadata != nil {
+                    HStack {
+                        if let caption = Self.sourceCaption(for: game.metadataSource) {
+                            Text(caption)
+                                .font(retroTheme ? RetroFont.font() : .caption)
+                                .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
+                        }
+                        Spacer()
+                        if let onFindMetadata {
+                            if retroTheme {
+                                Button("Find Metadata…", action: onFindMetadata)
+                                    .buttonStyle(RetroButtonStyle())
+                            } else {
+                                Button("Find Metadata…", action: onFindMetadata)
+                            }
+                        }
+                    }
+                }
+            }
+            ThemedSection("Description") {
+                if retroTheme {
+                    TextEditor(text: $game.description)
+                        .font(RetroFont.font())
+                        .foregroundStyle(RetroPalette.shadow)
+                        .scrollContentBackground(.hidden)
+                        .padding(4)
+                        .frame(minHeight: 80)
+                        .background(RetroPalette.bevelLight)
+                        .retroBevel(.sunken)
+                } else {
+                    TextEditor(text: $game.description)
+                        .frame(minHeight: 80)
+                }
             }
             ThemedSection("Notes") {
                 if retroTheme {
@@ -43,6 +77,11 @@ struct InfoTab: View {
                 }
             }
         }
+    }
+
+    static func sourceCaption(for source: MetadataSource?) -> String? {
+        guard let source else { return nil }
+        return "From LaunchBox · \(source.fetchedAt.formatted(date: .abbreviated, time: .omitted))"
     }
 
     private func optional(_ binding: Binding<String?>) -> Binding<String> {

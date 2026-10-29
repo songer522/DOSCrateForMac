@@ -36,4 +36,8 @@ struct LicensesTests {
         #expect(names.contains { $0.contains("Fonts/PxPlus-IBM-VGA") })
         #expect(LicensesView.notice.contains("PxPlus IBM VGA"))
     }
+
+    @Test func licensesIncludeLaunchBoxCredit() {
+        #expect(LicensesView.notice.contains("Game information and images from the LaunchBox Games Database"))
+    }
 }

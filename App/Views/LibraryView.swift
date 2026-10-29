@@ -30,6 +30,11 @@ struct GameContextMenu: View {
         if case .needsRepair = record.status {
             Button("Recreate Game Info…") { model.applyFix(.recreate, for: record.id) }
         }
+        Button("Find Metadata…") { model.findMetadataFor = record.id }
+            .disabled({
+                if case .readOnly = record.status { return true }
+                return false
+            }())
         Divider()
         // Right-clicking a game in a multiple selection removes the whole selection.
         let count = model.selectedIDs.contains(record.id) ? model.selectedIDs.count : 1
@@ -110,6 +115,31 @@ struct LibraryView: View {
                                 .progressViewStyle(.linear)
                                 .frame(maxWidth: 180)
                             Text("Removing \(removal.done) of \(removal.total)…")
+                        }
+                    } else if let metadataText = model.metadata.statusText {
+                        statusBar(cancellable: false) {
+                            if case .downloading(let fraction) = model.metadata.phase {
+                                ProgressView(value: min(1.0, max(0.0, fraction)), total: 1.0)
+                                    .progressViewStyle(.linear)
+                                    .frame(maxWidth: 140)
+                            } else if case .building = model.metadata.phase {
+                                ProgressView().controlSize(.small)
+                            } else if let findProgress = model.metadata.findMissingProgress {
+                                ProgressView(value: Double(findProgress.current), total: Double(max(findProgress.total, 1)))
+                                    .progressViewStyle(.linear)
+                                    .frame(maxWidth: 140)
+                            }
+                            Text(metadataText)
+                            if Self.showsMetadataRetry(for: model) {
+                                Button("Retry") { model.metadata.retry() }
+                                    .controlSize(.small)
+                            } else if Self.showsFindMissingCancel(for: model) {
+                                Button("Cancel") { model.metadata.cancelFindMissing() }
+                                    .controlSize(.small)
+                            } else if Self.showsUnmatchedReview(for: model) {
+                                Button("Review") { model.showingUnmatchedMetadata = true }
+                                    .controlSize(.small)
+                            }
                         }
                     } else if controllerStatus != nil {
                         statusBar(cancellable: false) {}
@@ -211,6 +241,51 @@ struct LibraryView: View {
         } label: {
             if model.query.sort == key { Label(title, systemImage: "checkmark") } else { Text(title) }
         }
+    }
+
+    static func statusBarLeadingText(for model: AppModel) -> String? {
+        if let progress = model.imports.progress {
+            return progress.label
+        } else if model.isScanningLibrary {
+            return "Looking for games…"
+        } else if model.imports.isCheckingDuplicates {
+            return "Checking for duplicates…"
+        } else if let removal = model.removalProgress {
+            return "Removing \(removal.done) of \(removal.total)…"
+        } else if let metadataText = model.metadata.statusText {
+            return metadataText
+        }
+        return nil
+    }
+
+    static func showsMetadataRetry(for model: AppModel) -> Bool {
+        guard model.imports.progress == nil,
+              !model.isScanningLibrary,
+              !model.imports.isCheckingDuplicates,
+              model.removalProgress == nil
+        else { return false }
+        if case .failed = model.metadata.phase {
+            return true
+        }
+        return false
+    }
+
+    static func showsUnmatchedReview(for model: AppModel) -> Bool {
+        guard model.imports.progress == nil,
+              !model.isScanningLibrary,
+              !model.imports.isCheckingDuplicates,
+              model.removalProgress == nil
+        else { return false }
+        return model.metadata.showsUnmatchedReview
+    }
+
+    static func showsFindMissingCancel(for model: AppModel) -> Bool {
+        guard model.imports.progress == nil,
+              !model.isScanningLibrary,
+              !model.imports.isCheckingDuplicates,
+              model.removalProgress == nil
+        else { return false }
+        return model.metadata.showsFindMissingCancel
     }
 
     /// What removal does, worded per source: a managed game's files live in its crate, so they always go with it.

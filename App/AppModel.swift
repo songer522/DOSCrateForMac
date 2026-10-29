@@ -62,6 +62,8 @@ final class AppModel {
     var lastResult: [UUID: SessionResult] = [:]
     var pendingFix: PendingFix?
     var chooseProgram: ChooseProgramRequest?
+    var findMetadataFor: UUID?
+    var showingUnmatchedMetadata = false
     private(set) var needsLibrarySetup: Bool
     /// True while the first-run scan looks for games, before the batch import (and its progress) starts.
     private(set) var isScanningLibrary = false
@@ -73,6 +75,7 @@ final class AppModel {
     let importer: Importer
     let imports = ImportQueue()
     let gamepads = GamepadMonitor()
+    let metadata: MetadataCoordinator
 
     @ObservationIgnored private let dosbox: URL
     @ObservationIgnored private let io = CrateIO()
@@ -84,7 +87,8 @@ final class AppModel {
 
     init(prefs: Preferences, store: LibraryStore, sessions: SessionManager, importer: Importer, dosbox: URL,
          verifyDosbox: @escaping @Sendable (URL) throws -> Void = { try StagingLocator.verify($0) },
-         launchTimeout: Duration = .seconds(20)) {
+         launchTimeout: Duration = .seconds(20),
+         metadata: MetadataCoordinator? = nil) {
         self.prefs = prefs
         self.store = store
         self.sessions = sessions
@@ -92,13 +96,25 @@ final class AppModel {
         self.dosbox = dosbox
         self.verifyDosbox = verifyDosbox
         self.launchTimeout = launchTimeout
+        let resolvedMetadata = metadata ?? MetadataCoordinator(
+            provider: Self.isRunningTests ? NoOpMetadataProvider() : LaunchBoxProvider(),
+            prefs: prefs
+        )
+        self.metadata = resolvedMetadata
         self.needsLibrarySetup = !Self.isDirectory(store.library)
+        resolvedMetadata.model = self
+        store.afterReload = { [weak resolvedMetadata] in resolvedMetadata?.storeDidReload() }
         sessions.onEnded = { [weak self] result in self?.sessionEnded(result) }
         do {
             try verifyDosbox(dosbox)
         } catch {
             alert = Self.alert(for: .dosboxMissing)
         }
+    }
+
+    private nonisolated static var isRunningTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
     }
 
     // MARK: Library
@@ -203,6 +219,7 @@ final class AppModel {
     func removeGames(_ ids: Set<UUID>, trashFolders: Bool) async {
         let running = ids.filter(isActive)
         let targets = Array(ids.subtracting(running))
+        for id in targets { metadata.cancel(id) }
         pendingRemovalIDs.formUnion(targets)
         defer { pendingRemovalIDs.subtract(targets) }
         removalProgress = (0, targets.count)
@@ -211,6 +228,9 @@ final class AppModel {
         }
         removalProgress = nil
         selectedIDs = selectedIDs.filter { store.record($0) != nil }
+        for id in targets where store.record(id) == nil {
+            metadata.removeUnmatched(id)
+        }
         let skipped = running.compactMap { store.record($0)?.game.title }.sorted()
             .map { "\($0): stop the game before removing it." }
         let problems = skipped + failures
@@ -229,9 +249,11 @@ final class AppModel {
             alert = AppAlert(title: "Can't remove \(record.game.title)", message: "Stop the game before removing it.")
             return
         }
+        metadata.cancel(id)
         do {
             try store.remove(id, trashFiles: trashFiles)
             selectedIDs.remove(id)
+            metadata.removeUnmatched(id)
         } catch {
             alert = AppAlert(title: "Can't remove \(record.game.title)", message: error.localizedDescription)
         }
@@ -261,11 +283,16 @@ final class AppModel {
         if pendingWrites[id]?.isEmpty == true { pendingWrites[id] = nil }
     }
 
+    func flushPendingWrites(for id: UUID) {
+        let writes = pendingWrites.removeValue(forKey: id) ?? [:]
+        for write in writes.values { write() }
+    }
+
     @discardableResult
     func play(_ id: UUID) -> Task<Void, Never>? {
         guard !startingIDs.contains(id), !sessions.running.contains(id) else { return nil }
-        let writes = pendingWrites.removeValue(forKey: id) ?? [:]
-        for write in writes.values { write() }
+        metadata.cancel(id)
+        flushPendingWrites(for: id)
         guard !pendingRemovalIDs.contains(id), !startingIDs.contains(id), !sessions.running.contains(id),
               let record = store.record(id) else { return nil }
 

@@ -97,6 +97,20 @@ struct LibraryActions: ViewModifier {
                 ChooseProgramSheet(model: model, request: request)
                     .id(request.id)
             }
+            .sheet(isPresented: $model.showingUnmatchedMetadata) {
+                UnmatchedMetadataSheet(model: model)
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { !model.showingUnmatchedMetadata && model.findMetadataFor != nil },
+                    set: { if !$0 { model.findMetadataFor = nil } }
+                )
+            ) {
+                if let id = model.findMetadataFor {
+                    FindMetadataSheet(model: model, gameID: id)
+                        .id(id)
+                }
+            }
             .onChange(of: model.pendingFix) { _, pending in
                 guard let pending else { return }
                 model.pendingFix = nil

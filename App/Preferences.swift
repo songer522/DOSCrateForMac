@@ -47,6 +47,7 @@ final class Preferences {
         static let soundfontPath = "soundfontPath"
         static let mt32RomDir = "mt32RomDir"
         static let useControllers = "useControllers"
+        static let fetchMetadataOnImport = "fetchMetadataOnImport"
     }
 
     static var defaultLibraryURL: URL {
@@ -69,6 +70,7 @@ final class Preferences {
     var soundfontPath: String { didSet { defaults.set(soundfontPath, forKey: Key.soundfontPath) } }
     var mt32RomDir: String { didSet { defaults.set(mt32RomDir, forKey: Key.mt32RomDir) } }
     var useControllers: Bool { didSet { defaults.set(useControllers, forKey: Key.useControllers) } }
+    var fetchMetadataOnImport: Bool { didSet { defaults.set(fetchMetadataOnImport, forKey: Key.fetchMetadataOnImport) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -82,6 +84,7 @@ final class Preferences {
         soundfontPath = defaults.string(forKey: Key.soundfontPath) ?? ""
         mt32RomDir = defaults.string(forKey: Key.mt32RomDir) ?? ""
         useControllers = defaults.object(forKey: Key.useControllers) as? Bool ?? true
+        fetchMetadataOnImport = defaults.object(forKey: Key.fetchMetadataOnImport) as? Bool ?? true
     }
 
     var libraryURL: URL { URL(filePath: libraryPath, directoryHint: .isDirectory) }

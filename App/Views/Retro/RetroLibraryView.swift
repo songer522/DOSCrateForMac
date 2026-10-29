@@ -170,6 +170,32 @@ struct RetroLibraryView: View {
         .background(RetroPalette.desktop)
         .ignoresSafeArea(.container, edges: .top)
         .toolbar(.hidden, for: .windowToolbar)
+        .overlay {
+            if let artError = model.metadata.artErrorMessage {
+                ZStack {
+                    RetroPalette.shadow.opacity(0.45)
+                        .ignoresSafeArea()
+                    RetroPanel(title: "Couldn't save art") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(artError)
+                                .font(RetroFont.font())
+                                .foregroundStyle(RetroPalette.shadow)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack {
+                                Spacer()
+                                Button("OK") {
+                                    model.metadata.artErrorMessage = nil
+                                }
+                                .buttonStyle(RetroButtonStyle(kind: .text))
+                                .keyboardShortcut(.defaultAction)
+                            }
+                        }
+                        .padding(14)
+                    }
+                    .frame(width: 360)
+                }
+            }
+        }
     }
 
     private var windowTitleBar: some View {

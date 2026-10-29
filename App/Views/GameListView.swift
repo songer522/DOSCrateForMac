@@ -17,6 +17,8 @@ struct GameListView: View {
                     } else if model.startingIDs.contains(record.id) {
                         ProgressView().controlSize(.small)
                         Text("Starting…").font(.caption).foregroundStyle(.secondary)
+                    } else if model.metadata.artLoading.contains(record.id) {
+                        ProgressView().controlSize(.small)
                     }
                     switch record.status {
                     case .missingSource: Text("Missing").font(.caption).foregroundStyle(.orange)

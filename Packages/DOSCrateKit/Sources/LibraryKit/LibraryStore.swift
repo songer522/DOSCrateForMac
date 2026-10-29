@@ -8,6 +8,8 @@ public final class LibraryStore {
     public var library: URL
     /// Test hook called at the start of every `reload()`.
     @ObservationIgnored public var onReload: (@MainActor () -> Void)?
+    /// Called at the end of `reload()` after `records` is updated.
+    @ObservationIgnored public var afterReload: (@MainActor () -> Void)?
     /// While true, file-watcher events are ignored so a running batch import or removal controls reload timing.
     public var isWatcherSuppressed: Bool { watcherSuppressions > 0 }
     @ObservationIgnored private var watcherSuppressions = 0
@@ -39,6 +41,7 @@ public final class LibraryStore {
         let scanned = await scan(library)
         guard started == generation else { return }
         records = scanned
+        afterReload?()
     }
 
     public func record(_ id: UUID) -> GameRecord? {

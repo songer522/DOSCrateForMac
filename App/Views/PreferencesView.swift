@@ -47,7 +47,7 @@ private struct PathRow: View {
     }
 }
 
-private struct GeneralPreferences: View {
+struct GeneralPreferences: View {
     let model: AppModel
 
     var body: some View {
@@ -63,11 +63,30 @@ private struct GeneralPreferences: View {
             Picker("When importing", selection: $prefs.importLocation) {
                 ForEach(ImportLocationPreference.allCases, id: \.self) { Text($0.displayName).tag($0) }
             }
+            Toggle("Fetch metadata on import", isOn: $prefs.fetchMetadataOnImport)
+            LabeledContent("LaunchBox database") {
+                HStack(spacing: 8) {
+                    Text(Self.lastUpdatedText(model.metadata.lastUpdated))
+                        .foregroundStyle(.secondary)
+                    Button("Refresh LaunchBox data") {
+                        Self.refreshLaunchBox(model: model)
+                    }
+                }
+            }
             Toggle("Use game controllers", isOn: $prefs.useControllers)
             Text("Maps the d-pad, left stick, A/B/X/Y and Start to keyboard keys.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
+    }
+
+    static func lastUpdatedText(_ date: Date?) -> String {
+        guard let date else { return "Never" }
+        return "Last updated \(date.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    static func refreshLaunchBox(model: AppModel) {
+        model.metadata.refreshIndex()
     }
 
     private func chooseLibrary() {
