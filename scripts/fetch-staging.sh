@@ -6,9 +6,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/staging.lock"
 
 APP="$ROOT/Vendor/DOSBox Staging.app"
+LIC="$ROOT/Vendor/staging-licenses"
 BIN="$APP/Contents/MacOS/dosbox"
 
 if [ -x "$BIN" ] && "$BIN" --version 2>/dev/null | grep -q "$STAGING_VERSION"; then
+    xattr -dr com.apple.quarantine "$APP" "$LIC" 2>/dev/null || true
     echo "vendor: DOSBox Staging $STAGING_VERSION already present"
     exit 0
 fi

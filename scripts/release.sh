@@ -3,8 +3,9 @@
 # Required env: DEVELOPER_ID, NOTARY_PROFILE, DOSCRATE_APPCAST_URL, DOSCRATE_SPARKLE_KEY, VERSION.
 # Outputs in build/release/, all attached to the GitHub release:
 #   DOSCrate-<VERSION>.dmg
+#   appcast.xml                                      (Sparkle EdDSA-signed appcast feed)
 #   dosbox-staging-<STAGING_VERSION>-source.tar.gz   (GPL-2.0-or-later, checked against staging.lock)
-#   glib-<version>.tar.xz, gettext-<version>.tar.gz  (LGPL-2.1-or-later libraries bundled with Staging)
+#   glib-<version>.tar.xz, gettext-<version>.tar.gz  (LGPL-2.1-or-later libraries bundled with Staging, checked against staging.lock)
 set -euo pipefail
 
 missing=()
@@ -106,11 +107,31 @@ if ! [[ "$glib_parts" =~ ^2\.[0-9]+\.[0-9]+$ ]] || ! [[ "$gettext_version" =~ ^0
     echo "error: unexpected library versions: glib '$glib_parts', gettext '$gettext_version'" >&2
     exit 1
 fi
+if [ "$glib_parts" != "${GLIB_VERSION:-}" ]; then
+    echo "error: bundled GLib version ($glib_parts) does not match GLIB_VERSION (${GLIB_VERSION:-unset}) in scripts/staging.lock" >&2
+    exit 1
+fi
+if [ "$gettext_version" != "${GETTEXT_VERSION:-}" ]; then
+    echo "error: bundled gettext version ($gettext_version) does not match GETTEXT_VERSION (${GETTEXT_VERSION:-unset}) in scripts/staging.lock" >&2
+    exit 1
+fi
 glib_series="${glib_parts%.*}"
 echo "glib $glib_parts, gettext $gettext_version"
+GLIB_TARBALL="$OUT/glib-$glib_parts.tar.xz"
+GETTEXT_TARBALL="$OUT/gettext-$gettext_version.tar.gz"
 # Upstream release tarballs (GNOME and GNU download servers).
-curl -fL -o "$OUT/glib-$glib_parts.tar.xz" "https://download.gnome.org/sources/glib/$glib_series/glib-$glib_parts.tar.xz"
-curl -fL -o "$OUT/gettext-$gettext_version.tar.gz" "https://ftp.gnu.org/pub/gnu/gettext/gettext-$gettext_version.tar.gz"
+curl -fL -o "$GLIB_TARBALL" "https://download.gnome.org/sources/glib/$glib_series/glib-$glib_parts.tar.xz"
+curl -fL -o "$GETTEXT_TARBALL" "https://ftp.gnu.org/pub/gnu/gettext/gettext-$gettext_version.tar.gz"
+glib_actual="$(shasum -a 256 "$GLIB_TARBALL" | awk '{print $1}')"
+if [ -z "${GLIB_SOURCE_SHA256:-}" ] || [ "$glib_actual" != "$GLIB_SOURCE_SHA256" ]; then
+    echo "error: GLib source checksum mismatch: expected ${GLIB_SOURCE_SHA256:-unset}, got $glib_actual" >&2
+    exit 1
+fi
+gettext_actual="$(shasum -a 256 "$GETTEXT_TARBALL" | awk '{print $1}')"
+if [ -z "${GETTEXT_SOURCE_SHA256:-}" ] || [ "$gettext_actual" != "$GETTEXT_SOURCE_SHA256" ]; then
+    echo "error: gettext source checksum mismatch: expected ${GETTEXT_SOURCE_SHA256:-unset}, got $gettext_actual" >&2
+    exit 1
+fi
 rm -f "$LIBVER"
 
 echo "==> Generate project"
@@ -192,5 +213,23 @@ xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
 xcrun stapler staple "$DMG"
 spctl -a -t open --context context:primary-signature -vv "$DMG"
 
+echo "==> Appcast (Sparkle EdDSA)"
+DERIVED_DATA="$(xcodebuild -project DOSCrate.xcodeproj -scheme DOSCrate -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*BUILD_DIR = / { sub(/\/Build\/Products$/, "", $2); print $2; exit }')"
+GENERATE_APPCAST="${SPARKLE_GENERATE_APPCAST:-$DERIVED_DATA/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast}"
+if [ ! -x "$GENERATE_APPCAST" ]; then
+    echo "error: Sparkle generate_appcast not found at $GENERATE_APPCAST" >&2
+    exit 1
+fi
+APPCAST_DIR="$OUT/appcast"
+mkdir -p "$APPCAST_DIR"
+cp "$DMG" "$APPCAST_DIR/"
+if [ -n "${SPARKLE_PRIVATE_KEY_FILE:-}" ]; then
+    "$GENERATE_APPCAST" --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" -o "$OUT/appcast.xml" "$APPCAST_DIR"
+else
+    "$GENERATE_APPCAST" -o "$OUT/appcast.xml" "$APPCAST_DIR"
+fi
+rm -rf "$APPCAST_DIR"
+
 echo "Done: $DMG"
-echo "Attach with it: $STAGING_SOURCE, $OUT/glib-$glib_parts.tar.xz, $OUT/gettext-$gettext_version.tar.gz"
+echo "Appcast: $OUT/appcast.xml"
+echo "Attach with it: $STAGING_SOURCE, $GLIB_TARBALL, $GETTEXT_TARBALL"

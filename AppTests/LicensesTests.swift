@@ -17,12 +17,30 @@ struct LicensesTests {
     @Test func noticeUsesLockedStagingVersionAndContact() throws {
         let lock = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appending(path: "scripts/staging.lock")
-        let line = try #require(try String(contentsOf: lock, encoding: .utf8)
-            .split(separator: "\n").first { $0.hasPrefix("STAGING_VERSION=") })
+        let lines = try String(contentsOf: lock, encoding: .utf8).split(separator: "\n")
+        let line = try #require(lines.first { $0.hasPrefix("STAGING_VERSION=") })
         #expect(StagingRelease.version == String(line.dropFirst("STAGING_VERSION=".count)))
+        #expect(LicensesView.sourceOfferContact == "https://github.com/songer522/DOSCrateForMac")
         #expect(LicensesView.notice.contains("Staging \(StagingRelease.version)"))
         #expect(LicensesView.notice.contains(StagingRelease.tagURL))
         #expect(LicensesView.notice.contains(LicensesView.sourceOfferContact))
+
+        for key in ["GLIB_VERSION=", "GLIB_SOURCE_SHA256=", "GETTEXT_VERSION=", "GETTEXT_SOURCE_SHA256="] {
+            let entry = try #require(lines.first { $0.hasPrefix(key) })
+            #expect(!entry.dropFirst(key.count).isEmpty)
+        }
+    }
+
+    @Test func sparkleRequiresBothFeedURLAndPublicKey() {
+        #expect(!DOSCrateApp.isSparkleConfigured(info: nil))
+        #expect(!DOSCrateApp.isSparkleConfigured(info: [:]))
+        #expect(!DOSCrateApp.isSparkleConfigured(info: ["SUFeedURL": "https://example.com/appcast.xml"]))
+        #expect(!DOSCrateApp.isSparkleConfigured(info: ["SUPublicEDKey": "abc123"]))
+        #expect(!DOSCrateApp.isSparkleConfigured(info: ["SUFeedURL": "https://example.com/appcast.xml", "SUPublicEDKey": "   "]))
+        #expect(DOSCrateApp.isSparkleConfigured(info: [
+            "SUFeedURL": "https://example.com/appcast.xml",
+            "SUPublicEDKey": "ed25519-public-key",
+        ]))
     }
 
     @Test func licensesIncludeOwnAndSparkle() {
