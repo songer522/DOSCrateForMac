@@ -199,12 +199,19 @@ final class MetadataCoordinator {
         return missingYear || missingDeveloper || missingPublisher || missingGenre || missingDescription || missingCover
     }
 
+    private func isEligibleForFindMissing(_ id: UUID, io: CrateIO = CrateIO()) -> Bool {
+        guard let model, !model.isActive(id), !model.pendingRemovalIDs.contains(id) else { return false }
+        model.flushPendingWrites(for: id)
+        guard let record = model.store.record(id) else { return false }
+        return Self.needsMissingMetadata(record, io: io)
+    }
+
     func findMissingMetadata() {
         guard findMissingTask == nil, let model else { return }
         let io = CrateIO()
         let targets = model.store.records
-            .filter { !model.isActive($0.id) && !model.pendingRemovalIDs.contains($0.id) && Self.needsMissingMetadata($0, io: io) }
             .map(\.id)
+            .filter { isEligibleForFindMissing($0, io: io) }
         guard !targets.isEmpty else { return }
 
         findMissingCancelled = false
@@ -219,6 +226,7 @@ final class MetadataCoordinator {
             for (index, id) in targets.enumerated() {
                 if Task.isCancelled || self.findMissingCancelled { break }
                 self.findMissingProgress = (current: index + 1, total: targets.count)
+                guard self.isEligibleForFindMissing(id, io: io) else { continue }
                 await self.enqueueAutoFetch(id)?.value
             }
         }
@@ -458,9 +466,9 @@ final class MetadataCoordinator {
         let clock = ContinuousClock()
         defer { tasks[id] = nil }
         guard !Task.isCancelled else { return }
-        guard let model, !model.isActive(id), !model.pendingRemovalIDs.contains(id),
-              model.store.record(id) != nil
-        else { return }
+        guard let model, !model.isActive(id), !model.pendingRemovalIDs.contains(id) else { return }
+        model.flushPendingWrites(for: id)
+        guard let initialRecord = model.store.record(id), initialRecord.game.metadataSource == nil else { return }
 
         let records: [LaunchBoxRecord]
         do {
@@ -482,7 +490,7 @@ final class MetadataCoordinator {
         guard !Task.isCancelled else { return }
         guard !model.isActive(id), !model.pendingRemovalIDs.contains(id) else { return }
         model.flushPendingWrites(for: id)
-        guard let currentRecord = model.store.record(id) else { return }
+        guard let currentRecord = model.store.record(id), currentRecord.game.metadataSource == nil else { return }
 
         guard let matched = TitleMatcher.autoMatch(for: currentRecord.game.title, in: records) else {
             addUnmatched(id)

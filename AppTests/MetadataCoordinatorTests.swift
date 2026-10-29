@@ -892,6 +892,133 @@ final class StubMetadataProvider: MetadataProviding, @unchecked Sendable {
         runner.processes[0].finish(0)
         await playTask?.value
     }
+
+    @Test func findMissingSkipsGameMatchedManuallyDuringRun() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstRecord = LaunchBoxRecord(
+            id: 100,
+            name: "Doom",
+            releaseYear: 1993,
+            developer: "id Software",
+            images: [LaunchBoxImage(type: "Box - Front", fileName: "doom.png")]
+        )
+        let autoQuakeRecord = LaunchBoxRecord(
+            id: 101,
+            name: "Quake",
+            releaseYear: 1996,
+            developer: "id Software",
+            images: [LaunchBoxImage(type: "Box - Front", fileName: "quake.png")]
+        )
+        let manualQuakeRecord = LaunchBoxRecord(
+            id: 102,
+            name: "Quake: Scourge of Armagon",
+            releaseYear: 1997,
+            developer: "Hipnotic Interactive",
+            images: [LaunchBoxImage(type: "Box - Front", fileName: "quake-armagon.png")]
+        )
+
+        let (model, provider, firstID) = try await makeEnv(
+            title: "Doom",
+            records: [firstRecord, autoQuakeRecord, manualQuakeRecord],
+            fetchOnImport: false
+        )
+        let secondCrate = try io.makeCrate(title: "Quake", in: model.store.library)
+        var secondGame = Game(title: "Quake", source: .managed)
+        secondGame.launch.executable = "GAME.EXE"
+        let secondID = secondGame.id
+        try io.save(secondGame, extra: [:], to: secondCrate)
+        await model.store.reload()
+
+        let firstArtEntered = Gate()
+        let firstArtRelease = Gate()
+        let manualArtEntered = Gate()
+        let manualArtRelease = Gate()
+        let firstCratePath = try #require(model.store.record(firstID)?.crateURL.standardizedFileURL.path)
+        let secondDownloadCalls = Counter()
+
+        provider.downloadGate = { crate in
+            if crate.standardizedFileURL.path == firstCratePath {
+                firstArtEntered.open()
+                await firstArtRelease.wait()
+            } else if secondDownloadCalls.increment() == 1 {
+                manualArtEntered.open()
+                await manualArtRelease.wait()
+            }
+        }
+
+        model.metadata.findMissingMetadata()
+        await firstArtEntered.wait()
+
+        // While game 1 ("Doom") is being processed by Find Missing, manually match game 2 ("Quake") to 102.
+        _ = await model.metadata.apply(manualQuakeRecord, to: secondID, mode: .replace)
+        await manualArtEntered.wait()
+        #expect(model.store.record(secondID)?.game.metadataSource?.id == 102)
+        #expect(model.metadata.artLoading.contains(secondID))
+
+        // Release game 1 so Find Missing advances to game 2 and finishes.
+        firstArtRelease.open()
+        await waitUntil { !model.metadata.isFindingMissing }
+
+        // Game 2 must NOT have been re-fetched, re-stamped to 101, or had its in-flight manual art task cancelled.
+        let game2AfterRun = try #require(model.store.record(secondID)?.game)
+        #expect(game2AfterRun.metadataSource?.id == 102)
+        #expect(game2AfterRun.year == 1997)
+        #expect(game2AfterRun.developer == "Hipnotic Interactive")
+        #expect(model.metadata.artLoading.contains(secondID))
+
+        manualArtRelease.open()
+        await waitUntil { !model.metadata.artLoading.contains(secondID) }
+        #expect(model.metadata.lastOutcome[secondID] == .applied(artFailed: false))
+    }
+
+    @Test func autoFetchNeverOverridesExistingMetadataSource() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, provider, id) = try await makeEnv(title: "Doom", fetchOnImport: true)
+
+        // Case 1: metadataSource is already set before enqueueAutoFetch is called.
+        let manualStamp = MetadataSource(
+            provider: "launchbox",
+            id: 999,
+            fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        var game = try #require(model.store.record(id)?.game)
+        game.metadataSource = manualStamp
+        game.year = nil
+        try model.store.save(game)
+
+        await model.metadata.enqueueAutoFetch(id)?.value
+        let afterDirect = try #require(model.store.record(id)?.game)
+        #expect(afterDirect.metadataSource == manualStamp)
+        #expect(afterDirect.year == nil)
+        #expect(provider.ensureReadyCalls == 0)
+
+        // Case 2: metadataSource is nil when enqueueAutoFetch starts, but gets set while ensureReady is in flight.
+        game.metadataSource = nil
+        try model.store.save(game)
+
+        let entered = Gate()
+        let release = Gate()
+        provider.ensureReadyGate = {
+            entered.open()
+            await release.wait()
+        }
+
+        let autoTask = model.metadata.enqueueAutoFetch(id)
+        await entered.wait()
+
+        var midFlight = try #require(model.store.record(id)?.game)
+        midFlight.metadataSource = manualStamp
+        midFlight.developer = "Manual Choice"
+        try model.store.save(midFlight)
+
+        release.open()
+        await autoTask?.value
+
+        let afterInFlight = try #require(model.store.record(id)?.game)
+        #expect(afterInFlight.metadataSource == manualStamp)
+        #expect(afterInFlight.developer == "Manual Choice")
+        #expect(afterInFlight.year == nil)
+    }
 }
 
 private final class Gate: @unchecked Sendable {
