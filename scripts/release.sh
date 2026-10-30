@@ -229,11 +229,26 @@ fi
 APPCAST_DIR="$OUT/appcast"
 mkdir -p "$APPCAST_DIR"
 cp "$DMG" "$APPCAST_DIR/"
+CHANGELOG="App/Resources/CHANGELOG.md"
+if [ ! -f "$CHANGELOG" ]; then
+    echo "error: $CHANGELOG not found" >&2
+    exit 1
+fi
+NOTES_MD="$(awk -v ver="$VERSION" '
+    $0 == "## " ver { in_section = 1; next }
+    in_section && /^## / { exit }
+    in_section { print }
+' "$CHANGELOG")"
+if [ -z "$(printf '%s' "$NOTES_MD" | tr -d '[:space:]')" ]; then
+    echo "error: $CHANGELOG has no '## $VERSION' release notes section" >&2
+    exit 1
+fi
+printf '%s\n' "$NOTES_MD" > "$APPCAST_DIR/DOSCrate-$VERSION.md"
 DOWNLOAD_URL_PREFIX="${DOSCRATE_DOWNLOAD_URL_PREFIX:-https://github.com/songer522/DOSCrateForMac/releases/download/v$VERSION/}"
 if [ -n "${SPARKLE_PRIVATE_KEY_FILE:-}" ]; then
-    "$GENERATE_APPCAST" --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" --download-url-prefix "$DOWNLOAD_URL_PREFIX" -o "$OUT/appcast.xml" "$APPCAST_DIR"
+    "$GENERATE_APPCAST" --embed-release-notes --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" --download-url-prefix "$DOWNLOAD_URL_PREFIX" -o "$OUT/appcast.xml" "$APPCAST_DIR"
 else
-    "$GENERATE_APPCAST" --download-url-prefix "$DOWNLOAD_URL_PREFIX" -o "$OUT/appcast.xml" "$APPCAST_DIR"
+    "$GENERATE_APPCAST" --embed-release-notes --download-url-prefix "$DOWNLOAD_URL_PREFIX" -o "$OUT/appcast.xml" "$APPCAST_DIR"
 fi
 rm -rf "$APPCAST_DIR"
 

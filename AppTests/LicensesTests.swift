@@ -58,4 +58,17 @@ struct LicensesTests {
     @Test func licensesIncludeLaunchBoxCredit() {
         #expect(LicensesView.notice.contains("Game information and images from the LaunchBox Games Database"))
     }
+
+    @Test func whatsNewChangelogParsesBundledVersionsAndRendersHTML() throws {
+        let sections = WhatsNewChangelog.bundled
+        #expect(sections.map(\.version) == ["1.0.2", "1.0.1", "1.0.0"])
+        let latest = try #require(sections.first)
+        #expect(latest.version == "1.0.2")
+        #expect(latest.items.contains { $0.title == "Instant Single-Game Imports" })
+        #expect(latest.items.contains { $0.title.contains("Extra Folder Mounts") })
+
+        let html = WhatsNewChangelog.html(for: latest)
+        #expect(html.contains("<h3>What's New in DOSCrate 1.0.2</h3>"))
+        #expect(html.contains("<strong>Instant Single-Game Imports:</strong>"))
+    }
 }

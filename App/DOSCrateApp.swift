@@ -169,6 +169,10 @@ struct DOSCrateApp: App {
             PreferencesView(model: model, updater: updatesEnabled ? updaterController.updater : nil)
         }
 
+        Window("What's New", id: AppCommands.whatsNewWindowID) {
+            WhatsNewView(prefs: model.prefs)
+        }
+
         Window("Licenses", id: AppCommands.licensesWindowID) {
             LicensesView(prefs: model.prefs)
         }
@@ -236,6 +240,7 @@ struct RetroAlertModal: View {
 }
 
 struct AppCommands: Commands {
+    static let whatsNewWindowID = "whats-new"
     static let licensesWindowID = "licenses"
     let model: AppModel
     let updater: SPUUpdater
@@ -249,6 +254,7 @@ struct AppCommands: Commands {
                     .credits: NSAttributedString(string: LicensesView.notice),
                 ])
             }
+            Button("What's New…") { openWindow(id: Self.whatsNewWindowID) }
             Button("Licenses…") { openWindow(id: Self.licensesWindowID) }
             Button("Check for Updates…") { updater.checkForUpdates() }
                 .disabled(!updatesEnabled)
