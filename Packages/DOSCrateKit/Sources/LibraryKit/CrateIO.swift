@@ -11,6 +11,7 @@ public enum RecordStatus: Sendable, Equatable {
 
 public enum LibraryError: Error, Equatable {
     case sourceUnreachable(path: String)
+    case invalidDriveCRoot(path: String)
     case crateExists
     /// The record is read-only; saving it would lose data written by a newer DOSCrate.
     case readOnly
@@ -205,7 +206,17 @@ public struct CrateIO: Sendable {
         let root = try referencedFolderURL(for: record)
             ?? record.crateURL.appending(path: "files", directoryHint: .isDirectory)
         let sub = record.game.launch.driveCRoot
-        return sub.isEmpty ? root : root.appending(path: sub, directoryHint: .isDirectory)
+        guard !sub.isEmpty else { return root }
+        let normalized = sub.replacingOccurrences(of: "\\", with: "/")
+        let parts = normalized.split(separator: "/", omittingEmptySubsequences: true)
+        guard !normalized.hasPrefix("/"),
+              !parts.isEmpty,
+              !parts.contains(".."),
+              !parts.contains(".")
+        else {
+            throw LibraryError.invalidDriveCRoot(path: sub)
+        }
+        return parts.reduce(root) { $0.appending(path: String($1), directoryHint: .isDirectory) }
     }
 
     // MARK: Helpers
