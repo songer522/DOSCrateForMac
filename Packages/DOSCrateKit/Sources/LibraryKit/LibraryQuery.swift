@@ -80,7 +80,12 @@ public struct LibraryQuery: Sendable, Equatable {
             guard let played = game.stats.lastPlayed else { return false }
             return now.timeIntervalSince(played) <= Self.recentWindow
         case .favorites: return game.isFavorite
-        case .tag(let tag): return game.tags.contains(tag)
+        case .tag(let tag):
+            guard let targetTag = trimmedNonEmpty(tag) else { return false }
+            return game.tags.contains { raw in
+                guard let trimmed = trimmedNonEmpty(raw) else { return false }
+                return trimmed.localizedCaseInsensitiveCompare(targetTag) == .orderedSame
+            }
         }
     }
 
@@ -154,7 +159,7 @@ public struct LibraryQuery: Sendable, Equatable {
 
 /// Every tag used by any record, unique and sorted.
 public func allTags(in records: [GameRecord]) -> [String] {
-    Set(records.flatMap(\.game.tags)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    uniqueSortedStrings(records.flatMap(\.game.tags).compactMap(trimmedNonEmpty))
 }
 
 /// Every genre used by any record (splitting comma- or semicolon-separated genre strings), unique and sorted.

@@ -15,6 +15,9 @@ import Testing
     @Test func renamingATagMergesWithAnExistingOne() {
         #expect(CollectionTags.renamed(["RPG", "Fav"], from: "RPG", to: "Fav") == ["Fav"])
         #expect(CollectionTags.renamed(["RPG", "Fav"], from: "RPG", to: "Quest") == ["Quest", "Fav"])
+        #expect(CollectionTags.renamed(["rpg", "Fav"], from: "RPG", to: "Quest") == ["Quest", "Fav"])
+        #expect(CollectionTags.renamed(["rpg", "fav"], from: "RPG", to: "Fav") == ["Fav"])
         #expect(CollectionTags.removed(["RPG", "Fav"], tag: "RPG") == ["Fav"])
+        #expect(CollectionTags.removed(["rpg", "Fav"], tag: "RPG") == ["Fav"])
     }
 }

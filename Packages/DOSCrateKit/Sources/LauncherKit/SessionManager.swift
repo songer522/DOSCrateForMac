@@ -22,10 +22,12 @@ public final class SessionManager {
     @ObservationIgnored private var activeSessions: [UUID: (started: Date, logURL: URL)] = [:]
     @ObservationIgnored private var liveProcesses: Set<ObjectIdentifier> = []
     @ObservationIgnored private var liveTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    @ObservationIgnored private var killTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
     @ObservationIgnored private var stopped: Set<UUID> = []
 
     /// True while any launched process has not yet exited, including processes still shutting down after `stopAll()`.
     public var hasLiveProcesses: Bool { !liveProcesses.isEmpty }
+    var activeKillTaskCount: Int { killTasks.count }
 
     public init(runner: any ProcessRunner = FoundationProcessRunner(),
                 now: @escaping @Sendable () -> Date = Date.init,
@@ -109,11 +111,14 @@ public final class SessionManager {
         let pid = ObjectIdentifier(process as AnyObject)
         stopped.insert(gameID)
         process.terminate()
+        killTasks[pid]?.cancel()
         let grace = killGrace
-        Task { @MainActor [weak self] in
+        killTasks[pid] = Task { @MainActor [weak self] in
             try? await Task.sleep(for: grace)
+            guard !Task.isCancelled, let self else { return }
+            self.killTasks[pid] = nil
             // Escalate if this process instance has still not exited, even after stopAll() cleared session state.
-            if let self, self.liveProcesses.contains(pid) {
+            if self.liveProcesses.contains(pid) {
                 process.kill()
             }
         }
@@ -146,6 +151,7 @@ public final class SessionManager {
                                code: Int32, started: Date, logURL: URL) {
         liveProcesses.remove(pid)
         liveTasks[pid] = nil
+        killTasks.removeValue(forKey: pid)?.cancel()
         finishSession(gameID: gameID, process: process, code: code, started: started, logURL: logURL)
     }
 

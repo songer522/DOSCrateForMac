@@ -376,16 +376,25 @@ public struct Importer: Sendable {
         let fm = FileManager.default
         if p.source.pathExtension.lowercased() == "cue" {
             let sheet = try CueSheet(p.source)
-            var seen: [String: String] = [p.source.lastPathComponent.lowercased(): p.source.standardizedFileURL.path]
+            var seen: [String: (path: String, resourceID: NSObject?)] = [
+                p.source.lastPathComponent.lowercased(): (
+                    p.source.standardizedFileURL.path,
+                    (try? p.source.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject
+                )
+            ]
             for file in sheet.files {
                 let key = file.lastPathComponent.lowercased()
                 let path = file.standardizedFileURL.path
+                let resourceID = (try? file.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject
                 if let existing = seen[key] {
-                    // The same bin listed twice is fine; two different files with one name are not.
-                    if existing == path { continue }
+                    // The same bin listed twice (including case-only variants on a case-insensitive volume) is fine;
+                    // two different files with one name are not.
+                    if existing.path == path || (resourceID != nil && existing.resourceID == resourceID) {
+                        continue
+                    }
                     throw ImportError.mediaNameCollision(file.lastPathComponent)
                 }
-                seen[key] = path
+                seen[key] = (path, resourceID)
                 try fm.copyItem(at: file, to: media.appending(path: file.lastPathComponent))
             }
             try sheet.flattenedData.write(to: media.appending(path: p.source.lastPathComponent))
@@ -501,7 +510,7 @@ public struct Importer: Sendable {
             let dir = cue.deletingLastPathComponent()
             // Splitting on "\n" only keeps any "\r" attached to its line, so line endings survive.
             var found: [URL] = []
-            lines = text.components(separatedBy: "\n").map { raw in
+            lines = try text.components(separatedBy: "\n").map { raw in
                 let hasCR = raw.hasSuffix("\r")
                 let line = hasCR ? String(raw.dropLast()) : raw
                 let cr = hasCR ? "\r" : ""
@@ -522,8 +531,25 @@ public struct Importer: Sendable {
                 }
                 guard !name.isEmpty else { return raw }
                 let normalized = name.replacingOccurrences(of: "\\", with: "/")
-                found.append(dir.appending(path: normalized, directoryHint: .notDirectory))
-                let flat = (normalized as NSString).lastPathComponent
+                guard !normalized.hasPrefix("/") else {
+                    throw CocoaError(.fileReadInvalidFileName, userInfo: [NSFilePathErrorKey: name])
+                }
+                var stack: [Substring] = []
+                for component in normalized.split(separator: "/", omittingEmptySubsequences: true) {
+                    if component == "." { continue }
+                    if component == ".." {
+                        guard !stack.isEmpty else {
+                            throw CocoaError(.fileReadInvalidFileName, userInfo: [NSFilePathErrorKey: name])
+                        }
+                        stack.removeLast()
+                    } else {
+                        stack.append(component)
+                    }
+                }
+                guard let lastPart = stack.last else { return raw }
+                let resolved = stack.reduce(dir) { $0.appending(path: String($1), directoryHint: .notDirectory) }
+                found.append(resolved)
+                let flat = String(lastPart)
                 return indent + "FILE " + (quoted ? "\"\(flat)\"" : flat) + suffix + cr
             }
             files = found

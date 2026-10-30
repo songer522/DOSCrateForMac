@@ -181,8 +181,23 @@ private func waitUntil(_ cond: @MainActor () -> Bool) async {
         try m.start(gameID: id, plan: plan())
         m.stop(gameID: id)
         await waitUntil { m.running.isEmpty }
+        #expect(m.activeKillTaskCount == 0)
         try await Task.sleep(for: .milliseconds(120))
         #expect(!runner.started[0].process.killCalled)
+    }
+
+    @Test func repeatedStopReplacesKillTaskAndProcessExitCancelsIt() async throws {
+        let runner = FakeRunner()
+        let m = SessionManager(runner: runner, killGrace: .seconds(10))
+        let id = UUID()
+        try m.start(gameID: id, plan: plan())
+        m.stop(gameID: id)
+        m.stop(gameID: id)
+        m.stop(gameID: id)
+        #expect(m.activeKillTaskCount == 1)
+        runner.started[0].process.finish(0)
+        await waitUntil { m.running.isEmpty }
+        #expect(m.activeKillTaskCount == 0)
     }
 
     @Test func startPrunesOldLogsAndCreatesDirectory() throws {

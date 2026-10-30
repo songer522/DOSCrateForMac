@@ -51,8 +51,10 @@ struct LibraryQueryTests {
     }
 
     @Test func tagFilter() {
-        let rs = [record("A", tags: ["rpg"]), record("B", tags: ["fps"])]
-        #expect(titles(LibraryQuery(filter: .tag("rpg")), rs) == ["A"])
+        let rs = [record("A", tags: ["rpg"]), record("B", tags: ["fps"]), record("C", tags: [" RPG "])]
+        #expect(titles(LibraryQuery(filter: .tag("rpg")), rs) == ["A", "C"])
+        #expect(titles(LibraryQuery(filter: .tag("RPG")), rs) == ["A", "C"])
+        #expect(titles(LibraryQuery(filter: .tag(" rpg ")), rs) == ["A", "C"])
     }
 
     @Test func sortByLastPlayedNilsLast() {
@@ -83,7 +85,7 @@ struct LibraryQueryTests {
     }
 
     @Test func allTagsSortedUnique() {
-        let rs = [record("A", tags: ["rpg", "fps"]), record("B", tags: ["fps", "Adventure"])]
+        let rs = [record("A", tags: ["rpg", "fps"]), record("B", tags: ["fps", "Adventure", "RPG"])]
         #expect(allTags(in: rs) == ["Adventure", "fps", "rpg"])
     }
 

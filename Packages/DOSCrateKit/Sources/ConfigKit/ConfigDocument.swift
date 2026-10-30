@@ -12,25 +12,34 @@ public struct ConfigDocument: Equatable, Sendable {
     public static func == (a: ConfigDocument, b: ConfigDocument) -> Bool {
         a.autoexec == b.autoexec && a.sections.count == b.sections.count
             && zip(a.sections, b.sections).allSatisfy { x, y in
-                x.name == y.name && x.entries.count == y.entries.count
-                    && zip(x.entries, y.entries).allSatisfy { $0.key == $1.key && $0.value == $1.value }
+                norm(x.name) == norm(y.name) && x.entries.count == y.entries.count
+                    && zip(x.entries, y.entries).allSatisfy { norm($0.key) == norm($1.key) && $0.value == $1.value }
             }
     }
 
+    private static func norm(_ identifier: String) -> String {
+        identifier.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
     public mutating func set(_ section: String, _ key: String, _ value: String) {
-        if let s = sections.firstIndex(where: { $0.name == section }) {
-            if let e = sections[s].entries.firstIndex(where: { $0.key == key }) {
+        let normSection = Self.norm(section)
+        let normKey = Self.norm(key)
+        if let s = sections.firstIndex(where: { Self.norm($0.name) == normSection }) {
+            if let e = sections[s].entries.firstIndex(where: { Self.norm($0.key) == normKey }) {
                 sections[s].entries[e].value = value
             } else {
-                sections[s].entries.append((key, value))
+                sections[s].entries.append((normKey, value))
             }
         } else {
-            sections.append((section, [(key, value)]))
+            sections.append((normSection, [(normKey, value)]))
         }
     }
 
     public func value(_ section: String, _ key: String) -> String? {
-        sections.first { $0.name == section }?.entries.first { $0.key == key }?.value
+        let normSection = Self.norm(section)
+        let normKey = Self.norm(key)
+        return sections.first { Self.norm($0.name) == normSection }?
+            .entries.first { Self.norm($0.key) == normKey }?.value
     }
 
     /// The higher document's keys win and its autoexec lines are appended.

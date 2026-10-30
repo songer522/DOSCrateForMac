@@ -237,10 +237,31 @@ struct ImporterTests {
 
     @Test func duplicateCueEntryForSameBinIsNotACollision() async throws {
         let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
-        let cue = Data("FILE \"a.bin\" BINARY\nFILE \"./a.bin\" BINARY\n".utf8)
+        let cue = Data("FILE \"a.bin\" BINARY\nFILE \"./a.bin\" BINARY\nFILE \"sub\\\\..\\a.bin\" BINARY\n".utf8)
         let (rec, text) = try await cueImport(cue, bins: ["a.bin"], in: tmp)
         #expect(exists(rec.crateURL.appending(path: "media/a.bin")))
-        #expect(text == "FILE \"a.bin\" BINARY\nFILE \"a.bin\" BINARY\n")
+        #expect(text == "FILE \"a.bin\" BINARY\nFILE \"a.bin\" BINARY\nFILE \"a.bin\" BINARY\n")
+    }
+
+    @Test func unquotedBackslashFileLineInCueResolvesAndFlattens() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let (rec, text) = try await cueImport(Data("FILE sub\\a.bin BINARY\r\n".utf8), bins: ["sub/a.bin"], in: tmp)
+        #expect(exists(rec.crateURL.appending(path: "media/a.bin")))
+        #expect(text == "FILE a.bin BINARY\r\n")
+    }
+
+    @Test func cueRejectsParentTraversalOutOfCueDirectory() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        try touch(tmp, "outside.bin")
+        let src = tmp.appending(path: "disc", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+        try "FILE \"../outside.bin\" BINARY\n".write(to: src.appending(path: "g.cue"), atomically: true, encoding: .utf8)
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+        let p = try await importer.prepare(src.appending(path: "g.cue"))
+        await #expect(throws: (any Error).self) {
+            _ = try await importer.commit(p, mode: .copy, title: "G", executable: nil, into: lib)
+        }
     }
 
     @Test func unquotedTypelessFileLineOnCRLFCue() async throws {

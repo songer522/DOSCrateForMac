@@ -3,38 +3,56 @@ import SwiftUI
 
 /// Pure tag rewrites behind renaming and removing a collection.
 enum CollectionTags {
+    private static func matches(_ a: String, _ b: String) -> Bool {
+        let ta = a.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tb = b.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ta.localizedCaseInsensitiveCompare(tb) == .orderedSame
+    }
+
     static func renamed(_ tags: [String], from old: String, to new: String) -> [String] {
         var result: [String] = []
         for tag in tags {
-            let mapped = tag == old ? new : tag
-            if !result.contains(mapped) { result.append(mapped) }
+            let mapped = matches(tag, old) ? new : tag
+            if let existingIndex = result.firstIndex(where: { matches($0, mapped) }) {
+                if matches(tag, old) {
+                    result[existingIndex] = new
+                }
+            } else {
+                result.append(mapped)
+            }
         }
         return result
     }
 
     static func removed(_ tags: [String], tag: String) -> [String] {
-        tags.filter { $0 != tag }
+        tags.filter { !matches($0, tag) }
     }
 
     @MainActor
     static func rename(_ old: String, to name: String, in model: AppModel) {
         let new = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !new.isEmpty, new != old else { return }
+        guard !new.isEmpty else { return }
         rewrite(old, in: model) { renamed($0, from: old, to: new) }
-        if model.query.filter == .tag(old) { model.query.filter = .tag(new) }
+        if case .tag(let current) = model.query.filter, matches(current, old) {
+            model.query.filter = .tag(new)
+        }
     }
 
     @MainActor
     static func remove(_ tag: String, in model: AppModel) {
         rewrite(tag, in: model) { removed($0, tag: tag) }
-        if model.query.filter == .tag(tag) { model.query.filter = .all }
+        if case .tag(let current) = model.query.filter, matches(current, tag) {
+            model.query.filter = .all
+        }
     }
 
     @MainActor
     private static func rewrite(_ tag: String, in model: AppModel, _ transform: ([String]) -> [String]) {
-        for record in model.store.records where record.game.tags.contains(tag) {
+        for record in model.store.records where record.game.tags.contains(where: { matches($0, tag) }) {
             var game = record.game
-            game.tags = transform(game.tags)
+            let updated = transform(game.tags)
+            guard updated != game.tags else { continue }
+            game.tags = updated
             do {
                 try model.store.save(game)
             } catch {

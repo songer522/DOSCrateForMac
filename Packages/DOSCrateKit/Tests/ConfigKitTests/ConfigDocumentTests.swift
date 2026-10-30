@@ -50,3 +50,12 @@ import Testing
     d.autoexec = ["mount c \"/x\"", "c:"]
     #expect(ConfigDocument.parse(d.render()) == d)
 }
+
+@Test func setAndValueMatchSectionsAndKeysCaseInsensitively() {
+    var d = ConfigDocument.parse("[CPU]\nCPU_Cycles = 500\n")
+    #expect(d.value("CPU", "CPU_Cycles") == "500")
+    #expect(d.value("cpu", "cpu_cycles") == "500")
+    d.set("CPU", "cpu_cycles", "1200")
+    #expect(d.value("cpu", "CPU_CYCLES") == "1200")
+    #expect(d.render() == "[cpu]\ncpu_cycles = 1200\n")
+}

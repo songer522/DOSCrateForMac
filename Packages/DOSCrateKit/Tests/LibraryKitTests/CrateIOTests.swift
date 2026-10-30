@@ -133,6 +133,17 @@ struct CrateIOTests {
         #expect(url.path == "/tmp/G.doscrate/files/GAME")
     }
 
+    @Test func cDriveURLRejectsParentTraversalAndAbsolutePaths() {
+        let crate = URL(filePath: "/tmp/G.doscrate", directoryHint: .isDirectory)
+        for bad in ["..", "../outside", "SUB/../..", "SUB\\..", "/etc", "\\WINDOWS", "."] {
+            var game = Game(title: "G", source: .managed)
+            game.launch.driveCRoot = bad
+            #expect(throws: LibraryError.invalidDriveCRoot(path: bad)) {
+                _ = try io.cDriveURL(for: GameRecord(game: game, crateURL: crate))
+            }
+        }
+    }
+
     @Test func referencedCDriveResolvesBookmark() throws {
         let lib = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: lib) }
