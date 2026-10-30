@@ -184,6 +184,23 @@ struct RetroThemeTests {
         #expect(LicensesView.steppedSelection(in: files, current: files[0].id, by: 1) == files[1].id)
         #expect(LicensesView.steppedSelection(in: files, current: files[1].id, by: 1) == files[1].id)
         #expect(LicensesView.steppedSelection(in: files, current: files[1].id, by: -1) == files[0].id)
+
+        let notes = WhatsNewChangelog.bundled
+        #expect(WhatsNewView.steppedSelection(in: [], current: nil, by: 1) == nil)
+        #expect(WhatsNewView.steppedSelection(in: notes, current: nil, by: 1) == "1.0.2")
+        #expect(WhatsNewView.steppedSelection(in: notes, current: "1.0.2", by: 1) == "1.0.1")
+        #expect(WhatsNewView.steppedSelection(in: notes, current: "1.0.0", by: 1) == "1.0.0")
+        #expect(WhatsNewView.steppedSelection(in: notes, current: "1.0.0", by: -1) == "1.0.1")
+
+        let retroWhatsNew = NSHostingView(rootView: WhatsNewView().environment(\.retroTheme, true))
+        retroWhatsNew.frame = NSRect(x: 0, y: 0, width: 640, height: 420)
+        retroWhatsNew.layoutSubtreeIfNeeded()
+        #expect(containsScrollView(in: retroWhatsNew))
+
+        let standardWhatsNew = NSHostingView(rootView: WhatsNewView().environment(\.retroTheme, false))
+        standardWhatsNew.frame = NSRect(x: 0, y: 0, width: 640, height: 420)
+        standardWhatsNew.layoutSubtreeIfNeeded()
+        #expect(containsScrollView(in: standardWhatsNew))
     }
 
     @Test func retroModalIsolationState() {
