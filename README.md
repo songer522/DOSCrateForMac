@@ -111,7 +111,9 @@ You can also open `DOSCrate.xcodeproj` directly in Xcode after running `make ven
 
 ## Creating a Release
 
-Releases are built, signed, notarized, and packaged via [`scripts/release.sh`](scripts/release.sh):
+See [`docs/releasing.md`](docs/releasing.md) for the full release runbook (one-time certificate/notary/Sparkle setup, `make release`, and publishing GitHub Releases).
+
+In short, releases are built, signed, notarized, and packaged via [`scripts/release.sh`](scripts/release.sh):
 
 ```bash
 DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" \
