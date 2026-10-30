@@ -70,6 +70,7 @@ struct CuratedSettingsSections: View {
         GraphicsSection(settings: $settings)
         SoundSection(settings: $settings)
         InputSection(settings: $settings)
+        ControllerSection(settings: $settings)
     }
 }
 
@@ -167,6 +168,38 @@ struct InputSection: View {
         ThemedSection("Input") {
             OptionalPicker("Mouse capture", selection: $settings.mouseCapture, options: MouseCapture.allCases, label: \.displayName)
             ThemedTextField(title: "Keyboard layout", text: layout, prompt: "auto")
+        }
+    }
+}
+
+struct ControllerSection: View {
+    @Binding var settings: GameSettings
+
+    static func binding(for button: ControllerButton, in settings: Binding<GameSettings>) -> Binding<ControllerKey?> {
+        Binding(
+            get: { settings.wrappedValue.controllerBindings?[button] },
+            set: { newValue in
+                var current = settings.wrappedValue.controllerBindings ?? ControllerBindings()
+                current[button] = newValue
+                settings.wrappedValue.controllerBindings = current.nonEmpty
+            }
+        )
+    }
+
+    var body: some View {
+        ThemedSection("Controller") {
+            OptionalPicker("Controller mode", selection: $settings.controllerMode, options: ControllerMode.allCases, label: \.displayName)
+            if settings.controllerMode != .disabled {
+                ForEach(ControllerButton.allCases, id: \.self) { button in
+                    ThemedPicker(
+                        button.displayName,
+                        selection: Self.binding(for: button, in: $settings),
+                        nilLabel: button.defaultLabel(for: settings.controllerMode),
+                        options: ControllerKey.allCases,
+                        label: \.displayName
+                    )
+                }
+            }
         }
     }
 }

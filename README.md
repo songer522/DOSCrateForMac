@@ -112,28 +112,6 @@ You can also open `DOSCrate.xcodeproj` directly in Xcode after running `make ven
 
 ---
 
-## Creating a Release
-
-See [`docs/releasing.md`](docs/releasing.md) for the full release runbook (one-time certificate/notary/Sparkle setup, `make release`, and publishing GitHub Releases).
-
-In short, releases are built, signed, notarized, and packaged via [`scripts/release.sh`](scripts/release.sh):
-
-```bash
-DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" \
-NOTARY_PROFILE="your-notarytool-keychain-profile" \
-DOSCRATE_APPCAST_URL="https://github.com/songer522/DOSCrateForMac/releases/latest/download/appcast.xml" \
-DOSCRATE_SPARKLE_KEY="your-sparkle-ed25519-public-key" \
-VERSION="1.0.0" \
-make release
-```
-
-This produces in `build/release/`:
-- `DOSCrate-<VERSION>.dmg` (Developer ID signed, notarized, and stapled)
-- `appcast.xml` (Sparkle EdDSA-signed update feed)
-- `dosbox-staging-<STAGING_VERSION>-source.tar.gz`, `glib-<version>.tar.xz`, and `gettext-<version>.tar.gz` (verified against [`scripts/staging.lock`](scripts/staging.lock) for GPL/LGPL compliance)
-
----
-
 ## License & Acknowledgements
 
 - **DOSCrate** is licensed under the [MIT License](LICENSE) (`Copyright (c) 2026 Yang Song`).

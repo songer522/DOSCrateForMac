@@ -120,4 +120,56 @@ import LibraryKit
         #expect(preview.contains("joysticktype = hidden\n"))
         #expect(!FileManager.default.fileExists(atPath: map.path))
     }
+
+    @Test func perGameJoystickModeWritesJoystickMapAndType() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE")
+        var r = f.record(executable: "GAME.EXE", exitWhenDone: false)
+        r.game.settings.controllerMode = .twoAxis
+        r.game.settings.controllerBindings = ControllerBindings(leftTrigger: .space)
+        let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+        // Even if global controllerLayout is nil (global toggle off), detectedControllerLayout enables explicit per-game mode
+        let global = GlobalConfig(controllerLayout: nil, detectedControllerLayout: .xboxUSB)
+        _ = try LaunchPlanner.plan(r, cDrive: c, global: global, dosbox: f.dosbox, io: f.io)
+        let map = f.crate.appending(path: ".cache/controller.map")
+        #expect(try String(contentsOf: map, encoding: .utf8) == ControllerMap.render(
+            .xboxUSB,
+            mode: .twoAxis,
+            bindings: ControllerBindings(leftTrigger: .space)
+        ))
+        let conf = try String(contentsOf: f.crate.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(conf.contains("mapperfile = \(map.path)\n"))
+        #expect(conf.contains("joysticktype = 2axis\n"))
+    }
+
+    @Test func perGameDisabledControllerModeSkipsMapAndSetsDisabled() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE")
+        var r = f.record(executable: "GAME.EXE", exitWhenDone: false)
+        r.game.settings.controllerMode = .disabled
+        let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+        _ = try LaunchPlanner.plan(r, cDrive: c, global: GlobalConfig(controllerLayout: .standard), dosbox: f.dosbox, io: f.io)
+        let map = f.crate.appending(path: ".cache/controller.map")
+        #expect(!FileManager.default.fileExists(atPath: map.path))
+        let conf = try String(contentsOf: f.crate.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(!conf.contains("mapperfile"))
+        #expect(conf.contains("joysticktype = disabled\n"))
+    }
+
+    @Test func inheritedGlobalModeRespectsGlobalControllerToggleOff() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE")
+        let r = f.record(executable: "GAME.EXE", exitWhenDone: false)
+        let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+        let global = GlobalConfig(
+            overrides: GameSettings(controllerMode: .twoAxis),
+            controllerLayout: nil,
+            detectedControllerLayout: .standard
+        )
+        _ = try LaunchPlanner.plan(r, cDrive: c, global: global, dosbox: f.dosbox, io: f.io)
+        let map = f.crate.appending(path: ".cache/controller.map")
+        #expect(!FileManager.default.fileExists(atPath: map.path))
+        let conf = try String(contentsOf: f.crate.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(!conf.contains("mapperfile"))
+    }
 }
