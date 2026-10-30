@@ -9,7 +9,7 @@
 
 ## Download
 
-- **[Download DOSCrate 1.0.1 (`DOSCrate-1.0.1.dmg`)](https://github.com/songer522/DOSCrateForMac/releases/download/v1.0.1/DOSCrate-1.0.1.dmg)** *(macOS 15.0+, Apple Silicon — Developer ID signed & notarized)*
+- **[Download DOSCrate 1.0.2 (`DOSCrate-1.0.2.dmg`)](https://github.com/songer522/DOSCrateForMac/releases/download/v1.0.2/DOSCrate-1.0.2.dmg)** *(macOS 15.0+, Apple Silicon — Developer ID signed & notarized)*
 - Browse all releases on the **[GitHub Releases](https://github.com/songer522/DOSCrateForMac/releases)** page.
 
 ---
