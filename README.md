@@ -2,6 +2,8 @@
 
 **DOSCrate** is a native macOS library manager and launcher for MS-DOS games, built with Swift 6 and SwiftUI for Apple Silicon Macs. It pairs a Finder-friendly `.doscrate` bundle format with a bundled [DOSBox Staging](https://www.dosbox-staging.org/) runtime so you can import, organize, configure, and play classic DOS games without writing config files by hand.
 
+![DOSCrate Screenshot](docs/screenshot.png)
+
 ---
 
 ## Features
