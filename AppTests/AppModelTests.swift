@@ -141,7 +141,7 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         await waitUntil { !model.sessions.running.contains(id) }
     }
 
-    @Test func gamesPendingRemovalCannotLaunch() async throws {
+    @Test func gamesPendingRemovalCannotLaunchAndShowAlert() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
         var others: [UUID] = []
@@ -153,15 +153,70 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         }
         await model.store.reload()
 
+        let state = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        model.store.itemRemovalHook = { _ in
+            state.withLock { $0.entered = true }
+            while !state.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+        }
+
         let removal = Task { await model.removeGames(Set(others + [id]), trashFolders: false) }
-        for _ in 0..<1000 where !model.isRemoving { await Task.yield() }
+        await waitUntil { state.withLock { $0.entered } }
         #expect(model.pendingRemovalIDs.contains(id))
-        model.play(id)
+        #expect(LibraryView.showsRemovalCancel(for: model))
+        #expect(RetroStatusBar.showsRemovalCancel(for: model))
+
+        var flushedWrite = false
+        model.setPendingWrite(id, owner: "draft") { flushedWrite = true }
+        #expect(model.play(id) == nil)
+        #expect(!flushedWrite)
         #expect(!model.sessions.running.contains(id))
         #expect(runner.processes.isEmpty)
+        let alert = try #require(model.alert)
+        #expect(alert.title == "Can't start Test Game")
+        #expect(alert.message == "This game is being removed from the library. Cancel the removal to play it.")
+        #expect(alert.gameID == id)
+
+        model.store.itemRemovalHook = nil
+        state.withLock { $0.released = true }
         await removal.value
         #expect(model.pendingRemovalIDs.isEmpty)
         #expect(model.store.records.isEmpty)
+    }
+
+    @Test func cancelRemovalStopsBatchAndKeepsRemainingGames() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        var allIDs: [UUID] = [id]
+        for n in 1...4 {
+            let crate = try io.makeCrate(title: "Other \(n)", in: model.store.library)
+            let game = Game(title: "Other \(n)", source: .managed)
+            try io.save(game, extra: [:], to: crate)
+            allIDs.append(game.id)
+        }
+        await model.store.reload()
+        model.selectedIDs = Set(allIDs)
+
+        let count = OSAllocatedUnfairLock(initialState: 0)
+        model.store.itemRemovalHook = { _ in
+            let current = count.withLock {
+                $0 += 1
+                return $0
+            }
+            if current == 2 {
+                await MainActor.run { model.cancelRemoval() }
+            }
+        }
+
+        await model.removeGames(Set(allIDs), trashFolders: false)
+        model.store.itemRemovalHook = nil
+
+        #expect(!model.isRemoving)
+        #expect(model.removalProgress == nil)
+        #expect(model.pendingRemovalIDs.isEmpty)
+        #expect(model.store.records.count == 4)
+        #expect(model.selectedIDs == Set(model.store.records.map(\.id)))
     }
 
     @Test func removeGameDropsItFromAMultipleSelection() async throws {

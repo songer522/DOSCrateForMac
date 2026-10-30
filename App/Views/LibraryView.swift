@@ -127,7 +127,7 @@ struct LibraryView: View {
                             Text("Checking for duplicates…")
                         }
                     } else if let removal = model.removalProgress {
-                        statusBar(cancellable: false) {
+                        statusBar(cancellable: Self.showsRemovalCancel(for: model), onCancel: { model.cancelRemoval() }) {
                             ProgressView(value: Double(removal.done), total: Double(max(removal.total, 1)))
                                 .progressViewStyle(.linear)
                                 .frame(maxWidth: 180)
@@ -180,7 +180,11 @@ struct LibraryView: View {
         }
     }
 
-    private func statusBar(cancellable: Bool = true, @ViewBuilder _ items: () -> some View) -> some View {
+    private func statusBar(
+        cancellable: Bool = true,
+        onCancel: (() -> Void)? = nil,
+        @ViewBuilder _ items: () -> some View
+    ) -> some View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 10) {
@@ -196,7 +200,7 @@ struct LibraryView: View {
                         .monospacedDigit()
                 }
                 if cancellable {
-                    Button("Cancel") { model.cancelImport() }
+                    Button("Cancel") { (onCancel ?? { model.cancelImport() })() }
                         .controlSize(.small)
                 }
             }
@@ -316,6 +320,14 @@ struct LibraryView: View {
               model.removalProgress == nil
         else { return false }
         return model.metadata.showsFindMissingCancel
+    }
+
+    static func showsRemovalCancel(for model: AppModel) -> Bool {
+        guard model.imports.progress == nil,
+              !model.isScanningLibrary,
+              !model.imports.isCheckingDuplicates
+        else { return false }
+        return model.removalProgress != nil
     }
 
     /// What removal does, worded per source: a managed game's files live in its crate, so they always go with it.
