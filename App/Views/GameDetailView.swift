@@ -47,7 +47,13 @@ struct GameDetailView: View {
             Group {
                 switch tab {
                 case .info: InfoTab(game: $draft) { model.findMetadataFor = record.id }
-                case .settings: SettingsTab(record: record, game: $draft, onError: showError) { removedMedia.append($0.relativePath) }
+                case .settings:
+                    SettingsTab(
+                        record: record,
+                        game: $draft,
+                        onAddMedia: addMedia,
+                        onRemovedMedia: { removedMedia.append($0.relativePath) }
+                    )
                 case .advanced: AdvancedTab(model: model, record: record, game: draft)
                 }
             }
@@ -73,6 +79,16 @@ struct GameDetailView: View {
 
     private func showError(_ title: String, _ message: String) {
         model.alert = AppAlert(title: title, message: message)
+    }
+
+    private func addMedia(_ source: URL) {
+        let targetID = record.id
+        Task {
+            guard let image = await model.addMedia(from: source, to: targetID) else { return }
+            if draft.id == targetID, !draft.media.contains(image) {
+                draft.media.append(image)
+            }
+        }
     }
 
     private func scheduleSave() {

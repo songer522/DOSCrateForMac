@@ -870,4 +870,86 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         await waitUntil { replied }
         #expect(!model.sessions.hasLiveProcesses)
     }
+
+    @Test func addMediaPersistsToTargetGameWhenSelectionChangesDuringCopy() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { _ in }
+        let lib = model.store.library
+        let crate2 = try io.makeCrate(title: "Second Game", in: lib)
+        var game2 = Game(title: "Second Game", source: .managed)
+        game2.launch.executable = "GAME.EXE"
+        try io.save(game2, extra: [:], to: crate2)
+        await model.store.reload()
+
+        let discSource = root.appending(path: "DISC.ISO")
+        try Data("iso-bytes".utf8).write(to: discSource)
+
+        model.selection = id
+        var editedDraft = try #require(model.store.record(id)?.game)
+        editedDraft.title = "Renamed Before Selection Change"
+        _ = GameDetailView.scheduleDraftSave(draft: editedDraft, in: model)
+
+        let state = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+
+        let addTask = Task {
+            await model.addMedia(from: discSource, to: id) {
+                state.withLock { $0.entered = true }
+                while !state.withLock({ $0.released }) {
+                    try? await Task.sleep(for: .milliseconds(5))
+                }
+            }
+        }
+
+        await waitUntil { state.withLock { $0.entered } }
+        // Switch selection to the second game while the disc copy is still in flight.
+        model.selection = game2.id
+        state.withLock { $0.released = true }
+
+        let added = await addTask.value
+        #expect(added == MediaImage(relativePath: "media/DISC.ISO", kind: .cdrom))
+
+        let updatedRecord = try #require(model.store.record(id))
+        #expect(updatedRecord.game.title == "Renamed Before Selection Change")
+        #expect(updatedRecord.game.media == [MediaImage(relativePath: "media/DISC.ISO", kind: .cdrom)])
+        #expect(FileManager.default.fileExists(atPath: updatedRecord.crateURL.appending(path: "media/DISC.ISO").path))
+
+        // Adding a second image with the same filename numbers it without colliding.
+        let secondAdded = await model.addMedia(from: discSource, to: id)
+        #expect(secondAdded == MediaImage(relativePath: "media/DISC 2.ISO", kind: .cdrom))
+        #expect(model.store.record(id)?.game.media.count == 2)
+        #expect(model.store.record(game2.id)?.game.media.isEmpty == true)
+    }
+
+    @Test func addMediaCleansUpCopiedFileIfGameRemovedDuringCopy() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { _ in }
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+
+        let floppySource = root.appending(path: "DISK1.IMG")
+        try Data("floppy-bytes".utf8).write(to: floppySource)
+
+        let state = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+
+        let addTask = Task {
+            await model.addMedia(from: floppySource, to: id) {
+                state.withLock { $0.entered = true }
+                while !state.withLock({ $0.released }) {
+                    try? await Task.sleep(for: .milliseconds(5))
+                }
+            }
+        }
+
+        await waitUntil { state.withLock { $0.entered } }
+        // Simulate the record being removed from the store while the copy is in flight,
+        // while keeping the crate folder on disk to verify the copied file in media/ is cleaned up.
+        let backupURL = root.appending(path: "CrateBackup.doscrate")
+        try FileManager.default.copyItem(at: crateURL, to: backupURL)
+        try model.store.remove(id, trashFiles: false)
+        try FileManager.default.moveItem(at: backupURL, to: crateURL)
+        state.withLock { $0.released = true }
+
+        let added = await addTask.value
+        #expect(added == nil)
+        #expect(!FileManager.default.fileExists(atPath: crateURL.appending(path: "media/DISK1.IMG").path))
+    }
 }
