@@ -119,6 +119,56 @@ struct SettingsBindingTests {
         await waitUntil { provider.refreshCalls == 1 }
         #expect(provider.refreshCalls == 1)
     }
+
+    @Test func drivesSectionAssignsAvailableDriveLettersAndRespectsCDROMOnD() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "folder-mounts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir1 = root.appending(path: "Saves")
+        let dir2 = root.appending(path: "Mods")
+        try FileManager.default.createDirectory(at: dir1, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dir2, withIntermediateDirectories: true)
+
+        var game = Game(title: "Keen", source: .managed)
+        #expect(DrivesSection.canAddFolderMount(to: game))
+
+        // Without CD-ROM media, first folder mount defaults to D:, second to E:.
+        let first = try #require(DrivesSection.appendFolderMount(url: dir1, to: &game))
+        #expect(first.driveLetter == "D")
+        let second = try #require(DrivesSection.appendFolderMount(url: dir2, to: &game))
+        #expect(second.driveLetter == "E")
+        #expect(DrivesSection.availableDriveLetters(for: 0, in: game).contains("D"))
+        #expect(!DrivesSection.availableDriveLetters(for: 0, in: game).contains("E"))
+
+        // With CD-ROM media present, D: is reserved for CD-ROM imgmount.
+        var cdGame = Game(title: "Wing Commander", source: .managed)
+        cdGame.media = [MediaImage(relativePath: "media/disc1.iso", kind: .cdrom)]
+        let cdMount = try #require(DrivesSection.appendFolderMount(url: dir1, to: &cdGame))
+        #expect(cdMount.driveLetter == "E")
+        #expect(!DrivesSection.availableDriveLetters(for: 0, in: cdGame).contains("D"))
+
+        // Adding a CD-ROM after a D: folder mount was already configured shifts D: to the next free letter
+        // and never leaves D: selectable while CD-ROM media is present.
+        game.media = [MediaImage(relativePath: "media/disc1.iso", kind: .cdrom)]
+        #expect(!DrivesSection.availableDriveLetters(for: 0, in: game).contains("D"))
+        #expect(FolderMount.reassignConflictsWithCDROM(&game.launch.folderMounts, hasCDROM: true))
+        #expect(game.launch.folderMounts.map(\.driveLetter) == ["F", "E"])
+
+        // When all D:–Y: letters are already occupied by folder mounts, reassignConflictsWithCDROM reports failure.
+        var fullMounts = FolderMount.availableDriveLetters.map {
+            FolderMount(driveLetter: $0, path: dir1.path, bookmark: Data())
+        }
+        #expect(!FolderMount.reassignConflictsWithCDROM(&fullMounts, hasCDROM: true))
+
+        // Missing extra folder mount reports a dedicated alert without offering .resetCRoot even when driveCRoot is set.
+        game.launch.driveCRoot = "SUB"
+        let alert = AppModel.alert(
+            for: .folderMountMissing(driveLetter: "F", path: "/missing/Saves"),
+            gameID: game.id,
+            game: game
+        )
+        #expect(alert.title == "Mounted folder not found")
+        #expect(alert.fix == nil)
+    }
 }
 
 @MainActor

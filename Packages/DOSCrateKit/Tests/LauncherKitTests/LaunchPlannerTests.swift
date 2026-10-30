@@ -53,12 +53,19 @@ import LibraryKit
     @Test func planWritesLaunchConf() throws {
         let f = try Fixture(); defer { f.cleanup() }
         try f.touch("GAME.EXE")
-        let r = f.record(executable: "GAME.EXE")
+        let extraDir = f.root.appendingPathComponent("ExtraTools")
+        try FileManager.default.createDirectory(at: extraDir, withIntermediateDirectories: true)
+        var r = f.record(executable: "GAME.EXE")
+        r.game.launch.folderMounts = [
+            FolderMount(driveLetter: "E", path: extraDir.path, bookmark: try CrateIO.makeBookmark(for: extraDir))
+        ]
         let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox)
         let plan = try LaunchPlanner.plan(r, cDrive: c, global: GlobalConfig(), dosbox: f.dosbox, io: f.io)
         let text = try String(contentsOf: plan.configURL, encoding: .utf8)
+        let resolvedExtra = try Preflight.resolveFolderMount(r.game.launch.folderMounts[0])
         #expect(text.contains("[autoexec]"))
         #expect(text.contains("mount c \"\(c.path)\""))
+        #expect(text.contains("mount e \"\(resolvedExtra.path)\""))
         #expect(text.contains("GAME.EXE"))
         #expect(text == LaunchPlanner.generatedConfigPreview(r, global: GlobalConfig(), io: f.io))
         #expect(FileManager.default.fileExists(atPath: plan.logsDirectory.path))

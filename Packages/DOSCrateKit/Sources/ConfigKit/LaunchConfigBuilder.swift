@@ -21,7 +21,8 @@ public struct GlobalConfig: Sendable {
 
 public enum LaunchConfigBuilder {
     /// Layers, lowest to highest: controller map, global curated, global raw, preset, game settings, autoexec.
-    public static func build(game: Game, cDrive: URL, media: [(URL, MediaKind)], global: GlobalConfig,
+    public static func build(game: Game, cDrive: URL, media: [(URL, MediaKind)],
+                             folderMounts: [(String, URL)] = [], global: GlobalConfig,
                              controllerMap: URL? = nil) throws(DOSPathError) -> ConfigDocument {
         var doc = ConfigDocument()
         if let controllerMap {
@@ -33,7 +34,7 @@ public enum LaunchConfigBuilder {
         doc.merge(Presets.document(game.settings.preset ?? global.defaultPreset))
         doc.merge(SettingsMapper.document(game.settings, env: global.env))
         var tail = ConfigDocument()
-        tail.autoexec = try AutoexecBuilder.lines(cDrive: cDrive, media: media, launch: game.launch)
+        tail.autoexec = try AutoexecBuilder.lines(cDrive: cDrive, media: media, folderMounts: folderMounts, launch: game.launch)
         doc.merge(tail)
         return doc
     }

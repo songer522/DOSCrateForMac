@@ -60,6 +60,52 @@ public struct MediaImage: Sendable, Equatable, Codable {
     }
 }
 
+public struct FolderMount: Sendable, Equatable, Codable {
+    public static let availableDriveLetters: [String] = (UnicodeScalar("D").value...UnicodeScalar("Y").value).compactMap {
+        UnicodeScalar($0).map { String($0) }
+    }
+
+    public var driveLetter: String
+    public var path: String
+    public var bookmark: Data
+
+    public init(driveLetter: String, path: String, bookmark: Data) {
+        self.driveLetter = driveLetter.uppercased()
+        self.path = path
+        self.bookmark = bookmark
+    }
+
+    private enum CodingKeys: String, CodingKey { case driveLetter, path, bookmark }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        driveLetter = try c.decode(String.self, forKey: .driveLetter).uppercased()
+        path = try c.decode(String.self, forKey: .path)
+        bookmark = try c.decode(Data.self, forKey: .bookmark)
+    }
+
+    /// Returns the first unused drive letter in `D`...`Y`, reserving `D` when `hasCDROM` is true.
+    public static func nextAvailableDriveLetter(existing: [FolderMount], hasCDROM: Bool) -> String? {
+        var used = Set(existing.map { $0.driveLetter.uppercased() })
+        if hasCDROM { used.insert("D") }
+        return availableDriveLetters.first { !used.contains($0) }
+    }
+
+    /// Reassigns any folder mount on `D` to the next free letter in `E`...`Y` when `hasCDROM` is true.
+    /// Returns `false` if a folder mount on `D` could not be reassigned because all letters `E`...`Y` are in use.
+    @discardableResult
+    public static func reassignConflictsWithCDROM(_ mounts: inout [FolderMount], hasCDROM: Bool) -> Bool {
+        guard hasCDROM else { return true }
+        for i in mounts.indices where mounts[i].driveLetter.uppercased() == "D" {
+            guard let next = nextAvailableDriveLetter(existing: mounts, hasCDROM: true) else {
+                return false
+            }
+            mounts[i].driveLetter = next
+        }
+        return true
+    }
+}
+
 public struct LaunchSpec: Sendable, Equatable, Codable {
     /// '/'-separated path relative to the C: root.
     public var executable: String?
@@ -69,18 +115,22 @@ public struct LaunchSpec: Sendable, Equatable, Codable {
     public var exitWhenDone: Bool
     /// Subpath of the game folder mounted as C:.
     public var driveCRoot: String
+    /// Additional host directories mounted as DOS drives (`D:`, `E:`, ...).
+    public var folderMounts: [FolderMount]
 
     public init(
         executable: String? = nil, arguments: String = "", preCommands: [String] = [],
-        postCommands: [String] = [], exitWhenDone: Bool = true, driveCRoot: String = ""
+        postCommands: [String] = [], exitWhenDone: Bool = true, driveCRoot: String = "",
+        folderMounts: [FolderMount] = []
     ) {
         self.executable = executable; self.arguments = arguments
         self.preCommands = preCommands; self.postCommands = postCommands
         self.exitWhenDone = exitWhenDone; self.driveCRoot = driveCRoot
+        self.folderMounts = folderMounts
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
-        case executable, arguments, preCommands, postCommands, exitWhenDone, driveCRoot
+        case executable, arguments, preCommands, postCommands, exitWhenDone, driveCRoot, folderMounts
     }
 
     static let knownKeys = Set(CodingKeys.allCases.map(\.rawValue))
@@ -93,6 +143,7 @@ public struct LaunchSpec: Sendable, Equatable, Codable {
         postCommands = try c.decodeIfPresent([String].self, forKey: .postCommands) ?? []
         exitWhenDone = try c.decodeIfPresent(Bool.self, forKey: .exitWhenDone) ?? true
         driveCRoot = try c.decodeIfPresent(String.self, forKey: .driveCRoot) ?? ""
+        folderMounts = try c.decodeIfPresent([FolderMount].self, forKey: .folderMounts) ?? []
     }
 }
 

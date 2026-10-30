@@ -49,7 +49,7 @@ public enum Preflight {
             }
             let exeURL = cDrive.appending(path: exe, directoryHint: .notDirectory)
             guard fm.fileExists(atPath: exeURL.path) else { throw .executableMissing(path: exe) }
-        } else if r.game.media.isEmpty {
+        } else if r.game.media.isEmpty && r.game.launch.folderMounts.isEmpty {
             throw .executableNotSet
         }
 
@@ -58,10 +58,37 @@ public enum Preflight {
             guard fm.fileExists(atPath: url.path) else { throw .mediaMissing(path: url.path) }
             if url.path.contains("\"") { throw .unsupportedPath(url.path) }
         }
+        let hasCDROM = r.game.media.contains { $0.kind == .cdrom }
+        var effectiveMounts = r.game.launch.folderMounts
+        guard FolderMount.reassignConflictsWithCDROM(&effectiveMounts, hasCDROM: hasCDROM) else {
+            throw .launchFailed("All DOS drive letters (D:–Y:) are already used by folder mounts. Remove a folder mount to free D: for the CD-ROM.")
+        }
+        for mount in r.game.launch.folderMounts {
+            let url = try resolveFolderMount(mount)
+            if url.path.contains("\"") { throw .unsupportedPath(url.path) }
+        }
         return cDrive
     }
 
     static func mediaURL(_ image: MediaImage, in crate: URL) -> URL {
         crate.appending(path: image.relativePath, directoryHint: .notDirectory)
+    }
+
+    static func resolveFolderMount(_ mount: FolderMount) throws(LaunchError) -> URL {
+        let fm = FileManager.default
+        if !mount.bookmark.isEmpty {
+            var stale = false
+            if let resolved = try? URL(resolvingBookmarkData: mount.bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) {
+                var isDir: ObjCBool = false
+                if fm.fileExists(atPath: resolved.path, isDirectory: &isDir), isDir.boolValue {
+                    return resolved
+                }
+            }
+        }
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: mount.path, isDirectory: &isDir), isDir.boolValue else {
+            throw .folderMountMissing(driveLetter: mount.driveLetter, path: mount.path)
+        }
+        return URL(fileURLWithPath: mount.path, isDirectory: true)
     }
 }
