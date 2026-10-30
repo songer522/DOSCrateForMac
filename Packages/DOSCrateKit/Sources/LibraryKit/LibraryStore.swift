@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 @MainActor
 @Observable
@@ -10,6 +11,8 @@ public final class LibraryStore {
     @ObservationIgnored public var onReload: (@MainActor () -> Void)?
     /// Called at the end of `reload()` after `records` is updated.
     @ObservationIgnored public var afterReload: (@MainActor () -> Void)?
+    /// Test hook called inside each batch removal chunk before trashing the record.
+    @ObservationIgnored public var itemRemovalHook: (@Sendable (UUID) async -> Void)?
     /// While true, file-watcher events are ignored so a running batch import or removal controls reload timing.
     public var isWatcherSuppressed: Bool { watcherSuppressions > 0 }
     @ObservationIgnored private var watcherSuppressions = 0
@@ -78,7 +81,7 @@ public final class LibraryStore {
 
     /// Removes several games, trashing off the main actor in small chunks so the library shrinks as it goes.
     /// `onProgress` gets (done, total) after each chunk. Returns a "Title: reason" line for each failure;
-    /// a game whose folder can't be trashed keeps its crate.
+    /// a game whose folder can't be trashed keeps its crate. Honours task cancellation between items.
     public func remove(
         _ ids: [UUID], trashFiles: Bool, onProgress: (@MainActor (Int, Int) -> Void)? = nil
     ) async -> [String] {
@@ -88,35 +91,50 @@ public final class LibraryStore {
         suppressWatcher()
         defer { resumeWatcher() }
         let io = self.io
-        var failures: [String] = []
-        var done = 0
-        for start in stride(from: 0, to: targets.count, by: 20) {
-            let chunk = Array(targets[start..<min(start + 20, targets.count)])
-            generation += 1
-            let (removed, chunkFailures) = await Task.detached { () -> (Set<UUID>, [String]) in
-                let fm = FileManager.default
-                var removed = Set<UUID>()
-                var failures: [String] = []
-                for record in chunk {
-                    do {
-                        if trashFiles, let folder = try? io.referencedFolderURL(for: record) {
-                            try fm.trashItem(at: folder, resultingItemURL: nil)
+        let hook = self.itemRemovalHook
+        let cancelled = OSAllocatedUnfairLock(initialState: Task.isCancelled)
+        return await withTaskCancellationHandler {
+            var failures: [String] = []
+            var done = 0
+            for start in stride(from: 0, to: targets.count, by: 20) {
+                if Task.isCancelled || cancelled.withLock({ $0 }) { break }
+                let chunk = Array(targets[start..<min(start + 20, targets.count)])
+                generation += 1
+                let (removed, chunkFailures, processed) = await Task.detached { () -> (Set<UUID>, [String], Int) in
+                    let fm = FileManager.default
+                    var removed = Set<UUID>()
+                    var failures: [String] = []
+                    var processed = 0
+                    for record in chunk {
+                        if cancelled.withLock({ $0 }) { break }
+                        if let hook {
+                            await hook(record.id)
+                            if cancelled.withLock({ $0 }) { break }
                         }
-                        try fm.trashItem(at: record.crateURL, resultingItemURL: nil)
-                        removed.insert(record.id)
-                    } catch {
-                        failures.append("\(record.game.title): \(error.localizedDescription)")
+                        processed += 1
+                        do {
+                            if trashFiles, let folder = try? io.referencedFolderURL(for: record) {
+                                try fm.trashItem(at: folder, resultingItemURL: nil)
+                            }
+                            try fm.trashItem(at: record.crateURL, resultingItemURL: nil)
+                            removed.insert(record.id)
+                        } catch {
+                            failures.append("\(record.game.title): \(error.localizedDescription)")
+                        }
                     }
-                }
-                return (removed, failures)
-            }.value
-            generation += 1
-            records.removeAll { removed.contains($0.id) }
-            failures += chunkFailures
-            done += chunk.count
-            onProgress?(done, targets.count)
+                    return (removed, failures, processed)
+                }.value
+                generation += 1
+                records.removeAll { removed.contains($0.id) }
+                failures += chunkFailures
+                done += processed
+                onProgress?(done, targets.count)
+                if Task.isCancelled || cancelled.withLock({ $0 }) { break }
+            }
+            return failures
+        } onCancel: {
+            cancelled.withLock { $0 = true }
         }
-        return failures
     }
 
     public func startWatching() {

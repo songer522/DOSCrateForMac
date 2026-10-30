@@ -23,7 +23,7 @@ struct RetroStatusBar: View {
                 Text("Checking for duplicates…")
             }
         } else if let removal = model.removalProgress {
-            bar(cancellable: false) {
+            bar(cancellable: Self.showsRemovalCancel(for: model), onCancel: { model.cancelRemoval() }) {
                 progressBar(current: removal.done, total: removal.total)
                 Text("Removing \(removal.done) of \(removal.total)…")
             }
@@ -69,7 +69,15 @@ struct RetroStatusBar: View {
         LibraryView.showsFindMissingCancel(for: model)
     }
 
-    private func bar(cancellable: Bool, @ViewBuilder _ items: () -> some View) -> some View {
+    static func showsRemovalCancel(for model: AppModel) -> Bool {
+        LibraryView.showsRemovalCancel(for: model)
+    }
+
+    private func bar(
+        cancellable: Bool,
+        onCancel: (() -> Void)? = nil,
+        @ViewBuilder _ items: () -> some View
+    ) -> some View {
         HStack(spacing: 10) {
             items()
                 .font(RetroFont.font())
@@ -87,7 +95,7 @@ struct RetroStatusBar: View {
                 }
             }
             if cancellable {
-                Button("Cancel") { model.cancelImport() }
+                Button("Cancel") { (onCancel ?? { model.cancelImport() })() }
                     .buttonStyle(RetroButtonStyle(kind: .text))
             }
         }

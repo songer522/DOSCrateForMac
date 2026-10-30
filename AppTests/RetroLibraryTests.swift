@@ -197,5 +197,7 @@ struct RetroLibraryTests {
         #expect(RetroStatusBar.leadingText(for: model) == "LaunchBox data unavailable")
         #expect(LibraryView.showsMetadataRetry(for: model))
         #expect(RetroStatusBar.showsMetadataRetry(for: model))
+        #expect(!LibraryView.showsRemovalCancel(for: model))
+        #expect(!RetroStatusBar.showsRemovalCancel(for: model))
     }
 }

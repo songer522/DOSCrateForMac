@@ -86,6 +86,7 @@ final class AppModel {
     @ObservationIgnored private var startTokens: [UUID: UUID] = [:]
     /// Debounced editor writes not yet on disk, keyed by game; `play` runs them first.
     @ObservationIgnored private var pendingWrites: [UUID: [String: @MainActor () -> Void]] = [:]
+    @ObservationIgnored private var activeRemovalTask: Task<[String], Never>?
 
     init(prefs: Preferences, store: LibraryStore, sessions: SessionManager, importer: Importer, dosbox: URL,
          verifyDosbox: @escaping @Sendable (URL) throws -> Void = { try StagingLocator.verify($0) },
@@ -194,8 +195,20 @@ final class AppModel {
         pendingRemovalIDs.formUnion(targets)
         defer { pendingRemovalIDs.subtract(targets) }
         removalProgress = (0, targets.count)
-        let failures = await store.remove(targets, trashFiles: trashFolders) { [weak self] done, total in
-            self?.removalProgress = (done, total)
+        let store = self.store
+        let task = Task { [weak self] in
+            await store.remove(targets, trashFiles: trashFolders) { done, total in
+                self?.removalProgress = (done, total)
+            }
+        }
+        activeRemovalTask = task
+        let failures = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        if activeRemovalTask == task {
+            activeRemovalTask = nil
         }
         removalProgress = nil
         selectedIDs = selectedIDs.filter { store.record($0) != nil }
@@ -211,6 +224,11 @@ final class AppModel {
                 message: problems.joined(separator: "\n")
             )
         }
+    }
+
+    /// Stops the running batch removal after the game currently being trashed; games not yet removed stay in the library.
+    func cancelRemoval() {
+        activeRemovalTask?.cancel()
     }
 
     /// Removes one game; see `LibraryStore.remove(_:trashFiles:)`. A running or starting game shows an alert instead.
@@ -352,6 +370,15 @@ final class AppModel {
               !sessions.running.contains(id),
               !imports.replacingIDs.contains(id)
         else { return nil }
+        if pendingRemovalIDs.contains(id) {
+            let title = store.record(id)?.game.title ?? "this game"
+            alert = AppAlert(
+                title: "Can't start \(title)",
+                message: "This game is being removed from the library. Cancel the removal to play it.",
+                gameID: id
+            )
+            return nil
+        }
         metadata.cancel(id)
         flushPendingWrites(for: id)
         guard !isTerminating,
