@@ -323,6 +323,16 @@ final class AppModel {
         let mediaDir = initialRecord.crateURL.appending(path: "media", directoryHint: .isDirectory)
         let ext = source.pathExtension.lowercased()
         let kind: MediaKind = ext == "iso" ? .cdrom : .floppy
+        if kind == .cdrom {
+            var candidateMounts = initialRecord.game.launch.folderMounts
+            guard FolderMount.reassignConflictsWithCDROM(&candidateMounts, hasCDROM: true) else {
+                alert = AppAlert(
+                    title: "Can't add \(source.lastPathComponent)",
+                    message: "All DOS drive letters (D:–Y:) are already used by folder mounts. Remove a folder mount to free D: for the CD-ROM."
+                )
+                return nil
+            }
+        }
 
         let copied: (name: String, fileURL: URL)
         do {
@@ -355,6 +365,17 @@ final class AppModel {
         var updated = currentRecord.game
         if !updated.media.contains(image) {
             updated.media.append(image)
+        }
+        guard FolderMount.reassignConflictsWithCDROM(
+            &updated.launch.folderMounts,
+            hasCDROM: updated.media.contains { $0.kind == .cdrom }
+        ) else {
+            try? FileManager.default.removeItem(at: copied.fileURL)
+            alert = AppAlert(
+                title: "Can't add \(source.lastPathComponent)",
+                message: "All DOS drive letters (D:–Y:) are already used by folder mounts. Remove a folder mount to free D: for the CD-ROM."
+            )
+            return nil
         }
         do {
             try store.save(updated)
@@ -655,6 +676,9 @@ final class AppModel {
                                 fix: .resetCRoot)
             }
             return AppAlert(title: "Game files not found", message: "DOSCrate can't find this game's files at \(path).")
+        case .folderMountMissing(let driveLetter, let path):
+            return AppAlert(title: "Mounted folder not found",
+                            message: "DOSCrate can't find the folder for drive \(driveLetter): at \(path).")
         case .mediaMissing(let path):
             return AppAlert(title: "Disc image missing",
                             message: "\((path as NSString).lastPathComponent) is no longer in the game's media folder.")

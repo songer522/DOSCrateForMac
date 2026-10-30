@@ -72,6 +72,32 @@ struct Fixture {
         try Data("x".utf8).write(to: f.crate.appendingPathComponent("media/d.iso"))
         r.game.media = [MediaImage(relativePath: "media/d.iso", kind: .cdrom)]
         _ = try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+
+        var withMount = f.record(executable: nil)
+        let extraDir = f.root.appendingPathComponent("extra")
+        try FileManager.default.createDirectory(at: extraDir, withIntermediateDirectories: true)
+        withMount.game.launch.folderMounts = [FolderMount(driveLetter: "D", path: extraDir.path, bookmark: Data())]
+        _ = try Preflight.check(withMount, io: f.io, dosbox: f.dosbox)
+
+        var missingMount = f.record(executable: "GAME.EXE")
+        try f.touch("GAME.EXE")
+        let goneDir = f.root.appendingPathComponent("missing-folder")
+        missingMount.game.launch.folderMounts = [FolderMount(driveLetter: "E", path: goneDir.path, bookmark: Data())]
+        #expect(throws: LaunchError.folderMountMissing(driveLetter: "E", path: goneDir.path)) {
+            try Preflight.check(missingMount, io: f.io, dosbox: f.dosbox)
+        }
+
+        var exhausted = r
+        exhausted.game.launch.folderMounts = FolderMount.availableDriveLetters.map {
+            FolderMount(driveLetter: $0, path: extraDir.path, bookmark: Data())
+        }
+        #expect(
+            throws: LaunchError.launchFailed(
+                "All DOS drive letters (D:–Y:) are already used by folder mounts. Remove a folder mount to free D: for the CD-ROM."
+            )
+        ) {
+            try Preflight.check(exhausted, io: f.io, dosbox: f.dosbox)
+        }
     }
 
     @Test func preflightUnreachableReference() throws {

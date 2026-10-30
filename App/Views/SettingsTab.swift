@@ -264,8 +264,139 @@ struct DrivesSection: View {
             } else {
                 Button("Add Disc or Floppy Image…", systemImage: "plus", action: add)
             }
+            ForEach(Array(game.launch.folderMounts.enumerated()), id: \.offset) { index, mount in
+                if retroTheme {
+                    HStack(spacing: 6) {
+                        PixelSymbol("folder", color: RetroPalette.desktop, pointSize: 16, scale: 1)
+                        Menu {
+                            ForEach(Self.availableDriveLetters(for: index, in: game), id: \.self) { letter in
+                                Button {
+                                    game.launch.folderMounts[index].driveLetter = letter
+                                } label: {
+                                    if mount.driveLetter.uppercased() == letter {
+                                        Label("\(letter):", systemImage: "checkmark")
+                                    } else {
+                                        Text("\(letter):")
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 0) {
+                                Text("\(mount.driveLetter.uppercased()):")
+                                    .font(RetroFont.font())
+                                    .foregroundStyle(RetroPalette.shadow)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(RetroPalette.bevelLight)
+                                    .retroBevel(.sunken)
+                                Text("▼")
+                                    .font(RetroFont.font())
+                                    .foregroundStyle(RetroPalette.shadow)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 3)
+                                    .background(RetroPalette.panel)
+                                    .retroBevel(.raised)
+                            }
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        Text((mount.path as NSString).lastPathComponent)
+                            .font(RetroFont.font())
+                            .foregroundStyle(RetroPalette.shadow)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(mount.path)
+                        Spacer()
+                        Button("−") { removeFolderMount(at: index) }
+                            .buttonStyle(RetroButtonStyle())
+                    }
+                } else {
+                    HStack {
+                        Image(systemName: "folder")
+                        Picker("Drive", selection: driveLetterBinding(for: index)) {
+                            ForEach(Self.availableDriveLetters(for: index, in: game), id: \.self) { letter in
+                                Text("\(letter):").tag(letter)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        Text((mount.path as NSString).lastPathComponent)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(mount.path)
+                        Spacer()
+                        Button("Remove", systemImage: "minus.circle") { removeFolderMount(at: index) }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                    }
+                }
+            }
+            if retroTheme {
+                Button(action: addFolderMount) {
+                    HStack(spacing: 6) {
+                        PixelSymbol("plus", color: RetroPalette.green, pointSize: 16, scale: 1)
+                        Text("Add Folder Mount…")
+                    }
+                }
+                .buttonStyle(RetroButtonStyle())
+                .disabled(!Self.canAddFolderMount(to: game))
+            } else {
+                Button("Add Folder Mount…", systemImage: "folder.badge.plus", action: addFolderMount)
+                    .disabled(!Self.canAddFolderMount(to: game))
+            }
             ThemedTextField(title: "C: root subfolder", text: $game.launch.driveCRoot, prompt: "(game folder)")
         }
+    }
+
+    static func canAddFolderMount(to game: Game) -> Bool {
+        FolderMount.nextAvailableDriveLetter(
+            existing: game.launch.folderMounts,
+            hasCDROM: game.media.contains { $0.kind == .cdrom }
+        ) != nil
+    }
+
+    static func availableDriveLetters(for index: Int, in game: Game) -> [String] {
+        let hasCDROM = game.media.contains { $0.kind == .cdrom }
+        guard game.launch.folderMounts.indices.contains(index) else {
+            return hasCDROM ? Array(FolderMount.availableDriveLetters.dropFirst()) : FolderMount.availableDriveLetters
+        }
+        let current = game.launch.folderMounts[index].driveLetter.uppercased()
+        let otherUsed = Set(
+            game.launch.folderMounts.enumerated()
+                .filter { $0.offset != index }
+                .map { $0.element.driveLetter.uppercased() }
+        )
+        return FolderMount.availableDriveLetters.filter { letter in
+            if hasCDROM && letter == "D" { return false }
+            return letter == current || !otherUsed.contains(letter)
+        }
+    }
+
+    @discardableResult
+    static func appendFolderMount(url: URL, to game: inout Game) -> FolderMount? {
+        let hasCDROM = game.media.contains { $0.kind == .cdrom }
+        guard let letter = FolderMount.nextAvailableDriveLetter(existing: game.launch.folderMounts, hasCDROM: hasCDROM) else {
+            return nil
+        }
+        let bookmark = (try? CrateIO.makeBookmark(for: url)) ?? Data()
+        let mount = FolderMount(driveLetter: letter, path: url.path, bookmark: bookmark)
+        game.launch.folderMounts.append(mount)
+        return mount
+    }
+
+    private func driveLetterBinding(for index: Int) -> Binding<String> {
+        Binding(
+            get: {
+                guard game.launch.folderMounts.indices.contains(index) else { return "D" }
+                let current = game.launch.folderMounts[index].driveLetter.uppercased()
+                let available = Self.availableDriveLetters(for: index, in: game)
+                return available.contains(current) ? current : (available.first ?? current)
+            },
+            set: { newValue in
+                guard game.launch.folderMounts.indices.contains(index) else { return }
+                game.launch.folderMounts[index].driveLetter = newValue.uppercased()
+            }
+        )
     }
 
     private func add() {
@@ -276,8 +407,23 @@ struct DrivesSection: View {
         onAddMedia(source)
     }
 
+    private func addFolderMount() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Mount"
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        Self.appendFolderMount(url: folder, to: &game)
+    }
+
     private func remove(at index: Int) {
         onRemoved(game.media.remove(at: index))
+    }
+
+    private func removeFolderMount(at index: Int) {
+        guard game.launch.folderMounts.indices.contains(index) else { return }
+        game.launch.folderMounts.remove(at: index)
     }
 }
 

@@ -85,8 +85,14 @@ struct GameDetailView: View {
         let targetID = record.id
         Task {
             guard let image = await model.addMedia(from: source, to: targetID) else { return }
-            if draft.id == targetID, !draft.media.contains(image) {
-                draft.media.append(image)
+            if draft.id == targetID {
+                if !draft.media.contains(image) {
+                    draft.media.append(image)
+                }
+                FolderMount.reassignConflictsWithCDROM(
+                    &draft.launch.folderMounts,
+                    hasCDROM: draft.media.contains { $0.kind == .cdrom }
+                )
             }
         }
     }

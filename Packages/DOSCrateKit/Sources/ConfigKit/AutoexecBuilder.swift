@@ -2,7 +2,12 @@ import Foundation
 import LibraryKit
 
 public enum AutoexecBuilder {
-    public static func lines(cDrive: URL, media: [(URL, MediaKind)], launch: LaunchSpec) throws(DOSPathError) -> [String] {
+    public static func lines(
+        cDrive: URL,
+        media: [(URL, MediaKind)],
+        folderMounts: [(String, URL)] = [],
+        launch: LaunchSpec
+    ) throws(DOSPathError) -> [String] {
         var out = ["mount c \(try quoted(cDrive.path))"]
         var cds: [String] = []
         for (url, kind) in media where kind == .cdrom { cds.append(try quoted(url.path)) }
@@ -10,6 +15,18 @@ public enum AutoexecBuilder {
         var floppies: [String] = []
         for (url, kind) in media where kind == .floppy { floppies.append(try quoted(url.path)) }
         if !floppies.isEmpty { out.append("imgmount a \(floppies.joined(separator: " ")) -t floppy") }
+        let hasCDROM = !cds.isEmpty
+        var usedLetters = Set(folderMounts.map { $0.0.uppercased() })
+        if hasCDROM { usedLetters.insert("D") }
+        for (rawLetter, url) in folderMounts {
+            var letter = rawLetter.uppercased()
+            if hasCDROM && letter == "D",
+               let fallback = FolderMount.availableDriveLetters.first(where: { !usedLetters.contains($0) }) {
+                letter = fallback
+                usedLetters.insert(letter)
+            }
+            out.append("mount \(letter.lowercased()) \(try quoted(url.path))")
+        }
         out.append("c:")
         if let exe = launch.executable, !exe.isEmpty {
             let dos = try DOSPath.dosPath(relative: exe)

@@ -73,3 +73,51 @@ private func lines(_ l: LaunchSpec, c: String = "/tmp/Keen", media: [(URL, Media
 @Test func noExecutableStopsAtShell() throws {
     #expect(try lines(LaunchSpec()) == ["mount c \"/tmp/Keen\"", "c:"])
 }
+
+@Test func extraFolderMountsEmitBeforeSwitchingToCDrive() throws {
+    let media: [(URL, MediaKind)] = [
+        (URL(fileURLWithPath: "/m/disc.iso"), .cdrom)
+    ]
+    let mounts: [(String, URL)] = [
+        ("E", URL(fileURLWithPath: "/tmp/Extra Saves")),
+        ("F", URL(fileURLWithPath: "/tmp/Patches")),
+    ]
+    let l = try AutoexecBuilder.lines(
+        cDrive: URL(fileURLWithPath: "/tmp/Keen"),
+        media: media,
+        folderMounts: mounts,
+        launch: LaunchSpec(executable: "KEEN1.EXE")
+    )
+    #expect(l == [
+        "mount c \"/tmp/Keen\"",
+        "imgmount d \"/m/disc.iso\" -t iso",
+        "mount e \"/tmp/Extra Saves\"",
+        "mount f \"/tmp/Patches\"",
+        "c:",
+        "KEEN1.EXE",
+    ])
+}
+
+@Test func folderMountOnDShiftsToFirstFreeLetterWhenCDROMPresent() throws {
+    let media: [(URL, MediaKind)] = [
+        (URL(fileURLWithPath: "/m/disc.iso"), .cdrom)
+    ]
+    let mounts: [(String, URL)] = [
+        ("D", URL(fileURLWithPath: "/tmp/Saves")),
+        ("E", URL(fileURLWithPath: "/tmp/Mods")),
+    ]
+    let l = try AutoexecBuilder.lines(
+        cDrive: URL(fileURLWithPath: "/tmp/Keen"),
+        media: media,
+        folderMounts: mounts,
+        launch: LaunchSpec(executable: "KEEN1.EXE")
+    )
+    #expect(l == [
+        "mount c \"/tmp/Keen\"",
+        "imgmount d \"/m/disc.iso\" -t iso",
+        "mount f \"/tmp/Saves\"",
+        "mount e \"/tmp/Mods\"",
+        "c:",
+        "KEEN1.EXE",
+    ])
+}

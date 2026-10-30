@@ -13,8 +13,11 @@ struct GameFileCodecTests {
         game.tags = ["classic", "shareware"]
         game.isFavorite = true
         game.media = [MediaImage(relativePath: "media/disc.iso", kind: .cdrom)]
-        game.launch = LaunchSpec(executable: "KEEN1.EXE", arguments: "/x", preCommands: ["a"], postCommands: ["b"],
-                                 exitWhenDone: false, driveCRoot: "GAME")
+        game.launch = LaunchSpec(
+            executable: "KEEN1.EXE", arguments: "/x", preCommands: ["a"], postCommands: ["b"],
+            exitWhenDone: false, driveCRoot: "GAME",
+            folderMounts: [FolderMount(driveLetter: "e", path: "/tmp/extra", bookmark: Data([4, 5]))]
+        )
         game.settings = GameSettings(
             preset: .pc486, cycles: .fixed(25000), core: .dynamic, memoryMB: 16, machine: .svga_s3,
             shader: "crt-auto", aspect: .squarePixels, fullscreen: true, soundCard: .sb16,

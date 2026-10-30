@@ -70,8 +70,13 @@ public enum LaunchPlanner {
 
     private static func render(_ r: GameRecord, cDrive: URL, global: GlobalConfig, controllerMap: URL?) throws -> String {
         let media = r.game.media.map { (Preflight.mediaURL($0, in: r.crateURL), $0.kind) }
+        let folderMounts = r.game.launch.folderMounts.map { mount in
+            let url = (try? Preflight.resolveFolderMount(mount)) ?? URL(fileURLWithPath: mount.path, isDirectory: true)
+            return (mount.driveLetter, url)
+        }
         do {
-            return try LaunchConfigBuilder.build(game: r.game, cDrive: cDrive, media: media, global: global,
+            return try LaunchConfigBuilder.build(game: r.game, cDrive: cDrive, media: media,
+                                                 folderMounts: folderMounts, global: global,
                                                  controllerMap: controllerMap).render()
         } catch DOSPathError.notDOSName(let component, let parent) {
             let root = parent.isEmpty ? component : parent + "/" + component

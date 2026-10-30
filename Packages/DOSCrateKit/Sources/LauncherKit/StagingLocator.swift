@@ -11,6 +11,8 @@ public enum LaunchError: Error, Equatable {
     case mediaMissing(path: String)
     /// The folder mounted as C: (the crate's `files/`, or the `driveCRoot` subfolder) is gone.
     case cRootMissing(path: String)
+    /// An extra folder listed in `launch.folderMounts` is gone.
+    case folderMountMissing(driveLetter: String, path: String)
     /// DOSBox could not be started.
     case launchFailed(String)
     case nonDOSPath(component: String, suggestedCRoot: String)
