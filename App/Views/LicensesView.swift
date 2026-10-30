@@ -49,28 +49,141 @@ struct LicensesView: View {
         + "The DOS theme uses the PxPlus IBM VGA 8x16 font from The Ultimate Oldschool PC Font Pack by VileR (int10h.org), licensed under CC BY-SA 4.0. "
         + "\(launchBoxCredit)."
 
+    var prefs: Preferences?
     private let files = LicenseFile.bundled
     @State private var selection: LicenseFile.ID?
+    @FocusState private var isListFocused: Bool
+    @Environment(\.retroTheme) private var retroTheme
+
+    static func steppedSelection(
+        in files: [LicenseFile],
+        current: LicenseFile.ID?,
+        by delta: Int
+    ) -> LicenseFile.ID? {
+        guard !files.isEmpty, delta != 0 else { return nil }
+        let ids = files.map(\.id)
+        guard let current, let index = ids.firstIndex(of: current) else {
+            return delta > 0 ? ids.first : ids.last
+        }
+        let nextIndex = min(max(index + delta, 0), ids.count - 1)
+        return ids[nextIndex]
+    }
 
     private var selected: LicenseFile? { files.first { $0.id == selection } }
 
+    private var isRetro: Bool {
+        retroTheme || (prefs.map { LibraryLayout(theme: $0.appTheme) == .retro } ?? false)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(Self.notice)
-                .textSelection(.enabled)
-                .padding()
-            Divider()
-            HSplitView {
-                List(files, selection: $selection) { Text($0.name).lineLimit(1).truncationMode(.middle) }
-                    .frame(minWidth: 180, idealWidth: 220, maxWidth: 320)
-                ScrollView {
-                    Text(text(for: selected))
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
+        Group {
+            if isRetro {
+                RetroPanel(title: "Licenses") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(Self.notice)
+                            .font(RetroFont.font())
+                            .foregroundStyle(RetroPalette.shadow)
+                            .textSelection(.enabled)
+                        HStack(spacing: 10) {
+                            ScrollViewReader { proxy in
+                                ScrollView {
+                                    LazyVStack(spacing: 0) {
+                                        ForEach(files) { file in
+                                            let isSelected = (selection == file.id)
+                                            HStack {
+                                                Text(file.name)
+                                                    .font(RetroFont.font())
+                                                    .foregroundStyle(RetroPalette.highlightText)
+                                                    .lineLimit(1)
+                                                    .truncationMode(.middle)
+                                                Spacer()
+                                            }
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(isSelected ? RetroPalette.highlight : RetroPalette.desktop)
+                                            .overlay {
+                                                if isSelected {
+                                                    Rectangle()
+                                                        .strokeBorder(
+                                                            RetroPalette.highlightText,
+                                                            style: StrokeStyle(lineWidth: 1, dash: [2, 2])
+                                                        )
+                                                }
+                                            }
+                                            .contentShape(Rectangle())
+                                            .id(file.id)
+                                            .onTapGesture {
+                                                selection = file.id
+                                                isListFocused = true
+                                            }
+                                        }
+                                    }
+                                }
+                                .frame(width: 220)
+                                .background(RetroPalette.desktop)
+                                .retroBevel(.sunken)
+                                .focusable()
+                                .focusEffectDisabled()
+                                .focused($isListFocused)
+                                .onAppear { isListFocused = true }
+                                .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
+                                    let delta = press.key == .upArrow ? -1 : 1
+                                    guard let next = Self.steppedSelection(in: files, current: selection, by: delta) else {
+                                        return .ignored
+                                    }
+                                    selection = next
+                                    proxy.scrollTo(next)
+                                    return .handled
+                                }
+                                .onMoveCommand { direction in
+                                    let delta: Int
+                                    switch direction {
+                                    case .up: delta = -1
+                                    case .down: delta = 1
+                                    default: return
+                                    }
+                                    if let next = Self.steppedSelection(in: files, current: selection, by: delta) {
+                                        selection = next
+                                        proxy.scrollTo(next)
+                                    }
+                                }
+                            }
+
+                            ScrollView {
+                                Text(text(for: selected))
+                                    .font(RetroFont.font())
+                                    .foregroundStyle(RetroPalette.shadow)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(10)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(RetroPalette.bevelLight)
+                            .retroBevel(.sunken)
+                        }
+                    }
+                    .padding(12)
                 }
-                .frame(minWidth: 320)
+                .retroControls()
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(Self.notice)
+                        .textSelection(.enabled)
+                        .padding()
+                    Divider()
+                    HSplitView {
+                        List(files, selection: $selection) { Text($0.name).lineLimit(1).truncationMode(.middle) }
+                            .frame(minWidth: 180, idealWidth: 220, maxWidth: 320)
+                        ScrollView {
+                            Text(text(for: selected))
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                        }
+                        .frame(minWidth: 320)
+                    }
+                }
             }
         }
         .frame(minWidth: 640, minHeight: 420)

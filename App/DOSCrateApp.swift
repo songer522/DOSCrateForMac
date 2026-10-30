@@ -29,6 +29,43 @@ final class AppTerminationDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+enum RetroAlertContext: Equatable, Sendable {
+    case mainWindow
+    case importSheet
+    case batchImportSheet
+    case chooseProgramSheet
+    case unmatchedMetadataSheet
+    case findMetadataSheet
+}
+
+@MainActor
+struct RetroAlertHostModifier: ViewModifier {
+    @Bindable var model: AppModel
+    let context: RetroAlertContext
+
+    private var activeAlert: AppAlert? {
+        guard DOSCrateApp.activeRetroAlertContext(for: model) == context else { return nil }
+        return model.alert
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .disabled(activeAlert != nil)
+            .frame(minHeight: activeAlert != nil && context != .mainWindow ? 240 : nil)
+            .overlay {
+                if let alert = activeAlert {
+                    RetroAlertModal(model: model, alert: alert)
+                }
+            }
+    }
+}
+
+extension View {
+    func retroAlertHost(model: AppModel, context: RetroAlertContext) -> some View {
+        modifier(RetroAlertHostModifier(model: model, context: context))
+    }
+}
+
 @main
 struct DOSCrateApp: App {
     @NSApplicationDelegateAdaptor(AppTerminationDelegate.self) private var appDelegate
@@ -41,6 +78,36 @@ struct DOSCrateApp: App {
         let feedURL = (info?["SUFeedURL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let publicKey = (info?["SUPublicEDKey"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return !feedURL.isEmpty && !publicKey.isEmpty
+    }
+
+    static func isShowingRetroAlert(theme: AppTheme, alert: AppAlert?) -> Bool {
+        LibraryLayout(theme: theme) == .retro && alert != nil
+    }
+
+    @MainActor
+    static func activeRetroAlertContext(for model: AppModel) -> RetroAlertContext? {
+        guard isShowingRetroAlert(theme: model.prefs.appTheme, alert: model.alert) else {
+            return nil
+        }
+        guard !model.needsLibrarySetup else {
+            return .mainWindow
+        }
+        if model.imports.current != nil {
+            return .importSheet
+        }
+        if model.imports.batchPrompt != nil {
+            return .batchImportSheet
+        }
+        if model.chooseProgram != nil {
+            return .chooseProgramSheet
+        }
+        if model.showingUnmatchedMetadata {
+            return model.findMetadataFor != nil ? .findMetadataSheet : .unmatchedMetadataSheet
+        }
+        if model.findMetadataFor != nil {
+            return .findMetadataSheet
+        }
+        return .mainWindow
     }
 
     init() {
@@ -68,6 +135,7 @@ struct DOSCrateApp: App {
                         .frame(minWidth: 700, minHeight: 450)
                 }
             }
+            .retroAlertHost(model: model, context: .mainWindow)
             .task {
                 appDelegate.model = model
                 guard !model.needsLibrarySetup else { return }
@@ -77,7 +145,12 @@ struct DOSCrateApp: App {
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 model.stopAllSessions()
             }
-            .alert(item: $model.alert) { alert in
+            .alert(
+                item: Binding(
+                    get: { LibraryLayout(theme: model.prefs.appTheme) == .standard ? model.alert : nil },
+                    set: { model.alert = $0 }
+                )
+            ) { alert in
                 if let fix = alert.fix, let id = alert.gameID {
                     Alert(title: Text(alert.title), message: Text(alert.message),
                           primaryButton: .default(Text(Self.label(fix))) { model.applyFix(fix, for: id) },
@@ -96,11 +169,11 @@ struct DOSCrateApp: App {
         }
 
         Window("Licenses", id: AppCommands.licensesWindowID) {
-            LicensesView()
+            LicensesView(prefs: model.prefs)
         }
     }
 
-    private static func label(_ fix: AppAlert.Fix) -> String {
+    static func label(_ fix: AppAlert.Fix) -> String {
         switch fix {
         case .chooseExecutable: "Choose Executable…"
         case .locateFolder: "Locate Folder…"
@@ -108,6 +181,55 @@ struct DOSCrateApp: App {
         case .resetCRoot: "Use Whole Folder as C:"
         case .recreate: "Recreate…"
         case .reinstall: "OK"
+        }
+    }
+}
+
+struct RetroAlertModal: View {
+    let model: AppModel
+    let alert: AppAlert
+
+    private func dismiss() {
+        model.alert = nil
+    }
+
+    private func accept() {
+        model.alert = nil
+        if let fix = alert.fix, let id = alert.gameID {
+            model.applyFix(fix, for: id)
+        }
+    }
+
+    var body: some View {
+        RetroModalContainer(
+            title: alert.title,
+            width: 420,
+            onCancel: { dismiss() },
+            onDefaultAction: { accept() }
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                RetroScrollableMessage(text: alert.message)
+                HStack(spacing: 8) {
+                    Spacer()
+                    if let fix = alert.fix, let id = alert.gameID {
+                        Button("Cancel") {
+                            dismiss()
+                        }
+                        .keyboardShortcut(.cancelAction)
+                        Button(DOSCrateApp.label(fix)) {
+                            model.alert = nil
+                            model.applyFix(fix, for: id)
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("OK") {
+                            dismiss()
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+            }
+            .padding(14)
         }
     }
 }

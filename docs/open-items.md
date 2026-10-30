@@ -14,7 +14,7 @@ State as of the merge of PR #1 (`d07a896`, 2026-10-27). The code, tests (`make g
 
 - **Controller support, later slices.** Slice A merged in PR #7 (`d16200f`: gamepad → keyboard keys, per-model layouts, Settings switch, library bar indicator; device test passed 2026-10-28). Still planned: PC-joystick emulation per game (slice C, trigger axes are recorded in the spec §2 table) and a per-game Controller tab. The Switch 2 Pro controller stays out of scope (Staging's SDL can't open it on macOS).
   **Testing:** simulator (layout and config tests); device test on the Mac with the controllers in the manual checklist's Controllers section.
-- **Themes, later slices.** The theme system (`AppTheme`: Standard, DOS) restyles the library window in DOS mode with the VGA palette, beveled panels, pixel-scaled SF Symbols and the bundled PxPlus IBM VGA 8x16 font. Settings, import sheets, alerts, confirmation dialogs, file pickers, menus and the window title bar stay native in DOS and could be themed in a later slice.
+- **Themes, later slices.** The theme system (`AppTheme`: Standard, DOS) restyles the library window, Settings (`PreferencesView`), import sheets (`ImportSheet`, `BatchImportSheet`, `ChooseProgramSheet`), metadata sheets (`FindMetadataSheet`, `UnmatchedMetadataSheet`), first-run setup (`FirstRunView`), the Licenses window (`LicensesView`), alerts (`RetroAlertModal`), and removal confirmation dialogs in DOS mode with the VGA palette, beveled panels, pixel-scaled SF Symbols and the bundled PxPlus IBM VGA 8x16 font. System file pickers (`NSOpenPanel`) and native popup menus remain macOS controls.
   **Testing:** simulator (ThemeTests, RetroLibraryTests); device test on the Mac (checklist Themes section).
 
 ## Known gaps

@@ -104,6 +104,134 @@ struct ThemedPicker<T: Hashable>: View {
     }
 }
 
+struct ThemedValuePicker<T: Hashable>: View {
+    let title: String
+    let options: [T]
+    let label: (T) -> String
+    @Binding var selection: T
+    @Environment(\.retroTheme) private var retroTheme
+    @Environment(\.isEnabled) private var isEnabled
+
+    init(
+        _ title: String,
+        selection: Binding<T>,
+        options: [T],
+        label: @escaping (T) -> String
+    ) {
+        self.title = title
+        self._selection = selection
+        self.options = options
+        self.label = label
+    }
+
+    var body: some View {
+        if retroTheme {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(RetroFont.font())
+                    .foregroundStyle(isEnabled ? RetroPalette.shadow : RetroPalette.bevelDark)
+                Spacer(minLength: 8)
+                Menu {
+                    ForEach(options, id: \.self) { option in
+                        Button {
+                            selection = option
+                        } label: {
+                            if selection == option {
+                                Label(label(option), systemImage: "checkmark")
+                            } else {
+                                Text(label(option))
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 0) {
+                        Text(label(selection))
+                            .font(RetroFont.font())
+                            .foregroundStyle(isEnabled ? RetroPalette.shadow : RetroPalette.bevelDark)
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .frame(minWidth: 110, alignment: .leading)
+                            .background(RetroPalette.bevelLight)
+                            .retroBevel(.sunken)
+                        Text("▼")
+                            .font(RetroFont.font())
+                            .foregroundStyle(isEnabled ? RetroPalette.shadow : RetroPalette.bevelDark)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(RetroPalette.panel)
+                            .retroBevel(.raised)
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+        } else {
+            Picker(title, selection: $selection) {
+                ForEach(options, id: \.self) { Text(label($0)).tag($0) }
+            }
+        }
+    }
+}
+
+struct ThemedRadioGroup<T: Hashable>: View {
+    let title: String
+    let options: [T]
+    let label: (T) -> String
+    @Binding var selection: T
+    @Environment(\.retroTheme) private var retroTheme
+    @Environment(\.isEnabled) private var isEnabled
+
+    init(
+        _ title: String,
+        selection: Binding<T>,
+        options: [T],
+        label: @escaping (T) -> String
+    ) {
+        self.title = title
+        self._selection = selection
+        self.options = options
+        self.label = label
+    }
+
+    var body: some View {
+        if retroTheme {
+            HStack(alignment: .top, spacing: 10) {
+                Text(title)
+                    .font(RetroFont.font())
+                    .foregroundStyle(isEnabled ? RetroPalette.shadow : RetroPalette.bevelDark)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(options, id: \.self) { option in
+                        let selected = (selection == option)
+                        Button {
+                            selection = option
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(selected ? "•" : " ")
+                                    .font(RetroFont.font())
+                                    .foregroundStyle(isEnabled ? RetroPalette.shadow : RetroPalette.bevelDark)
+                                    .frame(width: 16, height: 16)
+                                    .background(RetroPalette.bevelLight)
+                                    .retroBevel(.sunken)
+                                Text(label(option))
+                                    .font(RetroFont.font())
+                                    .foregroundStyle(isEnabled ? RetroPalette.shadow : RetroPalette.bevelDark)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        } else {
+            Picker(title, selection: $selection) {
+                ForEach(options, id: \.self) { Text(label($0)).tag($0) }
+            }
+            .pickerStyle(.radioGroup)
+        }
+    }
+}
+
 struct ThemedSegmented<T: Hashable>: View {
     let title: String
     let showsTitle: Bool
@@ -357,6 +485,97 @@ struct ThemedLabeledRow<Content: View>: View {
                 content
             }
         }
+    }
+}
+
+struct RetroModalContainer<Content: View>: View {
+    let title: String
+    let width: CGFloat
+    var onCancel: (() -> Void)?
+    var onDefaultAction: (() -> Void)?
+    private let content: Content
+    @FocusState private var isFocused: Bool
+
+    init(
+        title: String,
+        width: CGFloat,
+        onCancel: (() -> Void)? = nil,
+        onDefaultAction: (() -> Void)? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.width = width
+        self.onCancel = onCancel
+        self.onDefaultAction = onDefaultAction
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack {
+            RetroPalette.shadow.opacity(0.45)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    isFocused = true
+                }
+            RetroPanel(title: title) {
+                content
+            }
+            .retroControls()
+            .frame(maxWidth: width)
+            .padding(16)
+        }
+        .focusSection()
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isFocused)
+        .onAppear {
+            isFocused = true
+            DispatchQueue.main.async {
+                isFocused = true
+            }
+        }
+        .onExitCommand {
+            onCancel?()
+        }
+        .onKeyPress(.escape) {
+            onCancel?()
+            return .handled
+        }
+        .onKeyPress(.return) {
+            onDefaultAction?()
+            return .handled
+        }
+        .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow, .space], phases: [.down, .repeat]) { _ in
+            .handled
+        }
+    }
+}
+
+struct RetroScrollableMessage: View {
+    static let defaultMaxHeight: CGFloat = 240
+
+    let text: String
+    var maxHeight: CGFloat = Self.defaultMaxHeight
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            messageText
+            ScrollView {
+                messageText
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .frame(maxHeight: maxHeight)
+    }
+
+    private var messageText: some View {
+        Text(text)
+            .font(RetroFont.font())
+            .foregroundStyle(RetroPalette.shadow)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

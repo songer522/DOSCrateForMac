@@ -54,10 +54,45 @@ struct LibraryActions: ViewModifier {
     @Binding var removingMany: Set<UUID>?
     @Binding var choosingImport: Bool
 
+    private var isRetro: Bool {
+        LibraryLayout(theme: model.prefs.appTheme) == .retro
+    }
+
+    static func isShowingRetroRemoval(
+        isRetro: Bool,
+        removingRecord: GameRecord?,
+        removingMany: Set<UUID>?
+    ) -> Bool {
+        isRetro && (removingRecord != nil || removingMany != nil)
+    }
+
     func body(content: Content) -> some View {
+        let removingRecord = removing.flatMap(model.store.record)
+        let showingRetroRemoval = Self.isShowingRetroRemoval(
+            isRetro: isRetro,
+            removingRecord: removingRecord,
+            removingMany: removingMany
+        )
         content
-            .confirmationDialog("Remove this game?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-                                titleVisibility: .visible, presenting: removing.flatMap(model.store.record)) { record in
+            .disabled(showingRetroRemoval)
+            .overlay {
+                if isRetro {
+                    if let record = removingRecord {
+                        retroRemoveSingleOverlay(record)
+                    } else if let ids = removingMany {
+                        retroRemoveManyOverlay(ids)
+                    }
+                }
+            }
+            .confirmationDialog(
+                "Remove this game?",
+                isPresented: Binding(
+                    get: { !isRetro && removing != nil },
+                    set: { if !$0 { removing = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: removing.flatMap(model.store.record)
+            ) { record in
                 let running = model.sessions.running.contains(record.id)
                 if case .referenced = record.game.source {
                     Button("Remove from Library") { remove(record, trashFiles: false) }.disabled(running)
@@ -69,9 +104,15 @@ struct LibraryActions: ViewModifier {
             } message: { record in
                 Text(LibraryView.removalMessage(for: record, running: model.isActive(record.id)))
             }
-            .confirmationDialog(removingMany.map { "Remove \($0.count) games?" } ?? "",
-                                isPresented: Binding(get: { removingMany != nil }, set: { if !$0 { removingMany = nil } }),
-                                titleVisibility: .visible, presenting: removingMany) { ids in
+            .confirmationDialog(
+                removingMany.map { "Remove \($0.count) games?" } ?? "",
+                isPresented: Binding(
+                    get: { !isRetro && removingMany != nil },
+                    set: { if !$0 { removingMany = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: removingMany
+            ) { ids in
                 let targets = ids.compactMap(model.store.record).filter { !model.sessions.running.contains($0.id) }
                 if targets.contains(where: { if case .referenced = $0.game.source { true } else { false } }) {
                     Button("Remove from Library") { removeMany(ids, trashFolders: false) }
@@ -130,11 +171,105 @@ struct LibraryActions: ViewModifier {
     }
 
     private func remove(_ record: GameRecord, trashFiles: Bool) {
+        removing = nil
         model.removeGame(record.id, trashFiles: trashFiles)
     }
 
     private func removeMany(_ ids: Set<UUID>, trashFolders: Bool) {
+        removingMany = nil
         Task { await model.removeGames(ids, trashFolders: trashFolders) }
+    }
+
+    @ViewBuilder private func retroRemoveSingleOverlay(_ record: GameRecord) -> some View {
+        let running = model.sessions.running.contains(record.id)
+        RetroModalContainer(
+            title: "Remove this game?",
+            width: 440,
+            onCancel: { removing = nil },
+            onDefaultAction: running ? nil : { remove(record, trashFiles: true) }
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                RetroScrollableMessage(text: LibraryView.removalMessage(for: record, running: model.isActive(record.id)))
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button("Cancel") {
+                        removing = nil
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    if case .referenced = record.game.source {
+                        Button("Remove from Library") {
+                            remove(record, trashFiles: false)
+                        }
+                        .disabled(running)
+                        Button("Move Files to Trash") {
+                            remove(record, trashFiles: true)
+                        }
+                        .disabled(running)
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("Move to Trash") {
+                            remove(record, trashFiles: true)
+                        }
+                        .disabled(running)
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+            }
+            .padding(14)
+        }
+    }
+
+    @ViewBuilder private func retroRemoveManyOverlay(_ ids: Set<UUID>) -> some View {
+        let targets = ids.compactMap(model.store.record).filter { !model.sessions.running.contains($0.id) }
+        let hasReferenced = targets.contains {
+            if case .referenced = $0.game.source { return true }
+            return false
+        }
+        let defaultAction: (() -> Void)? = if hasReferenced {
+            { removeMany(ids, trashFolders: true) }
+        } else if !targets.isEmpty {
+            { removeMany(ids, trashFolders: false) }
+        } else {
+            nil
+        }
+        RetroModalContainer(
+            title: "Remove \(ids.count) games?",
+            width: 460,
+            onCancel: { removingMany = nil },
+            onDefaultAction: defaultAction
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                RetroScrollableMessage(
+                    text: LibraryView.removalMessage(
+                        for: ids.compactMap(model.store.record),
+                        running: model.sessions.running.union(model.startingIDs)
+                    )
+                )
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button("Cancel") {
+                        removingMany = nil
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    if hasReferenced {
+                        Button("Remove from Library") {
+                            removeMany(ids, trashFolders: false)
+                        }
+                        Button("Also Move Folders to Trash") {
+                            removeMany(ids, trashFolders: true)
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("Move to Trash") {
+                            removeMany(ids, trashFolders: false)
+                        }
+                        .disabled(targets.isEmpty)
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+            }
+            .padding(14)
+        }
     }
 
     // MARK: Fixes that need a file picker
