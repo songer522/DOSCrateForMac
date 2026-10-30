@@ -69,6 +69,9 @@ struct GameDetailView: View {
 
     private var isReadOnly: Bool {
         if case .readOnly = record.status { return true }
+        if model.imports.replacingIDs.contains(record.id) || model.imports.importingIDs.contains(record.id) {
+            return true
+        }
         return false
     }
 
@@ -202,6 +205,7 @@ private struct GameHeader: View {
 
     private var running: Bool { model.sessions.running.contains(record.id) }
     private var starting: Bool { model.startingIDs.contains(record.id) }
+    private var importing: Bool { model.imports.importingIDs.contains(record.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -238,7 +242,8 @@ private struct GameHeader: View {
             record: record,
             isRunning: !retroTheme && running,
             isStarting: !retroTheme && starting,
-            isLoadingArt: model.metadata.artLoading.contains(record.id),
+            isImporting: !retroTheme && importing,
+            isLoadingArt: model.metadata.artLoading.contains(record.id) || (retroTheme && importing),
             artRevision: model.metadata.artRevision[record.id, default: 0]
         )
             .id(coverRevision)
@@ -280,8 +285,17 @@ private struct GameHeader: View {
                 Button("Starting…", action: onPlay)
                     .buttonStyle(RetroButtonStyle())
                     .disabled(true)
+            } else if importing {
+                Button(action: onPlay) {
+                    HStack(spacing: 6) {
+                        RetroSpinner()
+                        Text("Importing…")
+                    }
+                }
+                .buttonStyle(RetroButtonStyle())
+                .disabled(true)
             } else {
-                let disabled = model.pendingRemovalIDs.contains(record.id)
+                let disabled = model.pendingRemovalIDs.contains(record.id) || model.imports.replacingIDs.contains(record.id)
                 Button(action: onPlay) {
                     HStack(spacing: 6) {
                         PixelSymbol("play.fill", color: disabled ? RetroPalette.bevelDark : RetroPalette.green, pointSize: 16, scale: 1)
@@ -302,10 +316,19 @@ private struct GameHeader: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(true)
+        } else if importing {
+            Button(action: onPlay) {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Importing…")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(true)
         } else {
             Button("Play", systemImage: "play.fill", action: onPlay)
                 .buttonStyle(.borderedProminent)
-                .disabled(model.pendingRemovalIDs.contains(record.id))
+                .disabled(model.pendingRemovalIDs.contains(record.id) || model.imports.replacingIDs.contains(record.id))
         }
     }
 

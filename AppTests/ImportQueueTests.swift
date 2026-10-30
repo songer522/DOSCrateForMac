@@ -800,4 +800,243 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         #expect(model.query.search.isEmpty)
         #expect(model.query.apply(to: model.store.records, now: Date()).map(\.id).contains(wolfRecord.id))
     }
+
+    @Test func startSingleImportAddsGameImmediatelyShowsSpinnerStateAndPopulatesInBackground() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel()
+        let queue = model.imports
+
+        let folder = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(folder, "KEEN1.EXE")
+        try Data("episode-1".utf8).write(to: folder.appending(path: "DATA.DAT"))
+
+        let prepared = try await model.importer.prepare(folder)
+        let state = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        queue.singlePopulateHook = { _ in
+            state.withLock { $0.entered = true }
+            while !state.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+        }
+
+        let started = try #require(
+            try queue.startSingleImport(
+                prepared,
+                action: .keepBoth,
+                mode: .copy,
+                title: "Commander Keen",
+                executable: "KEEN1.EXE",
+                model: model
+            )
+        )
+        let id = started.record.id
+
+        // Record is added to the library and selected right away before the background copy finishes.
+        #expect(model.store.record(id)?.game.title == "Commander Keen")
+        #expect(model.selection == id)
+        #expect(queue.importingIDs.contains(id))
+        #expect(model.isActive(id))
+        #expect(model.play(id) == nil)
+        #expect(LibraryView.statusBarLeadingText(for: model) == "Importing Commander Keen…")
+        #expect(RetroStatusBar.leadingText(for: model) == "Importing Commander Keen…")
+        #expect(
+            RetroBadge.badges(
+                for: started.record,
+                running: [],
+                starting: [],
+                importing: queue.importingIDs
+            ) == [.importing]
+        )
+        #expect(
+            RetroLibraryView.playTarget(
+                selected: [id],
+                running: [],
+                starting: [],
+                pendingRemoval: [],
+                replacing: [],
+                importing: queue.importingIDs
+            ) == nil
+        )
+
+        await waitUntil { state.withLock { $0.entered } }
+        state.withLock { $0.released = true }
+        await started.task.value
+
+        #expect(!queue.importingIDs.contains(id))
+        #expect(!model.isActive(id))
+        #expect(LibraryView.statusBarLeadingText(for: model) == nil)
+        #expect(
+            try String(
+                contentsOf: started.record.crateURL.appending(path: "files/DATA.DAT"),
+                encoding: .utf8
+            ) == "episode-1"
+        )
+        #expect(!CrateIO().isIncompleteImport(started.record.crateURL))
+
+        // Automatic metadata fetch runs after the background copy finishes and importingIDs is cleared.
+        await waitUntil { model.metadata.unmatched.contains(id) }
+        #expect(model.metadata.unmatched.contains(id))
+    }
+
+    @Test func terminationWaitsForActiveSingleImportAndCrashMarkerIsCleanedOnScan() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel()
+        let queue = model.imports
+        let delegate = AppTerminationDelegate()
+        delegate.model = model
+
+        let folder = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(folder, "KEEN1.EXE")
+        try Data("full-copy".utf8).write(to: folder.appending(path: "DATA.DAT"))
+
+        let prepared = try await model.importer.prepare(folder)
+        let state = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        queue.singlePopulateHook = { _ in
+            state.withLock { $0.entered = true }
+            while !state.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+        }
+
+        let started = try #require(
+            try queue.startSingleImport(
+                prepared,
+                action: .keepBoth,
+                mode: .copy,
+                title: "Commander Keen",
+                executable: "KEEN1.EXE",
+                model: model
+            )
+        )
+        #expect(CrateIO().isIncompleteImport(started.record.crateURL))
+        #expect(!CrateIO().isAbandonedImport(started.record.crateURL))
+        await waitUntil { state.withLock { $0.entered } }
+
+        // A store.reload() while the current process's import is still active keeps the active crate intact.
+        await model.store.reload()
+        #expect(model.store.record(started.record.id) != nil)
+        #expect(FileManager.default.fileExists(atPath: started.record.crateURL.path))
+
+        var terminated = false
+        let reply = delegate.prepareForTermination { ok in
+            terminated = ok
+        }
+        #expect(reply == .terminateLater)
+        #expect(!terminated)
+
+        state.withLock { $0.released = true }
+        await waitUntil { terminated }
+        #expect(terminated)
+        #expect(!CrateIO().isIncompleteImport(started.record.crateURL))
+
+        // If a crash in a previous process leaves an unfinished placeholder crate on disk, scan cleans it up.
+        let orphanSource = root.appending(path: "orphan", directoryHint: .isDirectory)
+        try touchFile(orphanSource, "ORPHAN.EXE")
+        let pOrphan = try await model.importer.prepare(orphanSource)
+        let orphanPlaceholder = try model.importer.createCratePlaceholder(
+            pOrphan, mode: .copy, title: "Orphan", executable: "ORPHAN.EXE", into: model.store.library
+        )
+        model.importer.discard(pOrphan)
+        try Data("stale-session".utf8).write(
+            to: orphanPlaceholder.crateURL.appending(path: CrateIO.importingMarkerFileName),
+            options: .atomic
+        )
+        #expect(CrateIO().isAbandonedImport(orphanPlaceholder.crateURL))
+
+        let scanned = await CrateIO().scan(library: model.store.library)
+        #expect(!scanned.map(\.id).contains(orphanPlaceholder.id))
+        #expect(!FileManager.default.fileExists(atPath: orphanPlaceholder.crateURL.path))
+
+        // Disc image import persists media to the destination crate even if the active library changes mid-copy.
+        let iso = root.appending(path: "disc.iso")
+        try Data("iso-bytes".utf8).write(to: iso)
+        let pISO = try await model.importer.prepare(iso)
+        let isoState = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        queue.singlePopulateHook = { _ in
+            isoState.withLock { $0.entered = true }
+            while !isoState.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        let isoStarted = try #require(
+            try queue.startSingleImport(
+                pISO, action: .keepBoth, mode: .copy, title: "Disc Game", executable: nil, model: model
+            )
+        )
+        await waitUntil { isoState.withLock { $0.entered } }
+        let otherLib = root.appending(path: "other-lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: otherLib, withIntermediateDirectories: true)
+        model.store.library = otherLib
+        isoState.withLock { $0.released = true }
+        await isoStarted.task.value
+
+        let reloadedFromOriginalCrate = CrateIO().loadRecord(at: isoStarted.record.crateURL)
+        #expect(reloadedFromOriginalCrate.game.media == [MediaImage(relativePath: "media/disc.iso", kind: .cdrom)])
+    }
+
+    @Test func backgroundReplacePreservesPendingAndConcurrentEdits() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel()
+        let queue = model.imports
+
+        let folder = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(folder, "KEEN1.EXE")
+        try Data("v1".utf8).write(to: folder.appending(path: "DATA.DAT"))
+
+        let p1 = try await model.importer.prepare(folder)
+        let initial = try #require(
+            try await queue.finishSingleImport(
+                p1, action: .keepBoth, mode: .copy, title: "Keen", executable: "KEEN1.EXE", model: model
+            )
+        )
+
+        // Register a pending draft write before starting replacement.
+        model.setPendingWrite(initial.id, owner: "draft") {
+            guard var g = model.store.record(initial.id)?.game else { return }
+            g.notes = "Pending note"
+            try? model.store.save(g)
+        }
+
+        try Data("v2".utf8).write(to: folder.appending(path: "DATA.DAT"))
+        let p2 = try await model.importer.prepare(folder)
+        let state = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        queue.singlePopulateHook = { _ in
+            state.withLock { $0.entered = true }
+            while !state.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+        }
+
+        let started = try #require(
+            try queue.startSingleImport(
+                p2,
+                action: .replace,
+                replacing: initial,
+                mode: .copy,
+                title: "Keen",
+                executable: "KEEN1.EXE",
+                model: model
+            )
+        )
+        await waitUntil { state.withLock { $0.entered } }
+
+        // Mutate and save favorite while the background replacement is copying files.
+        var concurrent = try #require(model.store.record(initial.id)?.game)
+        #expect(concurrent.notes == "Pending note")
+        concurrent.isFavorite = true
+        try model.store.save(concurrent)
+
+        state.withLock { $0.released = true }
+        await started.task.value
+
+        let finalGame = try #require(model.store.record(initial.id)?.game)
+        #expect(finalGame.notes == "Pending note")
+        #expect(finalGame.isFavorite == true)
+        #expect(
+            try String(
+                contentsOf: initial.crateURL.appending(path: "files/DATA.DAT"),
+                encoding: .utf8
+            ) == "v2"
+        )
+    }
 }

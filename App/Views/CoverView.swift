@@ -27,6 +27,7 @@ struct CoverView: View {
     let record: GameRecord
     var isRunning = false
     var isStarting = false
+    var isImporting = false
     var isLoadingArt = false
     var artRevision = 0
 
@@ -60,7 +61,7 @@ struct CoverView: View {
             .clipped()
             .overlay(alignment: .topLeading) { badges.padding(6) }
             .overlay(alignment: .bottomTrailing) {
-                if isLoadingArt {
+                if isImporting || isLoadingArt {
                     Group {
                         if retroTheme {
                             RetroSpinner()
@@ -103,6 +104,8 @@ struct CoverView: View {
                 badge("Running", .green)
             } else if isStarting {
                 badge("Starting…", .blue)
+            } else if isImporting {
+                badge("Importing…", .blue)
             }
         }
     }

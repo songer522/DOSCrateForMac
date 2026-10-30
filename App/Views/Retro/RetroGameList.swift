@@ -126,7 +126,12 @@ struct RetroGameList: View {
 
     private func row(for record: GameRecord) -> some View {
         let selected = model.selectedIDs.contains(record.id)
-        let badges = RetroBadge.badges(for: record, running: model.sessions.running, starting: model.startingIDs)
+        let badges = RetroBadge.badges(
+            for: record,
+            running: model.sessions.running,
+            starting: model.startingIDs,
+            importing: model.imports.importingIDs
+        )
         let textColor = selected ? RetroPalette.highlightText : RetroPalette.cyan
         return HStack(spacing: Self.columnSpacing) {
             HStack(spacing: 8) {
@@ -137,7 +142,7 @@ struct RetroGameList: View {
                 if !badges.isEmpty {
                     RetroBadgesView(badges: badges)
                 }
-                if model.metadata.artLoading.contains(record.id) {
+                if model.imports.importingIDs.contains(record.id) || model.metadata.artLoading.contains(record.id) {
                     RetroSpinner()
                 }
             }

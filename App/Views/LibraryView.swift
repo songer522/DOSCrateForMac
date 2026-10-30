@@ -15,10 +15,12 @@ struct GameContextMenu: View {
             Button("Stop") { model.stop(record.id) }
         } else {
             let starting = model.startingIDs.contains(record.id)
+            let importing = model.imports.importingIDs.contains(record.id)
             let blocked = model.pendingRemovalIDs.contains(record.id)
                 || model.imports.replacingIDs.contains(record.id)
+                || importing
                 || starting
-            Button(starting ? "Starting…" : "Play") { model.play(record.id) }
+            Button(starting ? "Starting…" : (importing ? "Importing…" : "Play")) { model.play(record.id) }
                 .disabled(blocked)
         }
         Button("Edit") {
@@ -115,6 +117,11 @@ struct LibraryView: View {
                                 .progressViewStyle(.linear)
                                 .frame(maxWidth: 180)
                             Text(progress.label)
+                        }
+                    } else if !model.imports.importingIDs.isEmpty {
+                        statusBar(cancellable: false) {
+                            ProgressView().controlSize(.small)
+                            Text(Self.singleImportStatusText(for: model) ?? "Importing…")
                         }
                     } else if model.isScanningLibrary {
                         statusBar {
@@ -277,9 +284,20 @@ struct LibraryView: View {
         }
     }
 
+    static func singleImportStatusText(for model: AppModel) -> String? {
+        let ids = model.imports.importingIDs
+        guard !ids.isEmpty else { return nil }
+        if ids.count == 1, let id = ids.first, let title = model.store.record(id)?.game.title {
+            return "Importing \(title)…"
+        }
+        return "Importing \(ids.count) games…"
+    }
+
     static func statusBarLeadingText(for model: AppModel) -> String? {
         if let progress = model.imports.progress {
             return progress.label
+        } else if let singleImportText = singleImportStatusText(for: model) {
+            return singleImportText
         } else if model.isScanningLibrary {
             return "Looking for games…"
         } else if model.imports.isCheckingDuplicates {
@@ -294,6 +312,7 @@ struct LibraryView: View {
 
     static func showsMetadataRetry(for model: AppModel) -> Bool {
         guard model.imports.progress == nil,
+              model.imports.importingIDs.isEmpty,
               !model.isScanningLibrary,
               !model.imports.isCheckingDuplicates,
               model.removalProgress == nil

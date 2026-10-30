@@ -17,6 +17,9 @@ struct GameListView: View {
                     } else if model.startingIDs.contains(record.id) {
                         ProgressView().controlSize(.small)
                         Text("Starting…").font(.caption).foregroundStyle(.secondary)
+                    } else if model.imports.importingIDs.contains(record.id) {
+                        ProgressView().controlSize(.small)
+                        Text("Importing…").font(.caption).foregroundStyle(.secondary)
                     } else if model.metadata.artLoading.contains(record.id) {
                         ProgressView().controlSize(.small)
                     }

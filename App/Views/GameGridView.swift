@@ -20,6 +20,7 @@ struct GameGridView: View {
                             record: record,
                             isRunning: model.sessions.running.contains(record.id),
                             isStarting: model.startingIDs.contains(record.id),
+                            isImporting: model.imports.importingIDs.contains(record.id),
                             isLoadingArt: model.metadata.artLoading.contains(record.id),
                             artRevision: model.metadata.artRevision[record.id, default: 0]
                         )

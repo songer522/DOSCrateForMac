@@ -39,9 +39,25 @@ public struct CrateIO: Sendable {
     public init() {}
 
     public static let crateExtension = "doscrate"
+    public static let importingMarkerFileName = ".doscrate-importing"
+    public static let processSessionID = UUID().uuidString
     static let gameFileName = "game.json"
 
     // MARK: Paths
+
+    public func isIncompleteImport(_ crate: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: crate.appending(path: Self.importingMarkerFileName, directoryHint: .notDirectory).path
+        )
+    }
+
+    /// True when `crate` has an `.doscrate-importing` marker written by a previous process (or without this process's session ID).
+    public func isAbandonedImport(_ crate: URL) -> Bool {
+        let marker = crate.appending(path: Self.importingMarkerFileName, directoryHint: .notDirectory)
+        guard let data = try? Data(contentsOf: marker) else { return false }
+        let owner = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return owner != Self.processSessionID
+    }
 
     public func cacheURL(_ crate: URL) -> URL { crate.appending(path: ".cache", directoryHint: .isDirectory) }
     public func logsURL(_ crate: URL) -> URL { cacheURL(crate).appending(path: "logs", directoryHint: .isDirectory) }
@@ -149,9 +165,14 @@ public struct CrateIO: Sendable {
         let fm = FileManager.default
         let entries = (try? fm.contentsOfDirectory(
             at: library, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
-        let crates = entries.filter {
-            $0.pathExtension == Self.crateExtension
-                && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        var crates: [URL] = []
+        for entry in entries where entry.pathExtension == Self.crateExtension
+            && (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            if isAbandonedImport(entry) {
+                try? fm.removeItem(at: entry)
+                continue
+            }
+            crates.append(entry)
         }
         let records = await withTaskGroup(of: GameRecord.self) { group in
             for crate in crates { group.addTask { loadRecord(at: crate) } }
