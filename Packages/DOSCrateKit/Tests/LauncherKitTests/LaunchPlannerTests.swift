@@ -155,4 +155,21 @@ import LibraryKit
         #expect(!conf.contains("mapperfile"))
         #expect(conf.contains("joysticktype = disabled\n"))
     }
+
+    @Test func inheritedGlobalModeRespectsGlobalControllerToggleOff() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE")
+        let r = f.record(executable: "GAME.EXE", exitWhenDone: false)
+        let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox)
+        let global = GlobalConfig(
+            overrides: GameSettings(controllerMode: .twoAxis),
+            controllerLayout: nil,
+            detectedControllerLayout: .standard
+        )
+        _ = try LaunchPlanner.plan(r, cDrive: c, global: global, dosbox: f.dosbox, io: f.io)
+        let map = f.crate.appending(path: ".cache/controller.map")
+        #expect(!FileManager.default.fileExists(atPath: map.path))
+        let conf = try String(contentsOf: f.crate.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(!conf.contains("mapperfile"))
+    }
 }

@@ -57,9 +57,12 @@ struct SettingsBindingTests {
         let pad = GamepadInfo(vendorID: 0x054c, productID: 0x0ce6, transport: "USB", product: "DualSense Wireless Controller", usagePage: 1, usage: 5)
         #expect(p.launchConfig(gamepads: [pad]).controllerLayout == .standard)
         #expect(p.launchConfig(gamepads: [pad]).detectedControllerLayout == .standard)
+        p.globalOverrides.controllerMode = .twoAxis
+        #expect(p.launchConfig(gamepads: [pad]).overrides.controllerMode == .twoAxis)
         p.useControllers = false
         #expect(p.launchConfig(gamepads: [pad]).controllerLayout == nil)
         #expect(p.launchConfig(gamepads: [pad]).detectedControllerLayout == .standard)
+        #expect(p.launchConfig(gamepads: [pad]).overrides.controllerMode == nil)
     }
 
     @Test func controllerSectionBindingSetsAndNormalizesEmptyBindings() {

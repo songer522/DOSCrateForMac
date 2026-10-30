@@ -101,6 +101,9 @@ final class Preferences {
         let detected = LayoutSelector.select(gamepads)
         c.detectedControllerLayout = detected
         c.controllerLayout = useControllers ? detected : nil
+        if !useControllers {
+            c.overrides.controllerMode = nil
+        }
         return c
     }
 }

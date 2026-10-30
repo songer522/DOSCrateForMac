@@ -53,10 +53,9 @@ public enum LaunchPlanner {
         for r: GameRecord,
         global: GlobalConfig
     ) -> (layout: ControllerLayout, mode: ControllerMode, bindings: ControllerBindings)? {
-        let explicitMode = r.game.settings.controllerMode ?? global.overrides.controllerMode
-        let effectiveMode = explicitMode ?? .keyboard
+        let effectiveMode = r.game.settings.controllerMode ?? global.overrides.controllerMode ?? .keyboard
         guard effectiveMode != .disabled else { return nil }
-        let layout: ControllerLayout? = if explicitMode != nil {
+        let layout: ControllerLayout? = if r.game.settings.controllerMode != nil {
             global.detectedControllerLayout ?? global.controllerLayout
         } else {
             global.controllerLayout
