@@ -291,7 +291,7 @@ final class ImportQueue {
             }.value
             importer.discard(prepared)
             await model.store.reload()
-            model.selection = record.id
+            model.revealAndSelect(record.id)
             model.metadata.importedGame(record.id)
             return record
         case .keepBoth:
@@ -302,7 +302,7 @@ final class ImportQueue {
             }.value
             importer.discard(prepared)
             await model.store.reload()
-            model.selection = record.id
+            model.revealAndSelect(record.id)
             model.metadata.importedGame(record.id)
             return record
         }
@@ -398,7 +398,7 @@ final class ImportQueue {
                     dirtyCount = 0
                     lastReload = ContinuousClock.now
                     if !selectedFirst, let firstID {
-                        model.selection = firstID
+                        model.revealAndSelect(firstID)
                         selectedFirst = true
                     }
                 }
@@ -417,7 +417,7 @@ final class ImportQueue {
         batchEntries.removeAll()
         batchTask = nil
         progress = nil
-        if let firstID { model.selection = firstID }
+        if let firstID { model.revealAndSelect(firstID) }
         if !failures.isEmpty {
             model.alert = AppAlert(
                 title: failures.count == 1 ? "Couldn't import 1 item" : "Couldn't import \(failures.count) items",

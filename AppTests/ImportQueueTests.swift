@@ -733,4 +733,71 @@ private func makeZip(_ folder: URL, to name: String, in dir: URL) throws -> URL 
         await task?.value
         #expect(queue.replacingIDs.isEmpty)
     }
+
+    @Test func singleAndBatchImportsRevealAndSelectGameWhenHiddenBySearchOrFilters() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await makeModel(importLocation: .copy)
+        let queue = model.imports
+
+        // 1. Single import while sidebar filter (.favorites), metadata filters, and non-matching search are active.
+        model.query.filter = .favorites
+        model.query.genre = "RPG"
+        model.query.year = 1993
+        model.query.publisher = "Origin"
+        model.query.developer = "Looking Glass"
+        model.query.search = "Ultima"
+        model.query.sort = .year
+
+        let keen = root.appending(path: "keen", directoryHint: .isDirectory)
+        try touchFile(keen, "KEEN1.EXE")
+        let pKeen = try await model.importer.prepare(keen)
+        let keenRecord = try #require(
+            try await queue.finishSingleImport(
+                pKeen, action: .keepBoth, mode: .copy, title: "Commander Keen", executable: "KEEN1.EXE", model: model
+            )
+        )
+
+        #expect(model.selection == keenRecord.id)
+        #expect(model.query.filter == .all)
+        #expect(model.query.genre == nil)
+        #expect(model.query.year == nil)
+        #expect(model.query.publisher == nil)
+        #expect(model.query.developer == nil)
+        #expect(model.query.search.isEmpty)
+        #expect(model.query.sort == .year)
+        #expect(model.query.apply(to: model.store.records, now: Date()).map(\.id).contains(keenRecord.id))
+
+        // 2. Single import when search matches the newly imported game: matching search is preserved,
+        //    while hiding sidebar filter (.recent) is cleared.
+        model.query.filter = .recent
+        model.query.search = "Doom"
+        let doom = root.appending(path: "doom", directoryHint: .isDirectory)
+        try touchFile(doom, "DOOM.EXE")
+        let pDoom = try await model.importer.prepare(doom)
+        let doomRecord = try #require(
+            try await queue.finishSingleImport(
+                pDoom, action: .keepBoth, mode: .copy, title: "Doom", executable: "DOOM.EXE", model: model
+            )
+        )
+
+        #expect(model.selection == doomRecord.id)
+        #expect(model.query.filter == .all)
+        #expect(model.query.search == "Doom")
+        #expect(model.query.apply(to: model.store.records, now: Date()).map(\.id) == [doomRecord.id])
+
+        // 3. Batch import while tag filter and non-matching search hide the first imported game.
+        model.query.filter = .tag("Sci-Fi")
+        model.query.search = "Nonexistent"
+        let wolf = root.appending(path: "wolf", directoryHint: .isDirectory)
+        try touchFile(wolf, "WOLF3D.EXE")
+        let duke = root.appending(path: "duke", directoryHint: .isDirectory)
+        try touchFile(duke, "DUKE.EXE")
+
+        await queue.add([wolf, duke], model: model)?.value
+        let wolfRecord = try #require(model.store.records.first { $0.game.title == "Wolf" })
+        #expect(model.selection == wolfRecord.id)
+        #expect(model.query.filter == .all)
+        #expect(model.query.search.isEmpty)
+        #expect(model.query.apply(to: model.store.records, now: Date()).map(\.id).contains(wolfRecord.id))
+    }
 }
