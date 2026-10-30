@@ -119,3 +119,13 @@ You can also open `DOSCrate.xcodeproj` directly in Xcode after running `make ven
 - **Font**: The DOS theme uses the `PxPlus IBM VGA 8x16` font from [The Ultimate Oldschool PC Font Pack](https://int10h.org/oldschool-pc-fonts/) by VileR, licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 - **Metadata & Artwork**: Game information and images are provided by the [LaunchBox Games Database](https://gamesdb.launchbox-app.com/).
 - **Updates**: In-app updates are powered by [Sparkle](https://sparkle-project.org/).
+
+---
+
+## Support
+
+If you enjoy **DOSCrate** and want to support its development:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/songer522)
+
+- **[buymeacoffee.com/songer522](https://buymeacoffee.com/songer522)**
