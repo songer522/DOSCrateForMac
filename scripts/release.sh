@@ -171,12 +171,14 @@ fi
 # dosbox needs com.apple.security.cs.allow-jit for its dynamic core under the hardened runtime.
 sign_keeping_entitlements "$STAGING_APP/Contents/MacOS/dosbox"
 sign_keeping_entitlements "$STAGING_APP"
-if ! codesign -d --entitlements - "$STAGING_APP/Contents/MacOS/dosbox" 2>&1 | grep -q com.apple.security.cs.allow-jit; then
+entitlements_out="$(codesign -d --entitlements - "$STAGING_APP/Contents/MacOS/dosbox" 2>&1 || true)"
+if ! printf '%s\n' "$entitlements_out" | grep -q com.apple.security.cs.allow-jit; then
     echo "error: dosbox lost its com.apple.security.cs.allow-jit entitlement" >&2
     exit 1
 fi
 for code in "$STAGING_APP/Contents/MacOS/dosbox" "$STAGING_APP"; do
-    if ! codesign -dv "$code" 2>&1 | grep -Eq 'flags=0x[0-9a-f]+\([^)]*runtime'; then
+    dv_out="$(codesign -dv "$code" 2>&1 || true)"
+    if ! printf '%s\n' "$dv_out" | grep -Eq 'flags=0x[0-9a-f]+\([^)]*runtime'; then
         echo "error: $code is not signed with the hardened runtime" >&2
         exit 1
     fi
