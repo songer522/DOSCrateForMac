@@ -259,6 +259,92 @@ final class AppModel {
         for write in writes.values { write() }
     }
 
+    // MARK: Media
+
+    /// Copies `source` into the game's `media/` directory off the main thread, flushes any pending inspector
+    /// draft edits for `gameID`, and saves the appended `MediaImage` to `store`. If `gameID` was removed or saving
+    /// `game.json` fails, the copied file is deleted so no orphan remains in `media/`.
+    @discardableResult
+    func addMedia(
+        from source: URL,
+        to gameID: UUID,
+        copyHook: (@Sendable () async -> Void)? = nil
+    ) async -> MediaImage? {
+        guard !isTerminating,
+              !pendingRemovalIDs.contains(gameID),
+              !imports.replacingIDs.contains(gameID),
+              let initialRecord = store.record(gameID) else { return nil }
+        if case .readOnly = initialRecord.status { return nil }
+
+        let mediaDir = initialRecord.crateURL.appending(path: "media", directoryHint: .isDirectory)
+        let ext = source.pathExtension.lowercased()
+        let kind: MediaKind = ext == "iso" ? .cdrom : .floppy
+
+        let copied: (name: String, fileURL: URL)
+        do {
+            if let copyHook {
+                await copyHook()
+            }
+            copied = try await Task.detached {
+                try Self.copyMediaFile(from: source, into: mediaDir)
+            }.value
+        } catch {
+            alert = AppAlert(title: "Can't add \(source.lastPathComponent)", message: error.localizedDescription)
+            return nil
+        }
+
+        flushPendingWrites(for: gameID)
+
+        guard !isTerminating,
+              !pendingRemovalIDs.contains(gameID),
+              !imports.replacingIDs.contains(gameID),
+              let currentRecord = store.record(gameID) else {
+            try? FileManager.default.removeItem(at: copied.fileURL)
+            return nil
+        }
+        if case .readOnly = currentRecord.status {
+            try? FileManager.default.removeItem(at: copied.fileURL)
+            return nil
+        }
+
+        let image = MediaImage(relativePath: "media/" + copied.name, kind: kind)
+        var updated = currentRecord.game
+        if !updated.media.contains(image) {
+            updated.media.append(image)
+        }
+        do {
+            try store.save(updated)
+            return image
+        } catch {
+            try? FileManager.default.removeItem(at: copied.fileURL)
+            alert = AppAlert(title: "Can't add \(source.lastPathComponent)", message: error.localizedDescription)
+            return nil
+        }
+    }
+
+    nonisolated static func copyMediaFile(from source: URL, into mediaDir: URL) throws -> (name: String, fileURL: URL) {
+        let fm = FileManager.default
+        try fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+        let tempURL = mediaDir.appending(path: ".doscrate-tmp-\(UUID().uuidString)", directoryHint: .notDirectory)
+        try fm.copyItem(at: source, to: tempURL)
+        defer { try? fm.removeItem(at: tempURL) }
+
+        let baseName = source.deletingPathExtension().lastPathComponent
+        let ext = source.pathExtension
+        var candidateName = source.lastPathComponent
+        var n = 2
+        while true {
+            let destURL = mediaDir.appending(path: candidateName, directoryHint: .notDirectory)
+            do {
+                try fm.moveItem(at: tempURL, to: destURL)
+                return (candidateName, destURL)
+            } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileWriteFileExistsError {
+                candidateName = ext.isEmpty ? "\(baseName) \(n)" : "\(baseName) \(n).\(ext)"
+                n += 1
+            }
+        }
+    }
+
     @discardableResult
     func play(_ id: UUID) -> Task<Void, Never>? {
         guard !isTerminating,

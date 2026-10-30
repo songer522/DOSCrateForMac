@@ -176,7 +176,7 @@ struct InputSection: View {
 struct DrivesSection: View {
     let record: GameRecord
     @Binding var game: Game
-    var onError: (String, String) -> Void
+    var onAddMedia: (URL) -> Void
     /// Called when an entry is removed; its file is trashed by the owner once the change is saved.
     var onRemoved: (MediaImage) -> Void
     @Environment(\.retroTheme) private var retroTheme
@@ -240,30 +240,7 @@ struct DrivesSection: View {
         panel.allowedContentTypes = ["iso", "img", "ima"].compactMap { UTType(filenameExtension: $0) }
         panel.prompt = "Add"
         guard panel.runModal() == .OK, let source = panel.url else { return }
-        let media = record.crateURL.appending(path: "media", directoryHint: .isDirectory)
-        Task {
-            do {
-                let name = try await Task.detached { try Self.copy(source, into: media) }.value
-                let kind: MediaKind = source.pathExtension.lowercased() == "iso" ? .cdrom : .floppy
-                game.media.append(MediaImage(relativePath: "media/" + name, kind: kind))
-            } catch {
-                onError("Can't add \(source.lastPathComponent)", error.localizedDescription)
-            }
-        }
-    }
-
-    /// Copies into `media`, choosing an unused name; returns the name used.
-    private nonisolated static func copy(_ source: URL, into media: URL) throws -> String {
-        let fm = FileManager.default
-        try fm.createDirectory(at: media, withIntermediateDirectories: true)
-        var name = source.lastPathComponent
-        var n = 2
-        while fm.fileExists(atPath: media.appending(path: name).path) {
-            name = source.deletingPathExtension().lastPathComponent + " \(n)." + source.pathExtension
-            n += 1
-        }
-        try fm.copyItem(at: source, to: media.appending(path: name))
-        return name
+        onAddMedia(source)
     }
 
     private func remove(at index: Int) {
@@ -363,13 +340,13 @@ struct CommandsEditor: View {
 struct SettingsTab: View {
     let record: GameRecord
     @Binding var game: Game
-    var onError: (String, String) -> Void
+    var onAddMedia: (URL) -> Void
     var onRemovedMedia: (MediaImage) -> Void
 
     var body: some View {
         ThemedForm {
             CuratedSettingsSections(settings: $game.settings)
-            DrivesSection(record: record, game: $game, onError: onError, onRemoved: onRemovedMedia)
+            DrivesSection(record: record, game: $game, onAddMedia: onAddMedia, onRemoved: onRemovedMedia)
             StartupSection(record: record, game: $game)
         }
     }
