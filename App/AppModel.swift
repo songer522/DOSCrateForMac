@@ -164,6 +164,32 @@ final class AppModel {
         }
     }
 
+    /// Reveals `id` in the library view by clearing any active sidebar filter, metadata filter, or search query
+    /// that would hide it, then selects `id`.
+    func revealAndSelect(_ id: UUID, now: Date = Date()) {
+        if let record = store.record(id), query.apply(to: [record], now: now).isEmpty {
+            if LibraryQuery(filter: query.filter).apply(to: [record], now: now).isEmpty {
+                query.filter = .all
+            }
+            if query.genre != nil, LibraryQuery(genre: query.genre).apply(to: [record], now: now).isEmpty {
+                query.genre = nil
+            }
+            if query.year != nil, LibraryQuery(year: query.year).apply(to: [record], now: now).isEmpty {
+                query.year = nil
+            }
+            if query.publisher != nil, LibraryQuery(publisher: query.publisher).apply(to: [record], now: now).isEmpty {
+                query.publisher = nil
+            }
+            if query.developer != nil, LibraryQuery(developer: query.developer).apply(to: [record], now: now).isEmpty {
+                query.developer = nil
+            }
+            if !query.search.isEmpty, LibraryQuery(search: query.search).apply(to: [record], now: now).isEmpty {
+                query.search = ""
+            }
+        }
+        selection = id
+    }
+
     private func importExistingLibraryContents(at url: URL) async {
         let records = store.records
         let entries = await Task.detached { Self.scanExistingFolder(url, records: records) }.value
