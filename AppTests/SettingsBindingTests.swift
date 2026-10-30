@@ -56,7 +56,28 @@ struct SettingsBindingTests {
         let p = Preferences(defaults: d)
         let pad = GamepadInfo(vendorID: 0x054c, productID: 0x0ce6, transport: "USB", product: "DualSense Wireless Controller", usagePage: 1, usage: 5)
         #expect(p.launchConfig(gamepads: [pad]).controllerLayout == .standard)
-        p.useControllers = false; #expect(p.launchConfig(gamepads: [pad]).controllerLayout == nil)
+        #expect(p.launchConfig(gamepads: [pad]).detectedControllerLayout == .standard)
+        p.useControllers = false
+        #expect(p.launchConfig(gamepads: [pad]).controllerLayout == nil)
+        #expect(p.launchConfig(gamepads: [pad]).detectedControllerLayout == .standard)
+    }
+
+    @Test func controllerSectionBindingSetsAndNormalizesEmptyBindings() {
+        let box = Box(GameSettings())
+        let settingsBinding = Binding<GameSettings>(get: { box.value }, set: { box.value = $0 })
+        let aBinding = ControllerSection.binding(for: .a, in: settingsBinding)
+        let ltBinding = ControllerSection.binding(for: .leftTrigger, in: settingsBinding)
+
+        #expect(aBinding.wrappedValue == nil)
+        aBinding.wrappedValue = .space
+        ltBinding.wrappedValue = .z
+        #expect(box.value.controllerBindings == ControllerBindings(a: .space, leftTrigger: .z))
+
+        aBinding.wrappedValue = nil
+        #expect(box.value.controllerBindings == ControllerBindings(leftTrigger: .z))
+
+        ltBinding.wrappedValue = nil
+        #expect(box.value.controllerBindings == nil)
     }
 
     @Test func fetchMetadataOnImportDefaultsTrue() {

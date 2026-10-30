@@ -50,6 +50,7 @@ public enum SettingsMapper {
         }
         if let v = s.mouseCapture { d.set("mouse", "mouse_capture", v.rawValue) }
         if let v = s.keyboardLayout { d.set("dos", "keyboard_layout", v) }
+        if let v = s.controllerMode { d.set("joystick", "joysticktype", v.joystickType) }
         return d
     }
 }

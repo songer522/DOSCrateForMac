@@ -12,3 +12,4 @@ DOSCrate.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
 !DOSCrate.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 DerivedData/
 *.dmg
+docs/releasing.md

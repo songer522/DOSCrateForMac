@@ -18,13 +18,29 @@ struct GameFileCodecTests {
         game.settings = GameSettings(
             preset: .pc486, cycles: .fixed(25000), core: .dynamic, memoryMB: 16, machine: .svga_s3,
             shader: "crt-auto", aspect: .squarePixels, fullscreen: true, soundCard: .sb16,
-            midi: .mt32, mouseCapture: .seamless, keyboardLayout: "us")
+            midi: .mt32, mouseCapture: .seamless, keyboardLayout: "us",
+            controllerMode: .twoAxis,
+            controllerBindings: ControllerBindings(a: .space, leftTrigger: .z, rightTrigger: .x, start: .unbound))
         game.stats = PlayStats(totalPlaySeconds: 123.5, lastPlayed: Date(timeIntervalSince1970: 1_700_000_000), launchCount: 4)
 
         let data = try GameFileCodec.encode(game, extra: [:])
         let decoded = try GameFileCodec.decode(data)
         #expect(decoded.game == game)
         #expect(decoded.extra.isEmpty)
+    }
+
+    @Test func controllerSettingsNormalizeEmptyBindingsAndSupportLenientDecode() throws {
+        let empty = GameSettings(controllerBindings: ControllerBindings())
+        #expect(empty.controllerBindings == nil)
+
+        let json = """
+        {"id":"\(UUID())","title":"X","source":{"type":"managed"},
+         "settings":{"controllerMode":"futureMode","controllerBindings":{"a":"futureKey","b":"space"}}}
+        """
+        #expect(throws: DecodingError.self) { try GameFileCodec.decode(Data(json.utf8)) }
+        let lenient = try GameFileCodec.decodeLenient(Data(json.utf8)).game
+        #expect(lenient.settings.controllerMode == nil)
+        #expect(lenient.settings.controllerBindings == ControllerBindings(b: .space))
     }
 
     @Test func originRoundTripsAndOldJSONWithoutOriginDecodesNil() throws {

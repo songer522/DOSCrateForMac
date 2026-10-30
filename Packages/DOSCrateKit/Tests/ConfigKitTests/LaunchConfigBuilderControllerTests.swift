@@ -27,4 +27,16 @@ import LibraryKit
         let a = try LaunchConfigBuilder.build(game: game, cDrive: cDrive, media: [], global: GlobalConfig())
         #expect(!a.render().contains("mapperfile")); #expect(!a.render().contains("joysticktype"))
     }
+    @Test(arguments: ControllerMode.allCases) func perGameControllerModeOverridesJoystickType(_ mode: ControllerMode) throws {
+        var g = game
+        g.settings.controllerMode = mode
+        let map = mode == .disabled ? nil : URL(filePath: "/tmp/controller.map")
+        let doc = try LaunchConfigBuilder.build(game: g, cDrive: cDrive, media: [], global: GlobalConfig(), controllerMap: map)
+        #expect(doc.value("joystick", "joysticktype") == mode.joystickType)
+        if mode == .disabled {
+            #expect(doc.value("sdl", "mapperfile") == nil)
+        } else {
+            #expect(doc.value("sdl", "mapperfile") == "/tmp/controller.map")
+        }
+    }
 }

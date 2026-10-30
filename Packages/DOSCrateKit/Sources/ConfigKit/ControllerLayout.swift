@@ -1,3 +1,5 @@
+import LibraryKit
+
 public enum ControllerLayout: String, Sendable, CaseIterable {
     case standard
     case steam
@@ -10,6 +12,8 @@ public enum ControllerLayout: String, Sendable, CaseIterable {
         case (.standard, .x): "stick_0 button 2"
         case (.standard, .y): "stick_0 button 3"
         case (.standard, .start): "stick_0 button 6"
+        case (.standard, .leftTrigger): "stick_0 axis 4 1"
+        case (.standard, .rightTrigger): "stick_0 axis 5 1"
         case (.standard, .dpadUp), (.xboxUSB, .dpadUp): "stick_0 button 11"
         case (.standard, .dpadDown): "stick_0 button 12"
         case (.standard, .dpadLeft): "stick_0 button 13"
@@ -19,6 +23,8 @@ public enum ControllerLayout: String, Sendable, CaseIterable {
         case (.steam, .x): "stick_0 button 9"
         case (.steam, .y): "stick_0 button 10"
         case (.steam, .start): "stick_0 button 7"
+        case (.steam, .leftTrigger): "stick_0 button 17"
+        case (.steam, .rightTrigger): "stick_0 button 24"
         case (.steam, .dpadUp): "stick_0 button 14"
         case (.steam, .dpadDown): "stick_0 button 11"
         case (.steam, .dpadLeft): "stick_0 button 12"
@@ -26,6 +32,8 @@ public enum ControllerLayout: String, Sendable, CaseIterable {
         case (.xboxUSB, .x): "stick_0 button 6"
         case (.xboxUSB, .y): "stick_0 button 7"
         case (.xboxUSB, .start): "stick_0 button 3"
+        case (.xboxUSB, .leftTrigger): "stick_0 button 14"
+        case (.xboxUSB, .rightTrigger): "stick_0 button 17"
         case (.xboxUSB, .dpadDown): "stick_0 button 8"
         case (.xboxUSB, .dpadLeft): "stick_0 button 9"
         case (.xboxUSB, .dpadRight): "stick_0 button 10"
@@ -40,7 +48,19 @@ public enum ControllerLayout: String, Sendable, CaseIterable {
 }
 
 public enum LogicalControl: Sendable, CaseIterable {
-    case a, b, x, y, start
+    case a, b, x, y, leftTrigger, rightTrigger, start
     case dpadUp, dpadDown, dpadLeft, dpadRight
     case stickUp, stickDown, stickLeft, stickRight
+
+    public init(button: ControllerButton) {
+        switch button {
+        case .a: self = .a
+        case .b: self = .b
+        case .x: self = .x
+        case .y: self = .y
+        case .leftTrigger: self = .leftTrigger
+        case .rightTrigger: self = .rightTrigger
+        case .start: self = .start
+        }
+    }
 }

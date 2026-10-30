@@ -17,9 +17,10 @@ public enum LaunchPlanner {
         let logs = io.logsURL(r.crateURL)
         try fm.createDirectory(at: logs, withIntermediateDirectories: true)
         var controllerMap: URL?
-        if let layout = global.controllerLayout {
+        if let controller = resolvedControllerPlan(for: r, global: global) {
             let map = io.cacheURL(r.crateURL).appending(path: "controller.map", directoryHint: .notDirectory)
-            if (try? Data(ControllerMap.render(layout).utf8).write(to: map, options: .atomic)) != nil {
+            let rendered = ControllerMap.render(controller.layout, mode: controller.mode, bindings: controller.bindings)
+            if (try? Data(rendered.utf8).write(to: map, options: .atomic)) != nil {
                 controllerMap = map
             }
         }
@@ -39,13 +40,33 @@ public enum LaunchPlanner {
     }
 
     public static func generatedConfigPreview(_ r: GameRecord, global: GlobalConfig, io: CrateIO) -> String {
-        let controllerMap = global.controllerLayout == nil ? nil
+        let controllerMap = resolvedControllerPlan(for: r, global: global) == nil ? nil
             : io.cacheURL(r.crateURL).appending(path: "controller.map", directoryHint: .notDirectory)
         do {
             return try render(r, cDrive: io.cDriveURL(for: r), global: global, controllerMap: controllerMap)
         } catch {
             return "# error: \(error)"
         }
+    }
+
+    private static func resolvedControllerPlan(
+        for r: GameRecord,
+        global: GlobalConfig
+    ) -> (layout: ControllerLayout, mode: ControllerMode, bindings: ControllerBindings)? {
+        let explicitMode = r.game.settings.controllerMode ?? global.overrides.controllerMode
+        let effectiveMode = explicitMode ?? .keyboard
+        guard effectiveMode != .disabled else { return nil }
+        let layout: ControllerLayout? = if explicitMode != nil {
+            global.detectedControllerLayout ?? global.controllerLayout
+        } else {
+            global.controllerLayout
+        }
+        guard let layout else { return nil }
+        let bindings = ControllerBindings.merged(
+            base: global.overrides.controllerBindings,
+            override: r.game.settings.controllerBindings
+        )
+        return (layout, effectiveMode, bindings)
     }
 
     private static func render(_ r: GameRecord, cDrive: URL, global: GlobalConfig, controllerMap: URL?) throws -> String {

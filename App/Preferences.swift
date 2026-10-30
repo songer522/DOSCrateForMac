@@ -98,7 +98,9 @@ final class Preferences {
 
     func launchConfig(gamepads: [GamepadInfo]) -> GlobalConfig {
         var c = globalConfig
-        c.controllerLayout = useControllers ? LayoutSelector.select(gamepads) : nil
+        let detected = LayoutSelector.select(gamepads)
+        c.detectedControllerLayout = detected
+        c.controllerLayout = useControllers ? detected : nil
         return c
     }
 }

@@ -7,12 +7,15 @@ public struct GlobalConfig: Sendable {
     public var rawOverrides: String
     public var env: ConfigEnvironment
     public var controllerLayout: ControllerLayout?
+    public var detectedControllerLayout: ControllerLayout?
     public init(defaultPreset: Preset = .auto, overrides: GameSettings = GameSettings(),
                 rawOverrides: String = "", env: ConfigEnvironment = ConfigEnvironment(),
-                controllerLayout: ControllerLayout? = nil) {
+                controllerLayout: ControllerLayout? = nil,
+                detectedControllerLayout: ControllerLayout? = nil) {
         self.defaultPreset = defaultPreset; self.overrides = overrides
         self.rawOverrides = rawOverrides; self.env = env
         self.controllerLayout = controllerLayout
+        self.detectedControllerLayout = detectedControllerLayout ?? controllerLayout
     }
 }
 
