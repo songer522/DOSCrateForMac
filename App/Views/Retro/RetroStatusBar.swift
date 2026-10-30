@@ -14,6 +14,11 @@ struct RetroStatusBar: View {
                 progressBar(current: progress.current, total: progress.total)
                 Text(progress.label)
             }
+        } else if let singleImportText = LibraryView.singleImportStatusText(for: model) {
+            bar(cancellable: false) {
+                RetroSpinner()
+                Text(singleImportText)
+            }
         } else if model.isScanningLibrary {
             bar(cancellable: true) {
                 Text("Looking for games…")

@@ -274,9 +274,10 @@ final class AppModel {
         }
     }
 
-    /// Running, or starting: a start still in progress may write into the crate, so it can't be removed yet.
+    /// Running, starting, or still copying files during an import: a start or copy still in progress
+    /// may write into the crate, so it can't be removed yet.
     func isActive(_ id: UUID) -> Bool {
-        sessions.running.contains(id) || startingIDs.contains(id)
+        sessions.running.contains(id) || startingIDs.contains(id) || imports.importingIDs.contains(id)
     }
 
     // MARK: Launching
@@ -317,6 +318,7 @@ final class AppModel {
         guard !isTerminating,
               !pendingRemovalIDs.contains(gameID),
               !imports.replacingIDs.contains(gameID),
+              !imports.importingIDs.contains(gameID),
               let initialRecord = store.record(gameID) else { return nil }
         if case .readOnly = initialRecord.status { return nil }
 
@@ -352,6 +354,7 @@ final class AppModel {
         guard !isTerminating,
               !pendingRemovalIDs.contains(gameID),
               !imports.replacingIDs.contains(gameID),
+              !imports.importingIDs.contains(gameID),
               let currentRecord = store.record(gameID) else {
             try? FileManager.default.removeItem(at: copied.fileURL)
             return nil
@@ -415,7 +418,8 @@ final class AppModel {
         guard !isTerminating,
               !startingIDs.contains(id),
               !sessions.running.contains(id),
-              !imports.replacingIDs.contains(id)
+              !imports.replacingIDs.contains(id),
+              !imports.importingIDs.contains(id)
         else { return nil }
         if pendingRemovalIDs.contains(id) {
             let title = store.record(id)?.game.title ?? "this game"
@@ -431,6 +435,7 @@ final class AppModel {
         guard !isTerminating,
               !pendingRemovalIDs.contains(id),
               !imports.replacingIDs.contains(id),
+              !imports.importingIDs.contains(id),
               !startingIDs.contains(id),
               !sessions.running.contains(id),
               let record = store.record(id) else { return nil }
@@ -558,9 +563,10 @@ final class AppModel {
         sessions.stopAll()
     }
 
-    /// Marks the app as terminating (blocking new or in-flight launches) and stops all running sessions.
+    /// Marks the app as terminating (blocking new or in-flight launches), cancels remaining queued batch imports, and stops all running sessions.
     func beginTermination() {
         isTerminating = true
+        imports.cancelBatchImport()
         stopAllSessions()
     }
 

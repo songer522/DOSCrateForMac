@@ -51,6 +51,28 @@ public final class LibraryStore {
         records.first { $0.id == id }
     }
 
+    /// Inserts or updates a single record in memory without rescanning the whole library folder,
+    /// maintaining the store's title-sorted order.
+    public func upsert(_ record: GameRecord) {
+        generation += 1
+        if let index = records.firstIndex(where: { $0.id == record.id }) {
+            records[index] = record
+        } else {
+            records.append(record)
+        }
+        records.sort {
+            let order = $0.game.title.localizedStandardCompare($1.game.title)
+            return order == .orderedSame ? $0.crateURL.path < $1.crateURL.path : order == .orderedAscending
+        }
+        afterReload?()
+    }
+
+    /// Drops an in-memory record (such as an optimistic crate whose background file copy failed) without touching the Trash.
+    public func discard(_ id: UUID) {
+        generation += 1
+        records.removeAll { $0.id == id }
+    }
+
     /// Writes the game into its crate, keeping any unknown keys currently on disk.
     public func save(_ game: Game) throws {
         guard let index = records.firstIndex(where: { $0.id == game.id }) else {

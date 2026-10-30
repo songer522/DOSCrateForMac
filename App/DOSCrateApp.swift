@@ -20,9 +20,10 @@ final class AppTerminationDelegate: NSObject, NSApplicationDelegate {
     ) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         model.beginTermination()
-        guard model.sessions.hasLiveProcesses else { return .terminateNow }
+        guard model.sessions.hasLiveProcesses || model.imports.hasActiveImports else { return .terminateNow }
         Task { @MainActor in
             await model.sessions.waitForAllProcessesToExit()
+            await model.imports.waitForActiveImports()
             reply(true)
         }
         return .terminateLater

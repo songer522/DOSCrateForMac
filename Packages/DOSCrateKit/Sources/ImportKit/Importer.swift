@@ -243,6 +243,83 @@ public struct Importer: Sendable {
         return GameRecord(game: game, crateURL: destination)
     }
 
+    /// Creates the crate directory in `library` and writes `game.json` immediately so the game can appear in the
+    /// library right away, before `populateCrate(_:for:mode:)` copies or moves the game files in the background.
+    public func createCratePlaceholder(
+        _ p: PreparedImport, mode: ImportMode, title: String, executable: String?, into library: URL
+    ) throws -> GameRecord {
+        if mode == .reference, !p.allowsReference { throw ImportError.referenceNotAllowed }
+        let fm = FileManager.default
+        let destination = try io.makeCrate(title: title, in: library)
+        do {
+            var game: Game
+            if mode == .reference {
+                let bookmark = try CrateIO.makeBookmark(for: p.source)
+                game = Game(title: title, source: .referenced(path: p.source.path, bookmark: bookmark))
+            } else {
+                game = Game(title: title, source: .managed)
+                let files = destination.appending(path: "files", directoryHint: .isDirectory)
+                try fm.createDirectory(at: files, withIntermediateDirectories: true)
+                let marker = destination.appending(path: CrateIO.importingMarkerFileName, directoryHint: .notDirectory)
+                try Data(CrateIO.processSessionID.utf8).write(to: marker, options: .atomic)
+            }
+            game.origin = ImportOrigin.from(p.source)
+            game.launch.executable = executable
+            try io.save(game, extra: [:], to: destination)
+            return GameRecord(game: game, crateURL: destination)
+        } catch {
+            try? fm.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    /// Populates `crateURL` with the game's files or media images in the background after `createCratePlaceholder`.
+    /// Returns any staged `MediaImage` entries for disc/floppy imports.
+    public func populateCrate(
+        at crateURL: URL, for p: PreparedImport, mode: ImportMode
+    ) throws -> [MediaImage] {
+        if mode == .reference { return [] }
+        let fm = FileManager.default
+        let work = try makeWorkDirectory(appropriateFor: crateURL, fallbackParent: crateURL.deletingLastPathComponent())
+        defer { try? fm.removeItem(at: work) }
+        workObserver?(work)
+
+        switch p.kind {
+        case .folder, .zip:
+            let stagedFiles = work.appending(path: "files", directoryHint: .isDirectory)
+            try fm.createDirectory(at: stagedFiles, withIntermediateDirectories: true)
+            try Self.copyTree(from: p.stagingRoot ?? p.source, to: stagedFiles, excluding: work)
+            let destFiles = crateURL.appending(path: "files", directoryHint: .isDirectory)
+            let tempFiles = crateURL.appending(path: ".files-new-\(UUID().uuidString)", directoryHint: .isDirectory)
+            try fm.moveItem(at: stagedFiles, to: tempFiles)
+            if fm.fileExists(atPath: destFiles.path) {
+                try? fm.removeItem(at: destFiles)
+            }
+            try fm.moveItem(at: tempFiles, to: destFiles)
+            try? fm.removeItem(at: crateURL.appending(path: CrateIO.importingMarkerFileName, directoryHint: .notDirectory))
+            return []
+        case .discImage, .floppyImage:
+            let stagedMedia = work.appending(path: "media", directoryHint: .isDirectory)
+            try fm.createDirectory(at: stagedMedia, withIntermediateDirectories: true)
+            let images = try Self.stageMedia(for: p, into: stagedMedia)
+            let destMedia = crateURL.appending(path: "media", directoryHint: .isDirectory)
+            let tempMedia = crateURL.appending(path: ".media-new-\(UUID().uuidString)", directoryHint: .isDirectory)
+            try fm.moveItem(at: stagedMedia, to: tempMedia)
+            if fm.fileExists(atPath: destMedia.path) {
+                try? fm.removeItem(at: destMedia)
+            }
+            try fm.moveItem(at: tempMedia, to: destMedia)
+            let loaded = io.loadRecord(at: crateURL)
+            if case .ok = loaded.status {
+                var updatedGame = loaded.game
+                updatedGame.media = images
+                try io.save(updatedGame, extra: loaded.extra, to: crateURL)
+            }
+            try? fm.removeItem(at: crateURL.appending(path: CrateIO.importingMarkerFileName, directoryHint: .notDirectory))
+            return images
+        }
+    }
+
     /// Updates `existing` in place, keeping its id, title, metadata, play stats, settings, `override.conf`,
     /// `cover.png`, unknown `game.json` keys, and any save/config files that exist only in the old `files/`.
     /// A managed game is always replaced with a copy, whatever `mode` asks for, so those files can be kept.
@@ -326,12 +403,27 @@ public struct Importer: Sendable {
         let oldMediaBackup = crate.appending(path: ".media-old-\(UUID().uuidString)", directoryHint: .isDirectory)
         let hadOldMedia = fm.fileExists(atPath: crateMedia.path)
 
+        let latestExtra = io.extraOnDisk(at: crate) ?? extra
+        let latestOnDisk = io.loadRecord(at: crate)
+        if case .ok = latestOnDisk.status, latestOnDisk.id == existing.id {
+            var merged = latestOnDisk.game
+            merged.origin = game.origin
+            merged.source = game.source
+            merged.media = game.media
+            let rootForLaunch: URL = switch p.kind {
+            case .folder, .zip: p.stagingRoot ?? p.source
+            case .discImage, .floppyImage: nextFiles
+            }
+            merged.launch = Self.updatedLaunch(merged.launch, newRoot: rootForLaunch, candidates: p.candidates)
+            game = merged
+        }
+
         do {
             if hadOldFiles { try fm.moveItem(at: crateFiles, to: oldFilesBackup) }
             try fm.moveItem(at: nextFiles, to: crateFiles)
             if hadOldMedia { try fm.moveItem(at: crateMedia, to: oldMediaBackup) }
             if let nextMedia { try fm.moveItem(at: nextMedia, to: crateMedia) }
-            try io.save(game, extra: extra, to: crate)
+            try io.save(game, extra: latestExtra, to: crate)
         } catch {
             try? fm.removeItem(at: nextFiles)
             if let nextMedia { try? fm.removeItem(at: nextMedia) }
@@ -348,7 +440,7 @@ public struct Importer: Sendable {
 
         if hadOldFiles { try? fm.trashItem(at: oldFilesBackup, resultingItemURL: nil) }
         if hadOldMedia { try? fm.trashItem(at: oldMediaBackup, resultingItemURL: nil) }
-        return GameRecord(game: game, crateURL: crate, extra: extra, status: .ok)
+        return GameRecord(game: game, crateURL: crate, extra: latestExtra, status: .ok)
     }
 
     // MARK: Helpers

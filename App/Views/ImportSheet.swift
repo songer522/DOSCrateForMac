@@ -70,6 +70,7 @@ final class ImportQueue {
     private var waitingPrompts: [BatchPrompt] = []
     private var batchEntries: [BatchEntry] = []
     private var batchTask: Task<Void, Never>?
+    private var singleImportTasks: [UUID: Task<Void, Never>] = [:]
     private var checkingCount = 0
     private var checkGeneration = 0
     private(set) var current: Item?
@@ -77,11 +78,16 @@ final class ImportQueue {
     private(set) var progress: Progress?
     /// Games currently being replaced by a single or batch import; they can't be launched until the replace finishes.
     private(set) var replacingIDs: Set<UUID> = []
+    /// Games whose crate was added immediately and whose files are still being copied in the background.
+    private(set) var importingIDs: Set<UUID> = []
     var isCheckingDuplicates: Bool { checkingCount > 0 }
+    var hasActiveImports: Bool { !singleImportTasks.isEmpty || batchTask != nil }
     /// Index in `batchEntries` of the item the running batch is importing.
     private var batchIndex = 0
     /// Test hook called inside each batch item's detached task before preparing the item.
     var itemHook: (@Sendable (URL) async -> Void)?
+    /// Test hook called inside a background single-game file copy before populating the crate.
+    var singlePopulateHook: (@Sendable (URL) async -> Void)?
 
     @discardableResult
     func add(_ urls: [URL], model: AppModel) -> Task<Void, Never>? {
@@ -283,29 +289,215 @@ final class ImportQueue {
                 importer.discard(prepared)
                 return nil
             }
+            model.flushPendingWrites(for: existing.id)
+            model.metadata.cancel(existing.id)
             replacingIDs.insert(existing.id)
             defer { replacingIDs.remove(existing.id) }
             let fresh = CrateIO().loadRecord(at: existing.crateURL)
+            model.store.suppressWatcher()
+            defer { model.store.resumeWatcher() }
             let record = try await Task.detached {
                 try await importer.replace(fresh, with: prepared, mode: effectiveMode)
             }.value
             importer.discard(prepared)
-            await model.store.reload()
+            guard model.store.library == library else { return record }
+            model.store.upsert(record)
             model.revealAndSelect(record.id)
             model.metadata.importedGame(record.id)
             return record
         case .keepBoth:
-            let record = try await Task.detached {
-                try await importer.commit(
-                    prepared, mode: effectiveMode, title: title, executable: executable, into: library
-                )
-            }.value
+            let record = try await importer.commit(
+                prepared, mode: effectiveMode, title: title, executable: executable, into: library
+            )
             importer.discard(prepared)
-            await model.store.reload()
+            guard model.store.library == library else { return record }
+            model.store.upsert(record)
             model.revealAndSelect(record.id)
             model.metadata.importedGame(record.id)
             return record
         }
+    }
+
+    /// Creates the crate placeholder immediately on the main actor, inserts the record into `model.store` right away,
+    /// and copies the game files or media in a background task while tracking `record.id` in `importingIDs`.
+    @discardableResult
+    func startSingleImport(
+        _ prepared: PreparedImport,
+        action: DuplicateAction,
+        replacing existing: GameRecord? = nil,
+        mode: ImportMode,
+        title: String,
+        executable: String?,
+        model: AppModel
+    ) throws -> (record: GameRecord, task: Task<Void, Never>)? {
+        let importer = model.importer
+        let library = model.store.library
+        let effectiveMode = prepared.allowsReference ? mode : .copy
+        let hook = singlePopulateHook
+
+        switch action {
+        case .skip:
+            importer.discard(prepared)
+            return nil
+        case .replace:
+            guard let existing else {
+                importer.discard(prepared)
+                return nil
+            }
+            guard !model.isActive(existing.id),
+                  !replacingIDs.contains(existing.id),
+                  !importingIDs.contains(existing.id) else {
+                model.alert = AppModel.alert(for: .alreadyRunning, gameID: existing.id, game: existing.game)
+                importer.discard(prepared)
+                return nil
+            }
+            model.flushPendingWrites(for: existing.id)
+            model.metadata.cancel(existing.id)
+            replacingIDs.insert(existing.id)
+            importingIDs.insert(existing.id)
+            model.revealAndSelect(existing.id)
+            let fresh = CrateIO().loadRecord(at: existing.crateURL)
+            let gameID = existing.id
+            let task = Task { [weak self, weak model] in
+                model?.store.suppressWatcher()
+                defer {
+                    model?.store.resumeWatcher()
+                    self?.replacingIDs.remove(gameID)
+                    self?.importingIDs.remove(gameID)
+                    self?.singleImportTasks[gameID] = nil
+                    importer.discard(prepared)
+                }
+                do {
+                    await hook?(prepared.source)
+                    var updated = try await Task.detached {
+                        try await importer.replace(fresh, with: prepared, mode: effectiveMode)
+                    }.value
+                    guard let model, model.store.library == library else { return }
+                    model.flushPendingWrites(for: gameID)
+                    if let currentInMemory = model.store.record(gameID)?.game, currentInMemory != fresh.game {
+                        updated.game = Self.mergingConcurrentEdits(
+                            from: currentInMemory,
+                            baseline: fresh.game,
+                            into: updated.game
+                        )
+                        try? CrateIO().save(updated.game, extra: updated.extra, to: updated.crateURL)
+                    }
+                    model.store.upsert(updated)
+                    model.revealAndSelect(updated.id)
+                    self?.replacingIDs.remove(gameID)
+                    self?.importingIDs.remove(gameID)
+                    model.metadata.importedGame(updated.id)
+                } catch {
+                    model?.alert = AppAlert(
+                        title: "Couldn't replace \(existing.game.title)",
+                        message: importErrorMessage(error)
+                    )
+                }
+            }
+            singleImportTasks[gameID] = task
+            return (existing, task)
+        case .keepBoth:
+            model.store.suppressWatcher()
+            let record: GameRecord
+            do {
+                record = try importer.createCratePlaceholder(
+                    prepared, mode: effectiveMode, title: title, executable: executable, into: library
+                )
+            } catch {
+                model.store.resumeWatcher()
+                throw error
+            }
+            model.store.upsert(record)
+            model.revealAndSelect(record.id)
+            if effectiveMode == .reference {
+                importer.discard(prepared)
+                model.store.resumeWatcher()
+                model.metadata.importedGame(record.id)
+                return (record, Task {})
+            }
+            importingIDs.insert(record.id)
+            let crateURL = record.crateURL
+            let gameID = record.id
+            let task = Task { [weak self, weak model] in
+                defer {
+                    model?.store.resumeWatcher()
+                    self?.importingIDs.remove(gameID)
+                    self?.singleImportTasks[gameID] = nil
+                    importer.discard(prepared)
+                }
+                do {
+                    await hook?(prepared.source)
+                    let mediaImages = try await Task.detached {
+                        try importer.populateCrate(at: crateURL, for: prepared, mode: effectiveMode)
+                    }.value
+                    if !mediaImages.isEmpty {
+                        let onDisk = CrateIO().loadRecord(at: crateURL)
+                        if case .ok = onDisk.status, onDisk.game.media != mediaImages {
+                            var persisted = onDisk.game
+                            persisted.media = mediaImages
+                            try? CrateIO().save(persisted, extra: onDisk.extra, to: crateURL)
+                        }
+                    }
+                    guard let model, model.store.library == library else { return }
+                    if !mediaImages.isEmpty, var latest = model.store.record(gameID)?.game {
+                        latest.media = mediaImages
+                        try? model.store.save(latest)
+                    }
+                    self?.importingIDs.remove(gameID)
+                    model.metadata.importedGame(gameID)
+                } catch {
+                    try? FileManager.default.removeItem(at: crateURL)
+                    if let model {
+                        if model.store.library == library {
+                            model.metadata.cancel(gameID)
+                            model.store.discard(gameID)
+                        }
+                        model.alert = AppAlert(
+                            title: "Couldn't import \(title)",
+                            message: importErrorMessage(error)
+                        )
+                    }
+                }
+            }
+            singleImportTasks[gameID] = task
+            return (record, task)
+        }
+    }
+
+    /// Waits for all active single-game and batch background imports to finish.
+    func waitForActiveImports() async {
+        while hasActiveImports {
+            let tasks = Array(singleImportTasks.values) + [batchTask].compactMap { $0 }
+            for task in tasks {
+                await task.value
+            }
+        }
+    }
+
+    private static func mergingConcurrentEdits(
+        from current: Game,
+        baseline: Game,
+        into replaced: Game
+    ) -> Game {
+        var out = replaced
+        if current.title != baseline.title { out.title = current.title }
+        if current.year != baseline.year { out.year = current.year }
+        if current.developer != baseline.developer { out.developer = current.developer }
+        if current.publisher != baseline.publisher { out.publisher = current.publisher }
+        if current.genre != baseline.genre { out.genre = current.genre }
+        if current.description != baseline.description { out.description = current.description }
+        if current.notes != baseline.notes { out.notes = current.notes }
+        if current.tags != baseline.tags { out.tags = current.tags }
+        if current.isFavorite != baseline.isFavorite { out.isFavorite = current.isFavorite }
+        if current.metadataSource != baseline.metadataSource { out.metadataSource = current.metadataSource }
+        if current.settings != baseline.settings { out.settings = current.settings }
+        if current.stats != baseline.stats { out.stats = current.stats }
+        if current.launch.arguments != baseline.launch.arguments { out.launch.arguments = current.launch.arguments }
+        if current.launch.preCommands != baseline.launch.preCommands { out.launch.preCommands = current.launch.preCommands }
+        if current.launch.postCommands != baseline.launch.postCommands { out.launch.postCommands = current.launch.postCommands }
+        if current.launch.exitWhenDone != baseline.launch.exitWhenDone { out.launch.exitWhenDone = current.launch.exitWhenDone }
+        if current.launch.folderMounts != baseline.launch.folderMounts { out.launch.folderMounts = current.launch.folderMounts }
+        return out
     }
 
     @discardableResult
@@ -726,16 +918,14 @@ struct ImportSheet: View {
         let mode = prepared.allowsReference ? mode : .copy
         let title = title.trimmingCharacters(in: .whitespaces)
         let executable = executable
-        Task {
-            do {
-                _ = try await model.imports.finishSingleImport(
-                    prepared, action: .keepBoth, mode: mode, title: title, executable: executable, model: model
-                )
-                onFinish()
-            } catch {
-                self.error = importErrorMessage(error)
-                isCreating = false
-            }
+        do {
+            _ = try model.imports.startSingleImport(
+                prepared, action: .keepBoth, mode: mode, title: title, executable: executable, model: model
+            )
+            onFinish()
+        } catch {
+            self.error = importErrorMessage(error)
+            isCreating = false
         }
     }
 
@@ -746,17 +936,19 @@ struct ImportSheet: View {
         let mode = prepared.allowsReference ? mode : .copy
         let title = title.trimmingCharacters(in: .whitespaces)
         let executable = executable
-        Task {
-            do {
-                _ = try await model.imports.finishSingleImport(
-                    prepared, action: .replace, replacing: existing, mode: mode, title: title,
-                    executable: executable, model: model
-                )
+        do {
+            let started = try model.imports.startSingleImport(
+                prepared, action: .replace, replacing: existing, mode: mode, title: title,
+                executable: executable, model: model
+            )
+            if started != nil {
                 onFinish()
-            } catch {
-                self.error = importErrorMessage(error)
+            } else {
                 isCreating = false
             }
+        } catch {
+            self.error = importErrorMessage(error)
+            isCreating = false
         }
     }
 

@@ -60,10 +60,17 @@ struct RetroGameGrid: View {
 
     private func tile(for record: GameRecord) -> some View {
         let selected = model.selectedIDs.contains(record.id)
-        let badges = RetroBadge.badges(for: record, running: model.sessions.running, starting: model.startingIDs)
+        let importing = model.imports.importingIDs.contains(record.id)
+        let badges = RetroBadge.badges(
+            for: record,
+            running: model.sessions.running,
+            starting: model.startingIDs,
+            importing: model.imports.importingIDs
+        )
         return VStack(spacing: 6) {
             CoverView(
                 record: record,
+                isImporting: importing,
                 isLoadingArt: model.metadata.artLoading.contains(record.id),
                 artRevision: model.metadata.artRevision[record.id, default: 0]
             )
