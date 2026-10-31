@@ -195,7 +195,7 @@ struct GameDetailView: View {
     }
 }
 
-private struct GameHeader: View {
+struct GameHeader: View {
     let model: AppModel
     let record: GameRecord
     let onPlay: () -> Void
@@ -206,6 +206,19 @@ private struct GameHeader: View {
     private var running: Bool { model.sessions.running.contains(record.id) }
     private var starting: Bool { model.startingIDs.contains(record.id) }
     private var importing: Bool { model.imports.importingIDs.contains(record.id) }
+
+    static func showsSetupButton(
+        for record: GameRecord,
+        running: Bool = false,
+        starting: Bool = false,
+        importing: Bool = false
+    ) -> Bool {
+        guard !running, !starting, !importing,
+              let setup = record.game.launch.setupExecutable, !setup.isEmpty else {
+            return false
+        }
+        return true
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -296,14 +309,26 @@ private struct GameHeader: View {
                 .disabled(true)
             } else {
                 let disabled = model.pendingRemovalIDs.contains(record.id) || model.imports.replacingIDs.contains(record.id)
-                Button(action: onPlay) {
-                    HStack(spacing: 6) {
-                        PixelSymbol("play.fill", color: disabled ? RetroPalette.bevelDark : RetroPalette.green, pointSize: 16, scale: 1)
-                        Text("Play")
+                HStack(spacing: 8) {
+                    Button(action: onPlay) {
+                        HStack(spacing: 6) {
+                            PixelSymbol("play.fill", color: disabled ? RetroPalette.bevelDark : RetroPalette.green, pointSize: 16, scale: 1)
+                            Text("Play")
+                        }
+                    }
+                    .buttonStyle(RetroButtonStyle())
+                    .disabled(disabled)
+                    if let setup = record.game.launch.setupExecutable, !setup.isEmpty {
+                        Button { model.runSetup(record.id) } label: {
+                            HStack(spacing: 6) {
+                                PixelSymbol("gearshape", color: disabled ? RetroPalette.bevelDark : RetroPalette.shadow, pointSize: 16, scale: 1)
+                                Text("Setup")
+                            }
+                        }
+                        .buttonStyle(RetroButtonStyle())
+                        .disabled(disabled)
                     }
                 }
-                .buttonStyle(RetroButtonStyle())
-                .disabled(disabled)
             }
         } else if running {
             Button("Stop", systemImage: "stop.fill") { model.stop(record.id) }
@@ -326,9 +351,16 @@ private struct GameHeader: View {
             .buttonStyle(.borderedProminent)
             .disabled(true)
         } else {
-            Button("Play", systemImage: "play.fill", action: onPlay)
-                .buttonStyle(.borderedProminent)
-                .disabled(model.pendingRemovalIDs.contains(record.id) || model.imports.replacingIDs.contains(record.id))
+            let disabled = model.pendingRemovalIDs.contains(record.id) || model.imports.replacingIDs.contains(record.id)
+            HStack(spacing: 8) {
+                Button("Play", systemImage: "play.fill", action: onPlay)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(disabled)
+                if let setup = record.game.launch.setupExecutable, !setup.isEmpty {
+                    Button("Setup", systemImage: "gearshape") { model.runSetup(record.id) }
+                        .disabled(disabled)
+                }
+            }
         }
     }
 

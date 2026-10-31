@@ -230,6 +230,12 @@ public struct Importer: Sendable {
         }
         game.origin = ImportOrigin.from(p.source)
         game.launch.executable = executable
+        if game.launch.setupExecutable == nil {
+            game.launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                in: p.candidates,
+                excluding: game.launch.executable
+            )
+        }
         try io.save(game, extra: [:], to: crate)
 
         let base = String(CrateIO.crateName(for: title).dropLast(CrateIO.crateExtension.count + 1))
@@ -265,6 +271,12 @@ public struct Importer: Sendable {
             }
             game.origin = ImportOrigin.from(p.source)
             game.launch.executable = executable
+            if game.launch.setupExecutable == nil {
+                game.launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                    in: p.candidates,
+                    excluding: game.launch.executable
+                )
+            }
             try io.save(game, extra: [:], to: destination)
             return GameRecord(game: game, crateURL: destination)
         } catch {
@@ -296,6 +308,20 @@ public struct Importer: Sendable {
                 try? fm.removeItem(at: destFiles)
             }
             try fm.moveItem(at: tempFiles, to: destFiles)
+            let loaded = io.loadRecord(at: crateURL)
+            if case .ok = loaded.status, loaded.game.launch.setupExecutable == nil {
+                let candidates = !p.candidates.isEmpty
+                    ? p.candidates
+                    : ((try? ExecutableRanker.rank(root: destFiles, title: loaded.game.title)) ?? [])
+                if let setup = ExecutableRanker.bestSetupExecutable(
+                    in: candidates,
+                    excluding: loaded.game.launch.executable
+                ) {
+                    var updatedGame = loaded.game
+                    updatedGame.launch.setupExecutable = setup
+                    try io.save(updatedGame, extra: loaded.extra, to: crateURL)
+                }
+            }
             try? fm.removeItem(at: crateURL.appending(path: CrateIO.importingMarkerFileName, directoryHint: .notDirectory))
             return []
         case .discImage, .floppyImage:
@@ -504,6 +530,12 @@ public struct Importer: Sendable {
         guard let newRoot else {
             launch.driveCRoot = ""
             launch.executable = candidates.count == 1 ? candidates[0].relativePath : nil
+            if launch.setupExecutable == nil {
+                launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                    in: candidates,
+                    excluding: launch.executable
+                )
+            }
             return launch
         }
         let fm = FileManager.default
@@ -517,26 +549,56 @@ public struct Importer: Sendable {
                 launch.driveCRoot = ""
             }
         }
+        var keptExistingExecutable = false
         if let exe = launch.executable, !exe.isEmpty {
             let exeURL = cRoot.appending(path: exe, directoryHint: .notDirectory)
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: exeURL.path, isDirectory: &isDir), !isDir.boolValue {
-                return launch
+                keptExistingExecutable = true
             }
         }
-        guard candidates.count == 1 else {
-            launch.executable = nil
-            return launch
+        if !keptExistingExecutable {
+            if candidates.count == 1 {
+                // Candidates are relative to the whole folder; make the path relative to the kept C: root,
+                // or use the whole folder as C: when the program is outside it.
+                let path = candidates[0].relativePath
+                let prefix = launch.driveCRoot.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
+                if prefix != "/", path.lowercased().hasPrefix(prefix.lowercased()) {
+                    launch.executable = String(path.dropFirst(prefix.count))
+                } else {
+                    launch.driveCRoot = ""
+                    cRoot = newRoot
+                    launch.executable = path
+                }
+            } else {
+                launch.executable = nil
+            }
         }
-        // Candidates are relative to the whole folder; make the path relative to the kept C: root,
-        // or use the whole folder as C: when the program is outside it.
-        let path = candidates[0].relativePath
-        let prefix = launch.driveCRoot.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
-        if prefix != "/", path.lowercased().hasPrefix(prefix.lowercased()) {
-            launch.executable = String(path.dropFirst(prefix.count))
-        } else {
-            launch.driveCRoot = ""
-            launch.executable = path
+        if let setup = launch.setupExecutable, !setup.isEmpty {
+            let setupURL = cRoot.appending(path: setup, directoryHint: .notDirectory)
+            var isDir: ObjCBool = false
+            if !fm.fileExists(atPath: setupURL.path, isDirectory: &isDir) || isDir.boolValue
+                || setup.caseInsensitiveCompare(launch.executable ?? "") == .orderedSame {
+                launch.setupExecutable = nil
+            }
+        }
+        if launch.setupExecutable == nil {
+            let prefix = launch.driveCRoot.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
+            let cRootCandidates: [ExecutableCandidate] = if prefix == "/" {
+                candidates
+            } else {
+                candidates.compactMap { candidate in
+                    guard candidate.relativePath.lowercased().hasPrefix(prefix.lowercased()) else { return nil }
+                    return ExecutableCandidate(
+                        relativePath: String(candidate.relativePath.dropFirst(prefix.count)),
+                        score: candidate.score
+                    )
+                }
+            }
+            launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                in: cRootCandidates,
+                excluding: launch.executable
+            )
         }
         return launch
     }

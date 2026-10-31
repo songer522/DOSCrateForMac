@@ -4,7 +4,12 @@ import LibraryKit
 
 public enum Preflight {
     /// Validates everything needed to launch `r`; returns the C: URL.
-    public static func check(_ r: GameRecord, io: CrateIO, dosbox: URL) throws(LaunchError) -> URL {
+    public static func check(
+        _ r: GameRecord,
+        io: CrateIO,
+        dosbox: URL,
+        launchSetup: Bool = false
+    ) throws(LaunchError) -> URL {
         let fm = FileManager.default
         switch r.status {
         case .ok: break
@@ -35,7 +40,8 @@ public enum Preflight {
         }
         if cDrive.path.contains("\"") { throw .unsupportedPath(cDrive.path) }
 
-        if let exe = r.game.launch.executable, !exe.isEmpty {
+        let targetExecutable = launchSetup ? r.game.launch.setupExecutable : r.game.launch.executable
+        if let exe = targetExecutable, !exe.isEmpty {
             do {
                 _ = try DOSPath.dosPath(relative: exe)
             } catch {
@@ -48,8 +54,15 @@ public enum Preflight {
                 }
             }
             let exeURL = cDrive.appending(path: exe, directoryHint: .notDirectory)
-            guard fm.fileExists(atPath: exeURL.path) else { throw .executableMissing(path: exe) }
-        } else if r.game.media.isEmpty && r.game.launch.folderMounts.isEmpty {
+            let cDriveRoot = cDrive.resolvingSymlinksInPath().standardizedFileURL.path
+            let resolvedExe = exeURL.resolvingSymlinksInPath().standardizedFileURL.path
+            var isExeDir: ObjCBool = false
+            guard resolvedExe.hasPrefix(cDriveRoot + "/"),
+                  fm.fileExists(atPath: exeURL.path, isDirectory: &isExeDir),
+                  !isExeDir.boolValue else {
+                throw .executableMissing(path: exe)
+            }
+        } else if launchSetup || (r.game.media.isEmpty && r.game.launch.folderMounts.isEmpty) {
             throw .executableNotSet
         }
 

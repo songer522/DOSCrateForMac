@@ -169,6 +169,46 @@ struct SettingsBindingTests {
         #expect(alert.title == "Mounted folder not found")
         #expect(alert.fix == nil)
     }
+
+    @Test func startupSectionAndSetupActionsConfigureAndShowSetupControls() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "setup-ui-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        var game = Game(title: "Doom", source: .managed)
+        game.launch.executable = "DOOM.EXE"
+        var record = GameRecord(game: game, crateURL: root.appending(path: "Doom.doscrate"))
+
+        #expect(!GameHeader.showsSetupButton(for: record))
+        #expect(!GameContextMenu.showsRunSetup(for: record, running: []))
+
+        let box = Box(game)
+        let gameBinding = Binding<Game>(get: { box.value }, set: { box.value = $0 })
+        let mainPicker = ExecutablePicker(record: record, game: box.value, executable: gameBinding.launch.executable)
+        let setupPicker = ExecutablePicker(
+            title: "Setup program",
+            record: record,
+            game: box.value,
+            executable: gameBinding.launch.setupExecutable
+        )
+        #expect(mainPicker.title == "Program")
+        #expect(setupPicker.title == "Setup program")
+
+        gameBinding.launch.setupExecutable.wrappedValue = "SETUP.EXE"
+        #expect(box.value.launch.setupExecutable == "SETUP.EXE")
+        record.game = box.value
+
+        #expect(GameHeader.showsSetupButton(for: record))
+        #expect(!GameHeader.showsSetupButton(for: record, running: true))
+        #expect(!GameHeader.showsSetupButton(for: record, starting: true))
+        #expect(!GameHeader.showsSetupButton(for: record, importing: true))
+        #expect(GameContextMenu.showsRunSetup(for: record, running: []))
+        #expect(!GameContextMenu.showsRunSetup(for: record, running: [record.id]))
+
+        let startupHosting = NSHostingView(rootView: StartupSection(record: record, game: gameBinding))
+        startupHosting.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+        startupHosting.layoutSubtreeIfNeeded()
+    }
 }
 
 @MainActor

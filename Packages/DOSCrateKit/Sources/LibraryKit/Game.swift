@@ -109,6 +109,8 @@ public struct FolderMount: Sendable, Equatable, Codable {
 public struct LaunchSpec: Sendable, Equatable, Codable {
     /// '/'-separated path relative to the C: root.
     public var executable: String?
+    /// '/'-separated path relative to the C: root for the game's setup or sound configuration utility.
+    public var setupExecutable: String?
     public var arguments: String
     public var preCommands: [String]
     public var postCommands: [String]
@@ -119,18 +121,19 @@ public struct LaunchSpec: Sendable, Equatable, Codable {
     public var folderMounts: [FolderMount]
 
     public init(
-        executable: String? = nil, arguments: String = "", preCommands: [String] = [],
-        postCommands: [String] = [], exitWhenDone: Bool = true, driveCRoot: String = "",
-        folderMounts: [FolderMount] = []
+        executable: String? = nil, setupExecutable: String? = nil, arguments: String = "",
+        preCommands: [String] = [], postCommands: [String] = [], exitWhenDone: Bool = true,
+        driveCRoot: String = "", folderMounts: [FolderMount] = []
     ) {
-        self.executable = executable; self.arguments = arguments
+        self.executable = executable; self.setupExecutable = setupExecutable
+        self.arguments = arguments
         self.preCommands = preCommands; self.postCommands = postCommands
         self.exitWhenDone = exitWhenDone; self.driveCRoot = driveCRoot
         self.folderMounts = folderMounts
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
-        case executable, arguments, preCommands, postCommands, exitWhenDone, driveCRoot, folderMounts
+        case executable, setupExecutable, arguments, preCommands, postCommands, exitWhenDone, driveCRoot, folderMounts
     }
 
     static let knownKeys = Set(CodingKeys.allCases.map(\.rawValue))
@@ -138,6 +141,7 @@ public struct LaunchSpec: Sendable, Equatable, Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         executable = try c.decodeIfPresent(String.self, forKey: .executable)
+        setupExecutable = try c.decodeIfPresent(String.self, forKey: .setupExecutable)
         arguments = try c.decodeIfPresent(String.self, forKey: .arguments) ?? ""
         preCommands = try c.decodeIfPresent([String].self, forKey: .preCommands) ?? []
         postCommands = try c.decodeIfPresent([String].self, forKey: .postCommands) ?? []

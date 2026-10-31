@@ -179,4 +179,26 @@ import LibraryKit
         let conf = try String(contentsOf: f.crate.appending(path: ".cache/launch.conf"), encoding: .utf8)
         #expect(!conf.contains("mapperfile"))
     }
+
+    @Test func planSetupRunsSetupExecutableWithoutArgumentsAndRespectsExitWhenDone() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE")
+        try f.touch("SND/SETUP.EXE")
+        var r = f.record(executable: "GAME.EXE", exitWhenDone: true)
+        r.game.launch.setupExecutable = "SND/SETUP.EXE"
+        r.game.launch.arguments = "-fast -nomonsters"
+        r.game.launch.preCommands = ["set SB=220"]
+        r.game.launch.postCommands = ["echo done"]
+
+        let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox, launchSetup: true)
+        let plan = try LaunchPlanner.plan(r, cDrive: c, global: GlobalConfig(), dosbox: f.dosbox, io: f.io, launchSetup: true)
+        #expect(plan.arguments.contains("--exit"))
+        let conf = try String(contentsOf: plan.configURL, encoding: .utf8)
+        #expect(conf.contains("cd \\SND\n"))
+        #expect(conf.contains("set SB=220\n"))
+        #expect(conf.contains("SETUP.EXE\n"))
+        #expect(conf.contains("echo done\n"))
+        #expect(!conf.contains("GAME.EXE"))
+        #expect(!conf.contains("-fast"))
+    }
 }

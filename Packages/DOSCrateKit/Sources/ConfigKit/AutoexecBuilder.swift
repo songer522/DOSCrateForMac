@@ -6,7 +6,8 @@ public enum AutoexecBuilder {
         cDrive: URL,
         media: [(URL, MediaKind)],
         folderMounts: [(String, URL)] = [],
-        launch: LaunchSpec
+        launch: LaunchSpec,
+        launchSetup: Bool = false
     ) throws(DOSPathError) -> [String] {
         var out = ["mount c \(try quoted(cDrive.path))"]
         var cds: [String] = []
@@ -28,7 +29,8 @@ public enum AutoexecBuilder {
             out.append("mount \(letter.lowercased()) \(try quoted(url.path))")
         }
         out.append("c:")
-        if let exe = launch.executable, !exe.isEmpty {
+        let targetExecutable = launchSetup ? launch.setupExecutable : launch.executable
+        if let exe = targetExecutable, !exe.isEmpty {
             let dos = try DOSPath.dosPath(relative: exe)
             let name: String
             if let slash = dos.lastIndex(of: "\\") {
@@ -38,8 +40,12 @@ public enum AutoexecBuilder {
                 name = dos
             }
             out += launch.preCommands
-            let args = launch.arguments.trimmingCharacters(in: .whitespaces)
-            out.append(args.isEmpty ? name : "\(name) \(args)")
+            if launchSetup {
+                out.append(name)
+            } else {
+                let args = launch.arguments.trimmingCharacters(in: .whitespaces)
+                out.append(args.isEmpty ? name : "\(name) \(args)")
+            }
         } else {
             out += launch.preCommands
         }

@@ -414,7 +414,12 @@ final class AppModel {
     }
 
     @discardableResult
-    func play(_ id: UUID) -> Task<Void, Never>? {
+    func runSetup(_ id: UUID) -> Task<Void, Never>? {
+        play(id, runSetup: true)
+    }
+
+    @discardableResult
+    func play(_ id: UUID, runSetup: Bool = false) -> Task<Void, Never>? {
         guard !isTerminating,
               !startingIDs.contains(id),
               !sessions.running.contains(id),
@@ -454,10 +459,17 @@ final class AppModel {
         let work = Task.detached { () -> PreparedLaunch in
             do {
                 try verifyDosbox(dosbox)
-                let cDrive = try Preflight.check(record, io: io, dosbox: dosbox)
-                let plan = try LaunchPlanner.plan(record, cDrive: cDrive, global: global, dosbox: dosbox, io: io)
+                let cDrive = try Preflight.check(record, io: io, dosbox: dosbox, launchSetup: runSetup)
+                let plan = try LaunchPlanner.plan(
+                    record,
+                    cDrive: cDrive,
+                    global: global,
+                    dosbox: dosbox,
+                    io: io,
+                    launchSetup: runSetup
+                )
                 return .ready(try sessions.prepare(plan))
-            } catch let error as LaunchError where error == .executableNotSet {
+            } catch let error as LaunchError where error == .executableNotSet && !runSetup {
                 if let cDrive = try? io.cDriveURL(for: record),
                    let candidates = try? ExecutableRanker.rank(root: cDrive, title: record.game.title),
                    !candidates.isEmpty {
@@ -598,15 +610,22 @@ final class AppModel {
             if let exe = game.launch.executable, !exe.isEmpty {
                 game.launch.executable = game.launch.driveCRoot + "/" + exe
             }
+            if let setup = game.launch.setupExecutable, !setup.isEmpty {
+                game.launch.setupExecutable = game.launch.driveCRoot + "/" + setup
+            }
             game.launch.driveCRoot = ""
             save(game)
         case .useFolderAsC(let root):
             guard var game = store.record(id)?.game,
-                  Self.isFolderPrefix(root, of: game.launch.executable) else { return }
+                  Self.isFolderPrefix(root, of: game.launch.executable)
+                      || Self.isFolderPrefix(root, of: game.launch.setupExecutable) else { return }
             let current = game.launch.driveCRoot
             game.launch.driveCRoot = current.isEmpty ? root : current + "/" + root
-            if let exe = game.launch.executable {
+            if let exe = game.launch.executable, Self.isFolderPrefix(root, of: exe) {
                 game.launch.executable = String(exe.dropFirst(root.count + 1))
+            }
+            if let setup = game.launch.setupExecutable, Self.isFolderPrefix(root, of: setup) {
+                game.launch.setupExecutable = String(setup.dropFirst(root.count + 1))
             }
             save(game)
         }
@@ -691,7 +710,8 @@ final class AppModel {
         case .launchFailed(let detail):
             return AppAlert(title: "DOSBox didn't start", message: detail)
         case .nonDOSPath(let component, let root):
-            guard Self.isFolderPrefix(root, of: executable) else {
+            guard Self.isFolderPrefix(root, of: executable)
+                    || Self.isFolderPrefix(root, of: game?.launch.setupExecutable) else {
                 return AppAlert(title: "Name not usable in DOS",
                                 message: "\"\(component)\" isn't a valid DOS name. Rename the file to an 8.3 name, or choose another program.",
                                 fix: .chooseExecutable)

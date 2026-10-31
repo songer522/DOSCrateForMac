@@ -434,6 +434,7 @@ struct StartupSection: View {
     var body: some View {
         ThemedSection("Startup") {
             ExecutablePicker(record: record, game: game, executable: $game.launch.executable)
+            ExecutablePicker(title: "Setup program", record: record, game: game, executable: $game.launch.setupExecutable)
             ThemedTextField(title: "Arguments", text: $game.launch.arguments)
             CommandsEditor(title: "Before the game", commands: $game.launch.preCommands)
             CommandsEditor(title: "After the game", commands: $game.launch.postCommands)
@@ -444,6 +445,7 @@ struct StartupSection: View {
 
 /// Lists the executables found on the C: drive, best guess first (the importer's ranking).
 struct ExecutablePicker: View {
+    var title = "Program"
     let record: GameRecord
     let game: Game
     @Binding var executable: String?
@@ -458,7 +460,7 @@ struct ExecutablePicker: View {
 
     var body: some View {
         ThemedPicker(
-            "Program",
+            title,
             selection: $executable,
             nilLabel: "None",
             showsDividerAfterNil: false,

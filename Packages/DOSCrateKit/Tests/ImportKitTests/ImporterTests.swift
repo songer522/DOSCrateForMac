@@ -746,4 +746,36 @@ struct ImporterTests {
         let copiedLibEntries = (try? FileManager.default.contentsOfDirectory(atPath: copiedLib.path)) ?? []
         #expect(copiedLibEntries.allSatisfy { !$0.hasPrefix(".doscrate-tmp-") })
     }
+
+    @Test func importerAutoPopulatesSetupExecutableWhenDifferentFromMainExecutable() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        let src = tmp.appending(path: "doom", directoryHint: .isDirectory)
+        try touch(src, "DOOM.EXE")
+        try touch(src, "SETUP.EXE")
+
+        let p = try await importer.prepare(src)
+        let committed = try await importer.commit(p, mode: .copy, title: "Doom", executable: "DOOM.EXE", into: lib)
+        #expect(committed.game.launch.executable == "DOOM.EXE")
+        #expect(committed.game.launch.setupExecutable == "SETUP.EXE")
+        #expect(io.loadRecord(at: committed.crateURL).game.launch.setupExecutable == "SETUP.EXE")
+
+        // When the main executable itself is SETUP.EXE and no other setup binary exists, setupExecutable remains nil.
+        let setupAsMain = try await importer.commit(p, mode: .copy, title: "Doom Setup", executable: "SETUP.EXE", into: lib)
+        #expect(setupAsMain.game.launch.executable == "SETUP.EXE")
+        #expect(setupAsMain.game.launch.setupExecutable == nil)
+
+        // Placeholder + populateCrate also populates setupExecutable on disk if nil.
+        let placeholder = try importer.createCratePlaceholder(
+            p, mode: .copy, title: "Doom Placeholder", executable: "DOOM.EXE", into: lib
+        )
+        #expect(placeholder.game.launch.setupExecutable == "SETUP.EXE")
+        var cleared = placeholder.game
+        cleared.launch.setupExecutable = nil
+        try io.save(cleared, extra: [:], to: placeholder.crateURL)
+        _ = try importer.populateCrate(at: placeholder.crateURL, for: p, mode: .copy)
+        #expect(io.loadRecord(at: placeholder.crateURL).game.launch.setupExecutable == "SETUP.EXE")
+    }
 }

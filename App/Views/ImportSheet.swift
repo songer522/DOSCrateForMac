@@ -439,9 +439,20 @@ final class ImportQueue {
                         }
                     }
                     guard let model, model.store.library == library else { return }
-                    if !mediaImages.isEmpty, var latest = model.store.record(gameID)?.game {
-                        latest.media = mediaImages
-                        try? model.store.save(latest)
+                    if var latest = model.store.record(gameID)?.game {
+                        var didUpdate = false
+                        if !mediaImages.isEmpty, latest.media != mediaImages {
+                            latest.media = mediaImages
+                            didUpdate = true
+                        }
+                        if latest.launch.setupExecutable == nil,
+                           let setup = CrateIO().loadRecord(at: crateURL).game.launch.setupExecutable {
+                            latest.launch.setupExecutable = setup
+                            didUpdate = true
+                        }
+                        if didUpdate {
+                            try? model.store.save(latest)
+                        }
                     }
                     self?.importingIDs.remove(gameID)
                     model.metadata.importedGame(gameID)
@@ -492,6 +503,7 @@ final class ImportQueue {
         if current.metadataSource != baseline.metadataSource { out.metadataSource = current.metadataSource }
         if current.settings != baseline.settings { out.settings = current.settings }
         if current.stats != baseline.stats { out.stats = current.stats }
+        if current.launch.setupExecutable != baseline.launch.setupExecutable { out.launch.setupExecutable = current.launch.setupExecutable }
         if current.launch.arguments != baseline.launch.arguments { out.launch.arguments = current.launch.arguments }
         if current.launch.preCommands != baseline.launch.preCommands { out.launch.preCommands = current.launch.preCommands }
         if current.launch.postCommands != baseline.launch.postCommands { out.launch.postCommands = current.launch.postCommands }

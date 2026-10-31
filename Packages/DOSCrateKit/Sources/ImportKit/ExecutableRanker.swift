@@ -15,7 +15,11 @@ public enum ExecutableRanker {
     static let maxDepth = 4
     static let extensions: Set<String> = ["exe", "com", "bat"]
     static let setupNames: Set<String> = [
-        "setup", "install", "installer", "config", "setsound", "sound", "uninst", "uninstal", "setmain", "readme",
+        "setup", "install", "installer", "config", "configure", "setsound", "sndsetup", "sound",
+        "uninst", "uninstal", "setmain", "readme",
+    ]
+    static let setupUtilityStems: [String] = [
+        "setup", "install", "setsound", "sndsetup", "sound", "config", "configure",
     ]
     static let utilityNames: Set<String> = ["pkunzip", "pkzip", "lha", "arj", "unzip", "dos4gw", "cwsdpmi"]
 
@@ -59,6 +63,54 @@ public enum ExecutableRanker {
             if $0.size != $1.size { return $0.size > $1.size }
             return $0.candidate.relativePath < $1.candidate.relativePath
         }.map(\.candidate)
+    }
+
+    public static func rankSetup(root: URL) throws -> [ExecutableCandidate] {
+        rankSetup(in: try rank(root: root, title: ""))
+    }
+
+    public static func rankSetup(in candidates: [ExecutableCandidate]) -> [ExecutableCandidate] {
+        var found: [(candidate: ExecutableCandidate, depth: Int, extRank: Int, stemIndex: Int)] = []
+        for candidate in candidates {
+            let parts = candidate.relativePath.split(separator: "/")
+            let depth = max(0, parts.count - 1)
+            let fileName = parts.last.map(String.init) ?? candidate.relativePath
+            let url = URL(filePath: fileName)
+            let ext = url.pathExtension.lowercased()
+            let stem = url.deletingPathExtension().lastPathComponent.lowercased()
+            guard let stemIndex = setupUtilityStems.firstIndex(of: stem),
+                  let extRank = extensionRank(ext) else { continue }
+            let stemBonus = setupUtilityStems.count - stemIndex
+            let score = 200 - 30 * depth + extRank + stemBonus
+            found.append((ExecutableCandidate(relativePath: candidate.relativePath, score: score),
+                          depth, extRank, stemIndex))
+        }
+        return found.sorted {
+            if $0.depth != $1.depth { return $0.depth < $1.depth }
+            if $0.extRank != $1.extRank { return $0.extRank > $1.extRank }
+            if $0.stemIndex != $1.stemIndex { return $0.stemIndex < $1.stemIndex }
+            return $0.candidate.relativePath < $1.candidate.relativePath
+        }.map(\.candidate)
+    }
+
+    public static func bestSetupExecutable(
+        in candidates: [ExecutableCandidate],
+        excluding executable: String? = nil
+    ) -> String? {
+        let excluded = executable?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return rankSetup(in: candidates).first { candidate in
+            guard let excluded, !excluded.isEmpty else { return true }
+            return candidate.relativePath.caseInsensitiveCompare(excluded) != .orderedSame
+        }?.relativePath
+    }
+
+    private static func extensionRank(_ ext: String) -> Int? {
+        switch ext {
+        case "exe": 30
+        case "com": 20
+        case "bat": 10
+        default: nil
+        }
     }
 
     private static func normalize(_ s: String) -> String {

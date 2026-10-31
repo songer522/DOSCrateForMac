@@ -1007,4 +1007,43 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(added == nil)
         #expect(!FileManager.default.fileExists(atPath: crateURL.appending(path: "media/DISK1.IMG").path))
     }
+
+    @Test func runSetupFlushesPendingWritesAndLaunchesSetupExecutableWithoutArguments() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(
+            executable: "GAME.EXE",
+            files: ["GAME.EXE", "SETUP.EXE"]
+        ) {
+            $0.launch.arguments = "-warp 2"
+        }
+
+        // Register a pending draft write that sets setupExecutable before runSetup is called.
+        model.setPendingWrite(id, owner: "draft") {
+            guard var g = model.store.record(id)?.game else { return }
+            g.launch.setupExecutable = "SETUP.EXE"
+            try? model.store.save(g)
+        }
+
+        await model.runSetup(id)?.value
+        #expect(model.alert == nil)
+        #expect(model.sessions.running.contains(id))
+        let record = try #require(model.store.record(id))
+        #expect(record.game.launch.setupExecutable == "SETUP.EXE")
+        let conf = try String(contentsOf: record.crateURL.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(conf.contains("SETUP.EXE\n"))
+        #expect(!conf.contains("GAME.EXE"))
+        #expect(!conf.contains("-warp"))
+
+        runner.processes[0].finish(0)
+        await waitUntil { !model.sessions.running.contains(id) }
+    }
+
+    @Test func runSetupWithMissingSetupExecutableShowsAlertAndDoesNotPresentChooseProgramSheet() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        await model.runSetup(id)?.value
+        #expect(model.chooseProgram == nil)
+        #expect(model.alert?.title == "No program to run")
+        #expect(runner.processes.isEmpty)
+    }
 }
