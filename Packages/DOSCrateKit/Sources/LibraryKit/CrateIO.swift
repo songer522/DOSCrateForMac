@@ -67,17 +67,35 @@ public struct CrateIO: Sendable {
     public func backURL(_ crate: URL) -> URL { artURL(crate).appending(path: "back.png", directoryHint: .notDirectory) }
     public func discURL(_ crate: URL) -> URL { artURL(crate).appending(path: "disc.png", directoryHint: .notDirectory) }
     public func logoURL(_ crate: URL) -> URL { artURL(crate).appending(path: "logo.png", directoryHint: .notDirectory) }
+    public func screenshotsURL(_ crate: URL) -> URL {
+        artURL(crate).appending(path: "screenshots", directoryHint: .isDirectory)
+    }
     public func screenshotURL(_ crate: URL, index: Int) -> URL {
-        artURL(crate).appending(path: String(format: "screenshots/%02d.png", index), directoryHint: .notDirectory)
+        screenshotsURL(crate).appending(path: String(format: "%02d.png", index), directoryHint: .notDirectory)
     }
     public func screenshotURLs(_ crate: URL) -> [URL] {
-        let dir = artURL(crate).appending(path: "screenshots", directoryHint: .isDirectory)
+        let dir = screenshotsURL(crate)
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
         )) ?? []
         return entries
             .filter { $0.pathExtension.lowercased() == "png" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+    @discardableResult
+    public func addScreenshot(pngData: Data, in crate: URL) throws -> URL {
+        let fm = FileManager.default
+        let dir = screenshotsURL(crate)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        var index = 1
+        while true {
+            let candidate = dir.appending(path: String(format: "screenshot-%02d.png", index), directoryHint: .notDirectory)
+            if !fm.fileExists(atPath: candidate.path) {
+                try pngData.write(to: candidate, options: .atomic)
+                return candidate
+            }
+            index += 1
+        }
     }
     func gameFileURL(_ crate: URL) -> URL { crate.appending(path: Self.gameFileName, directoryHint: .notDirectory) }
 

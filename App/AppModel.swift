@@ -701,6 +701,7 @@ final class AppModel {
 
     private func sessionEnded(_ result: SessionResult) {
         if result.unexpected { lastResult[result.gameID] = result } else { lastResult[result.gameID] = nil }
+        metadata.artRevision[result.gameID, default: 0] += 1
         guard var game = store.record(result.gameID)?.game else { return }
         game.stats.launchCount += 1
         game.stats.totalPlaySeconds += result.duration
