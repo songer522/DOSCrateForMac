@@ -110,7 +110,7 @@ final class MetadataCoordinator {
     private(set) var findMissingProgress: (current: Int, total: Int)?
     var isFindingMissing: Bool { findMissingProgress != nil }
     private(set) var artLoading: Set<UUID> = []
-    private(set) var artRevision: [UUID: Int] = [:]
+    var artRevision: [UUID: Int] = [:]
     private(set) var applyingIDs: Set<UUID> = []
     private(set) var lastOutcome: [UUID: ApplyOutcome] = [:]
     var artErrorMessage: String?

@@ -401,7 +401,7 @@ struct DrivesSection: View {
 
     private func add() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = ["iso", "img", "ima"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowedContentTypes = ["iso", "cue", "img", "ima"].compactMap { UTType(filenameExtension: $0) }
         panel.prompt = "Add"
         guard panel.runModal() == .OK, let source = panel.url else { return }
         onAddMedia(source)

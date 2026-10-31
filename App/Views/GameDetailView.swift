@@ -1,7 +1,9 @@
 import AppKit
+import ImportKit
 import LauncherKit
 import LibraryKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The inspector for one game. Edits go to a draft that is saved 500 ms after the last change.
 /// Create it with `.id(record.id)` so the draft resets when the selection changes.
@@ -32,7 +34,7 @@ struct GameDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            GameHeader(model: model, record: record, onPlay: play)
+            GameHeader(model: model, record: record, isReadOnly: isReadOnly, onPlay: play)
                 .padding()
             if case .readOnly(let reason) = record.status {
                 Text(reason)
@@ -123,10 +125,21 @@ struct GameDetailView: View {
         previousTask?.cancel()
         let doFlush: @MainActor () -> Void = flushAction ?? {
             model.setPendingWrite(draft.id, owner: "draft", nil)
-            guard let latest = model.store.record(draft.id)?.game else { return }
+            guard let latestRecord = model.store.record(draft.id) else { return }
+            let latest = latestRecord.game
             let game = merged(draft, into: latest)
             if game != latest {
-                try? model.store.save(game)
+                do {
+                    try model.store.save(game)
+                } catch {
+                    model.alert = AppAlert(title: "Can't save \(game.title)", message: error.localizedDescription)
+                    return
+                }
+            }
+            if !removedMedia.isEmpty {
+                trashRemovedMedia(removedMedia, keeping: game.media, in: latestRecord.crateURL) { title, message in
+                    model.alert = AppAlert(title: title, message: message)
+                }
             }
         }
         let task = Task {
@@ -161,11 +174,99 @@ struct GameDetailView: View {
     private func trashRemovedMedia(keeping media: [MediaImage]) {
         let paths = removedMedia
         removedMedia = []
-        for path in paths where !media.contains(where: { $0.relativePath == path }) {
+        Self.trashRemovedMedia(paths, keeping: media, in: record.crateURL) { title, message in
+            showError(title, message)
+        }
+    }
+
+    static func trashRemovedMedia(
+        _ removedPaths: [String],
+        keeping media: [MediaImage],
+        in crateURL: URL,
+        onError: (String, String) -> Void = { _, _ in }
+    ) {
+        let fm = FileManager.default
+        let mediaDir = crateURL.appending(path: "media", directoryHint: .isDirectory)
+            .resolvingSymlinksInPath().standardizedFileURL.path
+        let mediaPrefix = mediaDir.hasSuffix("/") ? mediaDir : mediaDir + "/"
+
+        func isContainedRegularFile(_ url: URL) -> Bool {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  values.isRegularFile == true,
+                  values.isSymbolicLink != true else {
+                return false
+            }
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+            guard let resolvedValues = try? resolved.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  resolvedValues.isRegularFile == true,
+                  resolvedValues.isSymbolicLink != true else {
+                return false
+            }
+            return resolved.path.hasPrefix(mediaPrefix)
+        }
+
+        var keptKeys: Set<String> = []
+        var keptResourceIDs: Set<NSObject> = []
+        func recordKept(_ url: URL) {
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+            keptKeys.insert(resolved.path.lowercased())
+            if let id = (try? resolved.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject {
+                keptResourceIDs.insert(id)
+            }
+        }
+        for item in media {
+            let itemURL = crateURL.appending(path: item.relativePath)
+            recordKept(itemURL)
+            if (item.relativePath as NSString).pathExtension.lowercased() == "cue",
+               isContainedRegularFile(itemURL),
+               let sheet = try? CueSheet(itemURL) {
+                for trackURL in sheet.files where isContainedRegularFile(trackURL) {
+                    recordKept(trackURL)
+                }
+            }
+        }
+
+        func isKept(_ url: URL) -> Bool {
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+            if keptKeys.contains(resolved.path.lowercased()) {
+                return true
+            }
+            if let id = (try? resolved.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject,
+               keptResourceIDs.contains(id) {
+                return true
+            }
+            return false
+        }
+
+        var trashedTrackKeys: Set<String> = []
+        for path in removedPaths where !media.contains(where: { $0.relativePath == path }) {
+            let fileURL = crateURL.appending(path: path)
+            let companionTracks: [URL]
+            if (path as NSString).pathExtension.lowercased() == "cue",
+               isContainedRegularFile(fileURL),
+               let sheet = try? CueSheet(fileURL) {
+                companionTracks = sheet.files.filter(isContainedRegularFile)
+            } else {
+                companionTracks = []
+            }
+
             do {
-                try FileManager.default.trashItem(at: record.crateURL.appending(path: path), resultingItemURL: nil)
+                try fm.trashItem(at: fileURL, resultingItemURL: nil)
             } catch {
-                showError("Can't move \((path as NSString).lastPathComponent) to the Trash", error.localizedDescription)
+                onError("Can't move \((path as NSString).lastPathComponent) to the Trash", error.localizedDescription)
+            }
+
+            for trackURL in companionTracks {
+                let resolvedTrack = trackURL.resolvingSymlinksInPath().standardizedFileURL
+                let key = resolvedTrack.path.lowercased()
+                guard isContainedRegularFile(trackURL),
+                      !isKept(trackURL),
+                      trashedTrackKeys.insert(key).inserted else { continue }
+                do {
+                    try fm.trashItem(at: resolvedTrack, resultingItemURL: nil)
+                } catch {
+                    onError("Can't move \(trackURL.lastPathComponent) to the Trash", error.localizedDescription)
+                }
             }
         }
     }
@@ -193,11 +294,44 @@ struct GameDetailView: View {
         game.settings = draft.settings
         return game
     }
+
+    @discardableResult
+    static func setCover(from urls: [URL], for record: GameRecord, in model: AppModel) -> Bool {
+        guard let image = urls.lazy.compactMap({ NSImage(contentsOf: $0) }).first else { return false }
+        guard let tiff = image.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+            model.alert = AppAlert(title: "Can't use that image", message: "The image couldn't be converted to PNG.")
+            return false
+        }
+        do {
+            try png.write(to: CrateIO().coverURL(record.crateURL), options: .atomic)
+            model.metadata.artRevision[record.id, default: 0] += 1
+            return true
+        } catch {
+            model.alert = AppAlert(title: "Can't save the cover", message: error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    static func removeCover(for record: GameRecord, in model: AppModel) -> Bool {
+        let coverURL = CrateIO().coverURL(record.crateURL)
+        guard FileManager.default.fileExists(atPath: coverURL.path) else { return false }
+        do {
+            try FileManager.default.trashItem(at: coverURL, resultingItemURL: nil)
+            model.metadata.artRevision[record.id, default: 0] += 1
+            return true
+        } catch {
+            model.alert = AppAlert(title: "Can't remove the cover", message: error.localizedDescription)
+            return false
+        }
+    }
 }
 
 struct GameHeader: View {
     let model: AppModel
     let record: GameRecord
+    var isReadOnly = false
     let onPlay: () -> Void
     @State private var coverRevision = 0
     @State private var dropTargeted = false
@@ -206,6 +340,11 @@ struct GameHeader: View {
     private var running: Bool { model.sessions.running.contains(record.id) }
     private var starting: Bool { model.startingIDs.contains(record.id) }
     private var importing: Bool { model.imports.importingIDs.contains(record.id) }
+    private var hasCover: Bool {
+        _ = coverRevision
+        _ = model.metadata.artRevision[record.id, default: 0]
+        return FileManager.default.fileExists(atPath: CrateIO().coverURL(record.crateURL).path)
+    }
 
     static func showsSetupButton(
         for record: GameRecord,
@@ -242,7 +381,10 @@ struct GameHeader: View {
             ArtStripView(
                 crateURL: record.crateURL,
                 isLoadingArt: model.metadata.artLoading.contains(record.id),
-                artRevision: model.metadata.artRevision[record.id, default: 0]
+                artRevision: model.metadata.artRevision[record.id, default: 0],
+                isReadOnly: isReadOnly,
+                onArtChanged: { model.metadata.artRevision[record.id, default: 0] += 1 },
+                onError: { title, message in model.alert = AppAlert(title: title, message: message) }
             )
             if let result = model.lastResult[record.id], result.unexpected {
                 unexpectedExitBanner(logURL: result.logURL)
@@ -267,11 +409,19 @@ struct GameHeader: View {
                     ArtQuickLookController.shared.present(urls: [coverURL], startingAt: 0)
                 }
             }
+            .contextMenu {
+                if !isReadOnly {
+                    Button("Choose Cover Image…", action: chooseCoverImage)
+                    if hasCover {
+                        Button("Remove Cover Image", role: .destructive, action: removeCoverImage)
+                    }
+                }
+            }
         if retroTheme {
             base
                 .retroBevel(.sunken)
                 .overlay {
-                    if dropTargeted {
+                    if dropTargeted && !isReadOnly {
                         Rectangle()
                             .strokeBorder(RetroPalette.highlight, style: StrokeStyle(lineWidth: 2, dash: [2, 2]))
                     }
@@ -279,7 +429,11 @@ struct GameHeader: View {
                 .dropDestination(for: URL.self) { urls, _ in setCover(from: urls) } isTargeted: { dropTargeted = $0 }
         } else {
             base
-                .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 3) } }
+                .overlay {
+                    if dropTargeted && !isReadOnly {
+                        RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 3)
+                    }
+                }
                 .dropDestination(for: URL.self) { urls, _ in setCover(from: urls) } isTargeted: { dropTargeted = $0 }
         }
     }
@@ -401,27 +555,32 @@ struct GameHeader: View {
     }
 
     private func openLog(_ url: URL) {
-        let workspace = NSWorkspace.shared
-        guard let console = workspace.urlForApplication(withBundleIdentifier: "com.apple.Console") else {
-            workspace.open(url)
-            return
+        AdvancedTab.openLog(url)
+    }
+
+    private func chooseCoverImage() {
+        guard !isReadOnly else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        _ = setCover(from: [url])
+    }
+
+    private func removeCoverImage() {
+        guard !isReadOnly else { return }
+        if GameDetailView.removeCover(for: record, in: model) {
+            coverRevision += 1
         }
-        workspace.open([url], withApplicationAt: console, configuration: NSWorkspace.OpenConfiguration())
     }
 
     private func setCover(from urls: [URL]) -> Bool {
-        guard let image = urls.lazy.compactMap({ NSImage(contentsOf: $0) }).first else { return false }
-        guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
-            model.alert = AppAlert(title: "Can't use that image", message: "The image couldn't be converted to PNG.")
-            return false
-        }
-        do {
-            try png.write(to: CrateIO().coverURL(record.crateURL), options: .atomic)
-            coverRevision += 1
-            return true
-        } catch {
-            model.alert = AppAlert(title: "Can't save the cover", message: error.localizedDescription)
-            return false
-        }
+        guard !isReadOnly else { return false }
+        guard GameDetailView.setCover(from: urls, for: record, in: model) else { return false }
+        coverRevision += 1
+        return true
     }
 }

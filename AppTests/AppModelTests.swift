@@ -1125,4 +1125,226 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(rebased.executable == "GAME.EXE")
         #expect(rebased.setupExecutable == "SETUP.EXE")
     }
+
+    @Test func addMediaCopiesCueAndBinPairAsCDROMAndHandlesCollisions() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { _ in }
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+
+        let disc1Dir = root.appending(path: "disc1", directoryHint: .isDirectory)
+        try fm.createDirectory(at: disc1Dir.appending(path: "tracks", directoryHint: .isDirectory), withIntermediateDirectories: true)
+        try Data("bin-1-bytes".utf8).write(to: disc1Dir.appending(path: "tracks/TRACK01.BIN"))
+        let cue1URL = disc1Dir.appending(path: "DISC.CUE")
+        try Data("FILE \"tracks/TRACK01.BIN\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n".utf8).write(to: cue1URL)
+
+        let added1 = await model.addMedia(from: cue1URL, to: id)
+        #expect(added1 == MediaImage(relativePath: "media/DISC.CUE", kind: .cdrom))
+        #expect(model.alert == nil)
+        #expect(model.store.record(id)?.game.media == [MediaImage(relativePath: "media/DISC.CUE", kind: .cdrom)])
+        #expect(fm.fileExists(atPath: crateURL.appending(path: "media/DISC.CUE").path))
+        #expect(fm.fileExists(atPath: crateURL.appending(path: "media/TRACK01.BIN").path))
+        let copiedCue1 = try String(contentsOf: crateURL.appending(path: "media/DISC.CUE"), encoding: .utf8)
+        #expect(copiedCue1.contains("FILE \"TRACK01.BIN\" BINARY"))
+
+        // Adding a second .cue/.bin with the same filenames numbers both and rewrites the second .cue's FILE entry.
+        let disc2Dir = root.appending(path: "disc2", directoryHint: .isDirectory)
+        try fm.createDirectory(at: disc2Dir, withIntermediateDirectories: true)
+        try Data("bin-2-bytes".utf8).write(to: disc2Dir.appending(path: "TRACK01.BIN"))
+        let cue2URL = disc2Dir.appending(path: "DISC.CUE")
+        try Data("FILE TRACK01.BIN BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n".utf8).write(to: cue2URL)
+
+        let added2 = await model.addMedia(from: cue2URL, to: id)
+        #expect(added2 == MediaImage(relativePath: "media/DISC 2.CUE", kind: .cdrom))
+        #expect(fm.fileExists(atPath: crateURL.appending(path: "media/DISC 2.CUE").path))
+        #expect(fm.fileExists(atPath: crateURL.appending(path: "media/TRACK01 2.BIN").path))
+        let copiedCue2 = try String(contentsOf: crateURL.appending(path: "media/DISC 2.CUE"), encoding: .utf8)
+        #expect(copiedCue2.contains("FILE \"TRACK01 2.BIN\" BINARY"))
+    }
+
+    @Test func addMediaRejectsCueWithMissingTrackOrPathTraversalWithoutOrphans() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { _ in }
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+        let mediaDir = crateURL.appending(path: "media", directoryHint: .isDirectory)
+
+        // 1. Missing track (after a valid first track) leaves no partial files in media/.
+        let missingDir = root.appending(path: "missing-track", directoryHint: .isDirectory)
+        try fm.createDirectory(at: missingDir, withIntermediateDirectories: true)
+        try Data("track-1".utf8).write(to: missingDir.appending(path: "T1.BIN"))
+        let missingCue = missingDir.appending(path: "BAD.CUE")
+        try Data("FILE \"T1.BIN\" BINARY\nFILE \"MISSING.BIN\" BINARY\n".utf8).write(to: missingCue)
+
+        let addedMissing = await model.addMedia(from: missingCue, to: id)
+        #expect(addedMissing == nil)
+        #expect(model.alert?.title == "Can't add BAD.CUE")
+        #expect(((try? fm.contentsOfDirectory(atPath: mediaDir.path)) ?? []).isEmpty)
+        #expect(model.store.record(id)?.game.media.isEmpty == true)
+
+        // 2. Path traversal ("../") is rejected and leaves no files in media/.
+        model.alert = nil
+        try Data("outside".utf8).write(to: root.appending(path: "OUTSIDE.BIN"))
+        let traversalDir = root.appending(path: "traversal", directoryHint: .isDirectory)
+        try fm.createDirectory(at: traversalDir, withIntermediateDirectories: true)
+        let traversalCue = traversalDir.appending(path: "EVIL.CUE")
+        try Data("FILE \"../OUTSIDE.BIN\" BINARY\n".utf8).write(to: traversalCue)
+
+        let addedTraversal = await model.addMedia(from: traversalCue, to: id)
+        #expect(addedTraversal == nil)
+        #expect(model.alert?.title == "Can't add EVIL.CUE")
+        #expect(((try? fm.contentsOfDirectory(atPath: mediaDir.path)) ?? []).isEmpty)
+        #expect(model.store.record(id)?.game.media.isEmpty == true)
+
+        // 3. A symlink track escaping the CUE directory is rejected and rolls back earlier tracks.
+        model.alert = nil
+        let symlinkEscapeDir = root.appending(path: "symlink-escape", directoryHint: .isDirectory)
+        try fm.createDirectory(at: symlinkEscapeDir, withIntermediateDirectories: true)
+        try Data("track-1".utf8).write(to: symlinkEscapeDir.appending(path: "T1.BIN"))
+        try fm.createSymbolicLink(
+            at: symlinkEscapeDir.appending(path: "ESCAPED.BIN"),
+            withDestinationURL: root.appending(path: "OUTSIDE.BIN")
+        )
+        let escapeCue = symlinkEscapeDir.appending(path: "ESCAPE.CUE")
+        try Data("FILE \"T1.BIN\" BINARY\nFILE \"ESCAPED.BIN\" BINARY\n".utf8).write(to: escapeCue)
+
+        let addedEscape = await model.addMedia(from: escapeCue, to: id)
+        #expect(addedEscape == nil)
+        #expect(model.alert?.title == "Can't add ESCAPE.CUE")
+        #expect(((try? fm.contentsOfDirectory(atPath: mediaDir.path)) ?? []).isEmpty)
+        #expect(model.store.record(id)?.game.media.isEmpty == true)
+
+        // 4. A symlink track resolving to a regular file inside the CUE directory copies the target bytes (not a symlink).
+        model.alert = nil
+        let localLinkDir = root.appending(path: "local-link", directoryHint: .isDirectory)
+        try fm.createDirectory(at: localLinkDir, withIntermediateDirectories: true)
+        try Data("real-bin-payload".utf8).write(to: localLinkDir.appending(path: "REAL.BIN"))
+        try fm.createSymbolicLink(
+            atPath: localLinkDir.appending(path: "LINKED.BIN").path,
+            withDestinationPath: "REAL.BIN"
+        )
+        let localLinkCue = localLinkDir.appending(path: "LINKED.CUE")
+        try Data("FILE \"LINKED.BIN\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n".utf8).write(to: localLinkCue)
+
+        let addedLocalLink = await model.addMedia(from: localLinkCue, to: id)
+        #expect(addedLocalLink == MediaImage(relativePath: "media/LINKED.CUE", kind: .cdrom))
+        #expect(model.alert == nil)
+        let copiedLinkedBin = mediaDir.appending(path: "LINKED.BIN")
+        #expect(fm.fileExists(atPath: copiedLinkedBin.path))
+        #expect((try? copiedLinkedBin.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true)
+        #expect(try String(contentsOf: copiedLinkedBin, encoding: .utf8) == "real-bin-payload")
+    }
+
+    @Test func addMediaRollsBackCueAndBinIfGameRemovedDuringCopy() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { _ in }
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+
+        let srcDir = root.appending(path: "cue-rollback", directoryHint: .isDirectory)
+        try fm.createDirectory(at: srcDir, withIntermediateDirectories: true)
+        try Data("bin-bytes".utf8).write(to: srcDir.appending(path: "GAME.BIN"))
+        let cueSource = srcDir.appending(path: "GAME.CUE")
+        try Data("FILE \"GAME.BIN\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n".utf8).write(to: cueSource)
+
+        let state = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+
+        let addTask = Task {
+            await model.addMedia(from: cueSource, to: id) {
+                state.withLock { $0.entered = true }
+                while !state.withLock({ $0.released }) {
+                    try? await Task.sleep(for: .milliseconds(5))
+                }
+            }
+        }
+
+        await waitUntil { state.withLock { $0.entered } }
+        let backupURL = root.appending(path: "CrateBackupCue.doscrate")
+        try fm.copyItem(at: crateURL, to: backupURL)
+        try model.store.remove(id, trashFiles: false)
+        try fm.moveItem(at: backupURL, to: crateURL)
+        state.withLock { $0.released = true }
+
+        let added = await addTask.value
+        #expect(added == nil)
+        #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/GAME.CUE").path))
+        #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/GAME.BIN").path))
+    }
+
+    @Test func removingCueMediaTrashesCueAndUnreferencedTracksWhileKeepingSharedTracks() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { _ in }
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+
+        let srcDir = root.appending(path: "cue-remove", directoryHint: .isDirectory)
+        try fm.createDirectory(at: srcDir, withIntermediateDirectories: true)
+        try Data("track1".utf8).write(to: srcDir.appending(path: "DISC1.BIN"))
+        try Data("shared".utf8).write(to: srcDir.appending(path: "SHARED.WAV"))
+        let cue1 = srcDir.appending(path: "DISC1.CUE")
+        try Data("FILE \"DISC1.BIN\" BINARY\nFILE \"SHARED.WAV\" WAVE\n".utf8).write(to: cue1)
+
+        let added1 = try #require(await model.addMedia(from: cue1, to: id))
+        #expect(added1 == MediaImage(relativePath: "media/DISC1.CUE", kind: .cdrom))
+
+        // Add a second .cue in media/ that shares SHARED.WAV and has its own DISC2.BIN.
+        try Data("track2".utf8).write(to: crateURL.appending(path: "media/DISC2.BIN"))
+        try Data("FILE \"DISC2.BIN\" BINARY\nFILE \"SHARED.WAV\" WAVE\n".utf8)
+            .write(to: crateURL.appending(path: "media/DISC2.CUE"))
+        let cue2Image = MediaImage(relativePath: "media/DISC2.CUE", kind: .cdrom)
+        var gameWithTwoDiscs = try #require(model.store.record(id)?.game)
+        gameWithTwoDiscs.media.append(cue2Image)
+        try model.store.save(gameWithTwoDiscs)
+
+        // Removing DISC1.CUE while keeping DISC2.CUE trashes DISC1.CUE and DISC1.BIN, but keeps SHARED.WAV and DISC2.BIN.
+        var draftAfterRemovingFirst = gameWithTwoDiscs
+        draftAfterRemovingFirst.media = [cue2Image]
+        _ = GameDetailView.scheduleDraftSave(
+            draft: draftAfterRemovingFirst,
+            removedMedia: ["media/DISC1.CUE"],
+            in: model
+        )
+        model.flushPendingWrites(for: id)
+
+        #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/DISC1.CUE").path))
+        #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/DISC1.BIN").path))
+        #expect(fm.fileExists(atPath: crateURL.appending(path: "media/DISC2.CUE").path))
+        #expect(fm.fileExists(atPath: crateURL.appending(path: "media/DISC2.BIN").path))
+        #expect(fm.fileExists(atPath: crateURL.appending(path: "media/SHARED.WAV").path))
+
+        // Removing DISC2.CUE as well trashes DISC2.CUE, DISC2.BIN, and SHARED.WAV.
+        var draftAfterRemovingSecond = draftAfterRemovingFirst
+        draftAfterRemovingSecond.media = []
+        _ = GameDetailView.scheduleDraftSave(
+            draft: draftAfterRemovingSecond,
+            removedMedia: ["media/DISC2.CUE"],
+            in: model
+        )
+        model.flushPendingWrites(for: id)
+
+        #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/DISC2.CUE").path))
+        #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/DISC2.BIN").path))
+        #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/SHARED.WAV").path))
+
+        // If an externally edited crate has a CUE referencing a track through a symlink outside media/,
+        // removing the CUE trashes the CUE and in-crate regular tracks, but never trashes the external file.
+        let externalDir = root.appending(path: "external-target", directoryHint: .isDirectory)
+        try fm.createDirectory(at: externalDir, withIntermediateDirectories: true)
+        let externalBin = externalDir.appending(path: "IMPORTANT.BIN")
+        try Data("do-not-delete".utf8).write(to: externalBin)
+        let mediaDir = crateURL.appending(path: "media", directoryHint: .isDirectory)
+        try fm.createSymbolicLink(
+            at: mediaDir.appending(path: "linked"),
+            withDestinationURL: externalDir
+        )
+        try Data("in-crate".utf8).write(to: mediaDir.appending(path: "LOCAL.BIN"))
+        try Data("FILE \"LOCAL.BIN\" BINARY\nFILE \"linked/IMPORTANT.BIN\" BINARY\n".utf8)
+            .write(to: mediaDir.appending(path: "EXT.CUE"))
+
+        GameDetailView.trashRemovedMedia(["media/EXT.CUE"], keeping: [], in: crateURL)
+
+        #expect(!fm.fileExists(atPath: mediaDir.appending(path: "EXT.CUE").path))
+        #expect(!fm.fileExists(atPath: mediaDir.appending(path: "LOCAL.BIN").path))
+        #expect(fm.fileExists(atPath: externalBin.path))
+    }
 }

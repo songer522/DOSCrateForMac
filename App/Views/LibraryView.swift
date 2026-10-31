@@ -43,6 +43,16 @@ struct GameContextMenu: View {
             }
         }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([record.crateURL]) }
+        let cDriveURL = Self.cDriveFolderURL(for: record)
+        Button("Show Game Files (C:) in Finder") {
+            if let cDriveURL {
+                NSWorkspace.shared.open(cDriveURL)
+            }
+        }
+        .disabled(cDriveURL == nil)
+        if let logURL = AdvancedTab.latestLogURL(for: record.crateURL) {
+            Button("View Log") { AdvancedTab.openLog(logURL) }
+        }
         Button(record.game.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
             var game = record.game
             game.isFavorite.toggle()
@@ -65,6 +75,15 @@ struct GameContextMenu: View {
         let count = model.selectedIDs.contains(record.id) ? model.selectedIDs.count : 1
         Button(count > 1 ? "Remove \(count) Games…" : "Remove…", role: .destructive, action: onRemove)
             .disabled(count == 1 && model.sessions.running.contains(record.id))
+    }
+
+    static func cDriveFolderURL(for record: GameRecord, io: CrateIO = CrateIO()) -> URL? {
+        guard let url = try? io.cDriveURL(for: record) else { return nil }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+            return nil
+        }
+        return url
     }
 }
 
@@ -189,7 +208,7 @@ struct LibraryView: View {
                         if let record = model.selection.flatMap(model.store.record) {
                             GameDetailView(model: model, record: record).id(record.id)
                         } else if model.selectedIDs.count > 1 {
-                            ContentUnavailableView("\(model.selectedIDs.count) Games Selected", systemImage: "square.stack")
+                            BatchInspectorView(model: model, selectedIDs: model.selectedIDs)
                         } else {
                             ContentUnavailableView("No Game Selected", systemImage: "gamecontroller")
                         }
