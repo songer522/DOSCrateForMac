@@ -64,11 +64,13 @@ import LibraryKit
         let text = try String(contentsOf: plan.configURL, encoding: .utf8)
         let resolvedExtra = try Preflight.resolveFolderMount(r.game.launch.folderMounts[0])
         #expect(text.contains("[autoexec]"))
+        #expect(text.contains("capture_dir = \(f.io.screenshotsURL(r.crateURL).path)\n"))
         #expect(text.contains("mount c \"\(c.path)\""))
         #expect(text.contains("mount e \"\(resolvedExtra.path)\""))
         #expect(text.contains("GAME.EXE"))
         #expect(text == LaunchPlanner.generatedConfigPreview(r, global: GlobalConfig(), io: f.io))
         #expect(FileManager.default.fileExists(atPath: plan.logsDirectory.path))
+        #expect(FileManager.default.fileExists(atPath: f.io.screenshotsURL(r.crateURL).path))
     }
 
     @Test func planMapsUnquotablePath() throws {

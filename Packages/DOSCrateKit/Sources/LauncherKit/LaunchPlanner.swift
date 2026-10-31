@@ -16,6 +16,8 @@ public enum LaunchPlanner {
         let fm = FileManager.default
         let logs = io.logsURL(r.crateURL)
         try fm.createDirectory(at: logs, withIntermediateDirectories: true)
+        let captures = io.screenshotsURL(r.crateURL)
+        try fm.createDirectory(at: captures, withIntermediateDirectories: true)
         var controllerMap: URL?
         if let controller = resolvedControllerPlan(for: r, global: global) {
             let map = io.cacheURL(r.crateURL).appending(path: "controller.map", directoryHint: .notDirectory)
@@ -24,7 +26,7 @@ public enum LaunchPlanner {
                 controllerMap = map
             }
         }
-        let text = try render(r, cDrive: cDrive, global: global, controllerMap: controllerMap)
+        let text = try render(r, cDrive: cDrive, global: global, controllerMap: controllerMap, captureDir: captures)
         let conf = io.cacheURL(r.crateURL).appending(path: "launch.conf", directoryHint: .notDirectory)
         try Data(text.utf8).write(to: conf, options: .atomic)
 
@@ -43,7 +45,8 @@ public enum LaunchPlanner {
         let controllerMap = resolvedControllerPlan(for: r, global: global) == nil ? nil
             : io.cacheURL(r.crateURL).appending(path: "controller.map", directoryHint: .notDirectory)
         do {
-            return try render(r, cDrive: io.cDriveURL(for: r), global: global, controllerMap: controllerMap)
+            return try render(r, cDrive: io.cDriveURL(for: r), global: global, controllerMap: controllerMap,
+                              captureDir: io.screenshotsURL(r.crateURL))
         } catch {
             return "# error: \(error)"
         }
@@ -68,7 +71,13 @@ public enum LaunchPlanner {
         return (layout, effectiveMode, bindings)
     }
 
-    private static func render(_ r: GameRecord, cDrive: URL, global: GlobalConfig, controllerMap: URL?) throws -> String {
+    private static func render(
+        _ r: GameRecord,
+        cDrive: URL,
+        global: GlobalConfig,
+        controllerMap: URL?,
+        captureDir: URL
+    ) throws -> String {
         let media = r.game.media.map { (Preflight.mediaURL($0, in: r.crateURL), $0.kind) }
         let folderMounts = r.game.launch.folderMounts.map { mount in
             let url = (try? Preflight.resolveFolderMount(mount)) ?? URL(fileURLWithPath: mount.path, isDirectory: true)
@@ -77,7 +86,7 @@ public enum LaunchPlanner {
         do {
             return try LaunchConfigBuilder.build(game: r.game, cDrive: cDrive, media: media,
                                                  folderMounts: folderMounts, global: global,
-                                                 controllerMap: controllerMap).render()
+                                                 controllerMap: controllerMap, captureDir: captureDir).render()
         } catch DOSPathError.notDOSName(let component, let parent) {
             let root = parent.isEmpty ? component : parent + "/" + component
             throw LaunchError.nonDOSPath(component: component, suggestedCRoot: root)

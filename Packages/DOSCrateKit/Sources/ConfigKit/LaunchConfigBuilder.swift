@@ -20,11 +20,14 @@ public struct GlobalConfig: Sendable {
 }
 
 public enum LaunchConfigBuilder {
-    /// Layers, lowest to highest: controller map, global curated, global raw, preset, game settings, autoexec.
+    /// Layers, lowest to highest: capture dir / controller map, global curated, global raw, preset, game settings, autoexec.
     public static func build(game: Game, cDrive: URL, media: [(URL, MediaKind)],
                              folderMounts: [(String, URL)] = [], global: GlobalConfig,
-                             controllerMap: URL? = nil) throws(DOSPathError) -> ConfigDocument {
+                             controllerMap: URL? = nil, captureDir: URL? = nil) throws(DOSPathError) -> ConfigDocument {
         var doc = ConfigDocument()
+        if let captureDir {
+            doc.set("dosbox", "capture_dir", captureDir.path)
+        }
         if let controllerMap {
             doc.set("sdl", "mapperfile", controllerMap.path)
             doc.set("joystick", "joysticktype", "hidden")

@@ -182,4 +182,19 @@ struct CrateIOTests {
         try Data([1]).write(to: s1)
         #expect(io.screenshotURLs(crate).map(\.lastPathComponent) == ["01.png", "02.png"])
     }
+
+    @Test func addScreenshotCreatesUniqueFilesAndNeverOverwrites() throws {
+        let lib = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: lib) }
+        let crate = try io.makeCrate(title: "Doom", in: lib)
+        #expect(io.screenshotsURL(crate).path.hasSuffix("/art/screenshots"))
+
+        let first = try io.addScreenshot(pngData: Data([1, 2, 3]), in: crate)
+        let second = try io.addScreenshot(pngData: Data([4, 5, 6]), in: crate)
+        #expect(first.lastPathComponent == "screenshot-01.png")
+        #expect(second.lastPathComponent == "screenshot-02.png")
+        #expect(try Data(contentsOf: first) == Data([1, 2, 3]))
+        #expect(try Data(contentsOf: second) == Data([4, 5, 6]))
+        #expect(io.screenshotURLs(crate).map(\.lastPathComponent) == ["screenshot-01.png", "screenshot-02.png"])
+    }
 }

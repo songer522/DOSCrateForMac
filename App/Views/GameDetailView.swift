@@ -2,6 +2,7 @@ import AppKit
 import LauncherKit
 import LibraryKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The inspector for one game. Edits go to a draft that is saved 500 ms after the last change.
 /// Create it with `.id(record.id)` so the draft resets when the selection changes.
@@ -32,7 +33,7 @@ struct GameDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            GameHeader(model: model, record: record, onPlay: play)
+            GameHeader(model: model, record: record, isReadOnly: isReadOnly, onPlay: play)
                 .padding()
             if case .readOnly(let reason) = record.status {
                 Text(reason)
@@ -193,11 +194,44 @@ struct GameDetailView: View {
         game.settings = draft.settings
         return game
     }
+
+    @discardableResult
+    static func setCover(from urls: [URL], for record: GameRecord, in model: AppModel) -> Bool {
+        guard let image = urls.lazy.compactMap({ NSImage(contentsOf: $0) }).first else { return false }
+        guard let tiff = image.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+            model.alert = AppAlert(title: "Can't use that image", message: "The image couldn't be converted to PNG.")
+            return false
+        }
+        do {
+            try png.write(to: CrateIO().coverURL(record.crateURL), options: .atomic)
+            model.metadata.artRevision[record.id, default: 0] += 1
+            return true
+        } catch {
+            model.alert = AppAlert(title: "Can't save the cover", message: error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    static func removeCover(for record: GameRecord, in model: AppModel) -> Bool {
+        let coverURL = CrateIO().coverURL(record.crateURL)
+        guard FileManager.default.fileExists(atPath: coverURL.path) else { return false }
+        do {
+            try FileManager.default.trashItem(at: coverURL, resultingItemURL: nil)
+            model.metadata.artRevision[record.id, default: 0] += 1
+            return true
+        } catch {
+            model.alert = AppAlert(title: "Can't remove the cover", message: error.localizedDescription)
+            return false
+        }
+    }
 }
 
 private struct GameHeader: View {
     let model: AppModel
     let record: GameRecord
+    var isReadOnly = false
     let onPlay: () -> Void
     @State private var coverRevision = 0
     @State private var dropTargeted = false
@@ -206,6 +240,11 @@ private struct GameHeader: View {
     private var running: Bool { model.sessions.running.contains(record.id) }
     private var starting: Bool { model.startingIDs.contains(record.id) }
     private var importing: Bool { model.imports.importingIDs.contains(record.id) }
+    private var hasCover: Bool {
+        _ = coverRevision
+        _ = model.metadata.artRevision[record.id, default: 0]
+        return FileManager.default.fileExists(atPath: CrateIO().coverURL(record.crateURL).path)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -229,7 +268,10 @@ private struct GameHeader: View {
             ArtStripView(
                 crateURL: record.crateURL,
                 isLoadingArt: model.metadata.artLoading.contains(record.id),
-                artRevision: model.metadata.artRevision[record.id, default: 0]
+                artRevision: model.metadata.artRevision[record.id, default: 0],
+                isReadOnly: isReadOnly,
+                onArtChanged: { model.metadata.artRevision[record.id, default: 0] += 1 },
+                onError: { title, message in model.alert = AppAlert(title: title, message: message) }
             )
             if let result = model.lastResult[record.id], result.unexpected {
                 unexpectedExitBanner(logURL: result.logURL)
@@ -254,11 +296,19 @@ private struct GameHeader: View {
                     ArtQuickLookController.shared.present(urls: [coverURL], startingAt: 0)
                 }
             }
+            .contextMenu {
+                if !isReadOnly {
+                    Button("Choose Cover Image…", action: chooseCoverImage)
+                    if hasCover {
+                        Button("Remove Cover Image", role: .destructive, action: removeCoverImage)
+                    }
+                }
+            }
         if retroTheme {
             base
                 .retroBevel(.sunken)
                 .overlay {
-                    if dropTargeted {
+                    if dropTargeted && !isReadOnly {
                         Rectangle()
                             .strokeBorder(RetroPalette.highlight, style: StrokeStyle(lineWidth: 2, dash: [2, 2]))
                     }
@@ -266,7 +316,11 @@ private struct GameHeader: View {
                 .dropDestination(for: URL.self) { urls, _ in setCover(from: urls) } isTargeted: { dropTargeted = $0 }
         } else {
             base
-                .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 3) } }
+                .overlay {
+                    if dropTargeted && !isReadOnly {
+                        RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 3)
+                    }
+                }
                 .dropDestination(for: URL.self) { urls, _ in setCover(from: urls) } isTargeted: { dropTargeted = $0 }
         }
     }
@@ -377,19 +431,29 @@ private struct GameHeader: View {
         workspace.open([url], withApplicationAt: console, configuration: NSWorkspace.OpenConfiguration())
     }
 
-    private func setCover(from urls: [URL]) -> Bool {
-        guard let image = urls.lazy.compactMap({ NSImage(contentsOf: $0) }).first else { return false }
-        guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
-            model.alert = AppAlert(title: "Can't use that image", message: "The image couldn't be converted to PNG.")
-            return false
-        }
-        do {
-            try png.write(to: CrateIO().coverURL(record.crateURL), options: .atomic)
+    private func chooseCoverImage() {
+        guard !isReadOnly else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        _ = setCover(from: [url])
+    }
+
+    private func removeCoverImage() {
+        guard !isReadOnly else { return }
+        if GameDetailView.removeCover(for: record, in: model) {
             coverRevision += 1
-            return true
-        } catch {
-            model.alert = AppAlert(title: "Can't save the cover", message: error.localizedDescription)
-            return false
         }
+    }
+
+    private func setCover(from urls: [URL]) -> Bool {
+        guard !isReadOnly else { return false }
+        guard GameDetailView.setCover(from: urls, for: record, in: model) else { return false }
+        coverRevision += 1
+        return true
     }
 }

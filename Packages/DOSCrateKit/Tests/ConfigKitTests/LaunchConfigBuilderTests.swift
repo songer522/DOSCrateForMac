@@ -42,3 +42,26 @@ private func build(preset: Preset?, memoryMB: Int?, defaultPreset: Preset) throw
         "imgmount a \"/c/media/boot.img\" -t floppy", "c:", "A.EXE",
     ])
 }
+
+@Test func captureDirSetAndOverridableByRawOverrides() throws {
+    var game = Game(title: "T", source: .managed)
+    game.launch = LaunchSpec(executable: "A.EXE")
+    let captureURL = URL(fileURLWithPath: "/tmp/Doom.doscrate/art/screenshots")
+    let baseDoc = try LaunchConfigBuilder.build(
+        game: game,
+        cDrive: URL(fileURLWithPath: "/tmp/g"),
+        media: [],
+        global: GlobalConfig(),
+        captureDir: captureURL
+    )
+    #expect(baseDoc.value("dosbox", "capture_dir") == captureURL.path)
+
+    let overridden = try LaunchConfigBuilder.build(
+        game: game,
+        cDrive: URL(fileURLWithPath: "/tmp/g"),
+        media: [],
+        global: GlobalConfig(rawOverrides: "[dosbox]\ncapture_dir = /custom/captures\n"),
+        captureDir: captureURL
+    )
+    #expect(overridden.value("dosbox", "capture_dir") == "/custom/captures")
+}
