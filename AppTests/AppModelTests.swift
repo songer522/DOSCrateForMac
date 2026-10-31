@@ -1207,5 +1207,26 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/DISC2.CUE").path))
         #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/DISC2.BIN").path))
         #expect(!fm.fileExists(atPath: crateURL.appending(path: "media/SHARED.WAV").path))
+
+        // If an externally edited crate has a CUE referencing a track through a symlink outside media/,
+        // removing the CUE trashes the CUE and in-crate regular tracks, but never trashes the external file.
+        let externalDir = root.appending(path: "external-target", directoryHint: .isDirectory)
+        try fm.createDirectory(at: externalDir, withIntermediateDirectories: true)
+        let externalBin = externalDir.appending(path: "IMPORTANT.BIN")
+        try Data("do-not-delete".utf8).write(to: externalBin)
+        let mediaDir = crateURL.appending(path: "media", directoryHint: .isDirectory)
+        try fm.createSymbolicLink(
+            at: mediaDir.appending(path: "linked"),
+            withDestinationURL: externalDir
+        )
+        try Data("in-crate".utf8).write(to: mediaDir.appending(path: "LOCAL.BIN"))
+        try Data("FILE \"LOCAL.BIN\" BINARY\nFILE \"linked/IMPORTANT.BIN\" BINARY\n".utf8)
+            .write(to: mediaDir.appending(path: "EXT.CUE"))
+
+        GameDetailView.trashRemovedMedia(["media/EXT.CUE"], keeping: [], in: crateURL)
+
+        #expect(!fm.fileExists(atPath: mediaDir.appending(path: "EXT.CUE").path))
+        #expect(!fm.fileExists(atPath: mediaDir.appending(path: "LOCAL.BIN").path))
+        #expect(fm.fileExists(atPath: externalBin.path))
     }
 }

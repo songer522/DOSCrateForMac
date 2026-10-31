@@ -185,11 +185,31 @@ struct GameDetailView: View {
         onError: (String, String) -> Void = { _, _ in }
     ) {
         let fm = FileManager.default
+        let mediaDir = crateURL.appending(path: "media", directoryHint: .isDirectory)
+            .resolvingSymlinksInPath().standardizedFileURL.path
+        let mediaPrefix = mediaDir.hasSuffix("/") ? mediaDir : mediaDir + "/"
+
+        func isContainedRegularFile(_ url: URL) -> Bool {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  values.isRegularFile == true,
+                  values.isSymbolicLink != true else {
+                return false
+            }
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+            guard let resolvedValues = try? resolved.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  resolvedValues.isRegularFile == true,
+                  resolvedValues.isSymbolicLink != true else {
+                return false
+            }
+            return resolved.path.hasPrefix(mediaPrefix)
+        }
+
         var keptKeys: Set<String> = []
         var keptResourceIDs: Set<NSObject> = []
         func recordKept(_ url: URL) {
-            keptKeys.insert(url.standardizedFileURL.path.lowercased())
-            if let id = (try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject {
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+            keptKeys.insert(resolved.path.lowercased())
+            if let id = (try? resolved.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject {
                 keptResourceIDs.insert(id)
             }
         }
@@ -197,18 +217,20 @@ struct GameDetailView: View {
             let itemURL = crateURL.appending(path: item.relativePath)
             recordKept(itemURL)
             if (item.relativePath as NSString).pathExtension.lowercased() == "cue",
+               isContainedRegularFile(itemURL),
                let sheet = try? CueSheet(itemURL) {
-                for trackURL in sheet.files {
+                for trackURL in sheet.files where isContainedRegularFile(trackURL) {
                     recordKept(trackURL)
                 }
             }
         }
 
         func isKept(_ url: URL) -> Bool {
-            if keptKeys.contains(url.standardizedFileURL.path.lowercased()) {
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+            if keptKeys.contains(resolved.path.lowercased()) {
                 return true
             }
-            if let id = (try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject,
+            if let id = (try? resolved.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject,
                keptResourceIDs.contains(id) {
                 return true
             }
@@ -220,8 +242,9 @@ struct GameDetailView: View {
             let fileURL = crateURL.appending(path: path)
             let companionTracks: [URL]
             if (path as NSString).pathExtension.lowercased() == "cue",
+               isContainedRegularFile(fileURL),
                let sheet = try? CueSheet(fileURL) {
-                companionTracks = sheet.files
+                companionTracks = sheet.files.filter(isContainedRegularFile)
             } else {
                 companionTracks = []
             }
@@ -233,11 +256,13 @@ struct GameDetailView: View {
             }
 
             for trackURL in companionTracks {
-                let key = trackURL.standardizedFileURL.path.lowercased()
-                guard !isKept(trackURL), trashedTrackKeys.insert(key).inserted else { continue }
-                guard fm.fileExists(atPath: trackURL.path) else { continue }
+                let resolvedTrack = trackURL.resolvingSymlinksInPath().standardizedFileURL
+                let key = resolvedTrack.path.lowercased()
+                guard isContainedRegularFile(trackURL),
+                      !isKept(trackURL),
+                      trashedTrackKeys.insert(key).inserted else { continue }
                 do {
-                    try fm.trashItem(at: trackURL, resultingItemURL: nil)
+                    try fm.trashItem(at: resolvedTrack, resultingItemURL: nil)
                 } catch {
                     onError("Can't move \(trackURL.lastPathComponent) to the Trash", error.localizedDescription)
                 }
