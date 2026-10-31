@@ -369,12 +369,7 @@ private struct GameHeader: View {
     }
 
     private func openLog(_ url: URL) {
-        let workspace = NSWorkspace.shared
-        guard let console = workspace.urlForApplication(withBundleIdentifier: "com.apple.Console") else {
-            workspace.open(url)
-            return
-        }
-        workspace.open([url], withApplicationAt: console, configuration: NSWorkspace.OpenConfiguration())
+        AdvancedTab.openLog(url)
     }
 
     private func setCover(from urls: [URL]) -> Bool {
