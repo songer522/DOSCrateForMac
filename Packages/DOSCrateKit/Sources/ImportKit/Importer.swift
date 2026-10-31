@@ -468,16 +468,27 @@ public struct Importer: Sendable {
         let fm = FileManager.default
         if p.source.pathExtension.lowercased() == "cue" {
             let sheet = try CueSheet(p.source)
+            let cueDir = p.source.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+            let cueDirPrefix = cueDir.path.hasSuffix("/") ? cueDir.path : cueDir.path + "/"
             var seen: [String: (path: String, resourceID: NSObject?)] = [
                 p.source.lastPathComponent.lowercased(): (
-                    p.source.standardizedFileURL.path,
+                    p.source.resolvingSymlinksInPath().standardizedFileURL.path,
                     (try? p.source.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject
                 )
             ]
             for file in sheet.files {
+                let resolvedFile = file.resolvingSymlinksInPath().standardizedFileURL
+                guard resolvedFile.path.hasPrefix(cueDirPrefix) else {
+                    throw CocoaError(.fileReadInvalidFileName, userInfo: [NSFilePathErrorKey: file.lastPathComponent])
+                }
+                var isDir: ObjCBool = false
+                let isSymlink = (try? resolvedFile.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
+                guard !isSymlink, fm.fileExists(atPath: resolvedFile.path, isDirectory: &isDir), !isDir.boolValue else {
+                    throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: file.path])
+                }
                 let key = file.lastPathComponent.lowercased()
-                let path = file.standardizedFileURL.path
-                let resourceID = (try? file.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject
+                let path = resolvedFile.path
+                let resourceID = (try? resolvedFile.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject
                 if let existing = seen[key] {
                     // The same bin listed twice (including case-only variants on a case-insensitive volume) is fine;
                     // two different files with one name are not.
@@ -487,11 +498,12 @@ public struct Importer: Sendable {
                     throw ImportError.mediaNameCollision(file.lastPathComponent)
                 }
                 seen[key] = (path, resourceID)
-                try fm.copyItem(at: file, to: media.appending(path: file.lastPathComponent))
+                try fm.copyItem(at: resolvedFile, to: media.appending(path: file.lastPathComponent))
             }
             try sheet.flattenedData.write(to: media.appending(path: p.source.lastPathComponent))
         } else {
-            try fm.copyItem(at: p.source, to: media.appending(path: p.source.lastPathComponent))
+            let resolvedSource = p.source.resolvingSymlinksInPath().standardizedFileURL
+            try fm.copyItem(at: resolvedSource, to: media.appending(path: p.source.lastPathComponent))
         }
         return [MediaImage(relativePath: "media/" + p.source.lastPathComponent,
                            kind: p.kind == .discImage ? .cdrom : .floppy)]

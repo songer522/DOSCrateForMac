@@ -1077,6 +1077,44 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.alert?.title == "Can't add EVIL.CUE")
         #expect(((try? fm.contentsOfDirectory(atPath: mediaDir.path)) ?? []).isEmpty)
         #expect(model.store.record(id)?.game.media.isEmpty == true)
+
+        // 3. A symlink track escaping the CUE directory is rejected and rolls back earlier tracks.
+        model.alert = nil
+        let symlinkEscapeDir = root.appending(path: "symlink-escape", directoryHint: .isDirectory)
+        try fm.createDirectory(at: symlinkEscapeDir, withIntermediateDirectories: true)
+        try Data("track-1".utf8).write(to: symlinkEscapeDir.appending(path: "T1.BIN"))
+        try fm.createSymbolicLink(
+            at: symlinkEscapeDir.appending(path: "ESCAPED.BIN"),
+            withDestinationURL: root.appending(path: "OUTSIDE.BIN")
+        )
+        let escapeCue = symlinkEscapeDir.appending(path: "ESCAPE.CUE")
+        try Data("FILE \"T1.BIN\" BINARY\nFILE \"ESCAPED.BIN\" BINARY\n".utf8).write(to: escapeCue)
+
+        let addedEscape = await model.addMedia(from: escapeCue, to: id)
+        #expect(addedEscape == nil)
+        #expect(model.alert?.title == "Can't add ESCAPE.CUE")
+        #expect(((try? fm.contentsOfDirectory(atPath: mediaDir.path)) ?? []).isEmpty)
+        #expect(model.store.record(id)?.game.media.isEmpty == true)
+
+        // 4. A symlink track resolving to a regular file inside the CUE directory copies the target bytes (not a symlink).
+        model.alert = nil
+        let localLinkDir = root.appending(path: "local-link", directoryHint: .isDirectory)
+        try fm.createDirectory(at: localLinkDir, withIntermediateDirectories: true)
+        try Data("real-bin-payload".utf8).write(to: localLinkDir.appending(path: "REAL.BIN"))
+        try fm.createSymbolicLink(
+            atPath: localLinkDir.appending(path: "LINKED.BIN").path,
+            withDestinationPath: "REAL.BIN"
+        )
+        let localLinkCue = localLinkDir.appending(path: "LINKED.CUE")
+        try Data("FILE \"LINKED.BIN\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n".utf8).write(to: localLinkCue)
+
+        let addedLocalLink = await model.addMedia(from: localLinkCue, to: id)
+        #expect(addedLocalLink == MediaImage(relativePath: "media/LINKED.CUE", kind: .cdrom))
+        #expect(model.alert == nil)
+        let copiedLinkedBin = mediaDir.appending(path: "LINKED.BIN")
+        #expect(fm.fileExists(atPath: copiedLinkedBin.path))
+        #expect((try? copiedLinkedBin.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true)
+        #expect(try String(contentsOf: copiedLinkedBin, encoding: .utf8) == "real-bin-payload")
     }
 
     @Test func addMediaRollsBackCueAndBinIfGameRemovedDuringCopy() async throws {
