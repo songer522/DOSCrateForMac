@@ -499,13 +499,9 @@ struct RetroLibraryView: View {
                     .retroControls()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.selectedIDs.count > 1 {
-                VStack(spacing: 8) {
-                    PixelSymbol("square.stack", color: RetroPalette.bevelDark, pointSize: 16, scale: 2)
-                    Text("\(model.selectedIDs.count) Games Selected")
-                        .font(RetroFont.font())
-                        .foregroundStyle(RetroPalette.shadow)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                BatchInspectorView(model: model, selectedIDs: model.selectedIDs)
+                    .retroControls()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 8) {
                     PixelSymbol("gamecontroller", color: RetroPalette.bevelDark, pointSize: 16, scale: 2)
