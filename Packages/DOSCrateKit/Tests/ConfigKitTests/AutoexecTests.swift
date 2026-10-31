@@ -121,3 +121,38 @@ private func lines(_ l: LaunchSpec, c: String = "/tmp/Keen", media: [(URL, Media
         "KEEN1.EXE",
     ])
 }
+
+@Test func launchSetupRunsSetupExecutableWithoutArgumentsAndKeepsMountsAndPrePostCommands() throws {
+    let media: [(URL, MediaKind)] = [
+        (URL(fileURLWithPath: "/m/disc.iso"), .cdrom),
+        (URL(fileURLWithPath: "/m/boot.img"), .floppy),
+    ]
+    let mounts: [(String, URL)] = [
+        ("E", URL(fileURLWithPath: "/tmp/Saves")),
+    ]
+    let launch = LaunchSpec(
+        executable: "GAME/DOOM.EXE",
+        setupExecutable: "CFG/SETUP.EXE",
+        arguments: "-warp 1 1",
+        preCommands: ["set BLASTER=A220 I7 D1"],
+        postCommands: ["echo setup finished"]
+    )
+    let l = try AutoexecBuilder.lines(
+        cDrive: URL(fileURLWithPath: "/tmp/Doom"),
+        media: media,
+        folderMounts: mounts,
+        launch: launch,
+        launchSetup: true
+    )
+    #expect(l == [
+        "mount c \"/tmp/Doom\"",
+        "imgmount d \"/m/disc.iso\" -t iso",
+        "imgmount a \"/m/boot.img\" -t floppy",
+        "mount e \"/tmp/Saves\"",
+        "c:",
+        "cd \\CFG",
+        "set BLASTER=A220 I7 D1",
+        "SETUP.EXE",
+        "echo setup finished",
+    ])
+}

@@ -12,7 +12,14 @@ public struct LaunchPlan: Equatable, Sendable {
 }
 
 public enum LaunchPlanner {
-    public static func plan(_ r: GameRecord, cDrive: URL, global: GlobalConfig, dosbox: URL, io: CrateIO) throws -> LaunchPlan {
+    public static func plan(
+        _ r: GameRecord,
+        cDrive: URL,
+        global: GlobalConfig,
+        dosbox: URL,
+        io: CrateIO,
+        launchSetup: Bool = false
+    ) throws -> LaunchPlan {
         let fm = FileManager.default
         let logs = io.logsURL(r.crateURL)
         try fm.createDirectory(at: logs, withIntermediateDirectories: true)
@@ -26,7 +33,8 @@ public enum LaunchPlanner {
                 controllerMap = map
             }
         }
-        let text = try render(r, cDrive: cDrive, global: global, controllerMap: controllerMap, captureDir: captures)
+        let text = try render(r, cDrive: cDrive, global: global, controllerMap: controllerMap,
+                              captureDir: captures, launchSetup: launchSetup)
         let conf = io.cacheURL(r.crateURL).appending(path: "launch.conf", directoryHint: .notDirectory)
         try Data(text.utf8).write(to: conf, options: .atomic)
 
@@ -36,7 +44,8 @@ public enum LaunchPlanner {
             args += ["--conf", override.path]
         }
         // Without a program the session is a DOS prompt (e.g. installing from D:), so never quit after autoexec.
-        if r.game.launch.exitWhenDone, let exe = r.game.launch.executable, !exe.isEmpty { args.append("--exit") }
+        let targetExecutable = launchSetup ? r.game.launch.setupExecutable : r.game.launch.executable
+        if r.game.launch.exitWhenDone, let exe = targetExecutable, !exe.isEmpty { args.append("--exit") }
         return LaunchPlan(executable: dosbox, arguments: args, workingDirectory: r.crateURL,
                           environment: [:], configURL: conf, logsDirectory: logs)
     }
@@ -76,7 +85,8 @@ public enum LaunchPlanner {
         cDrive: URL,
         global: GlobalConfig,
         controllerMap: URL?,
-        captureDir: URL
+        captureDir: URL,
+        launchSetup: Bool = false
     ) throws -> String {
         let media = r.game.media.map { (Preflight.mediaURL($0, in: r.crateURL), $0.kind) }
         let folderMounts = r.game.launch.folderMounts.map { mount in
@@ -86,7 +96,8 @@ public enum LaunchPlanner {
         do {
             return try LaunchConfigBuilder.build(game: r.game, cDrive: cDrive, media: media,
                                                  folderMounts: folderMounts, global: global,
-                                                 controllerMap: controllerMap, captureDir: captureDir).render()
+                                                 controllerMap: controllerMap, captureDir: captureDir,
+                                                 launchSetup: launchSetup).render()
         } catch DOSPathError.notDOSName(let component, let parent) {
             let root = parent.isEmpty ? component : parent + "/" + component
             throw LaunchError.nonDOSPath(component: component, suggestedCRoot: root)

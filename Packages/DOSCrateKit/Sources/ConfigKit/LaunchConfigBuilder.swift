@@ -23,7 +23,8 @@ public enum LaunchConfigBuilder {
     /// Layers, lowest to highest: capture dir / controller map, global curated, global raw, preset, game settings, autoexec.
     public static func build(game: Game, cDrive: URL, media: [(URL, MediaKind)],
                              folderMounts: [(String, URL)] = [], global: GlobalConfig,
-                             controllerMap: URL? = nil, captureDir: URL? = nil) throws(DOSPathError) -> ConfigDocument {
+                             controllerMap: URL? = nil, captureDir: URL? = nil,
+                             launchSetup: Bool = false) throws(DOSPathError) -> ConfigDocument {
         var doc = ConfigDocument()
         if let captureDir {
             doc.set("capture", "capture_dir", captureDir.path)
@@ -37,7 +38,13 @@ public enum LaunchConfigBuilder {
         doc.merge(Presets.document(game.settings.preset ?? global.defaultPreset))
         doc.merge(SettingsMapper.document(game.settings, env: global.env))
         var tail = ConfigDocument()
-        tail.autoexec = try AutoexecBuilder.lines(cDrive: cDrive, media: media, folderMounts: folderMounts, launch: game.launch)
+        tail.autoexec = try AutoexecBuilder.lines(
+            cDrive: cDrive,
+            media: media,
+            folderMounts: folderMounts,
+            launch: game.launch,
+            launchSetup: launchSetup
+        )
         doc.merge(tail)
         return doc
     }

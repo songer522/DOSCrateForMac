@@ -14,7 +14,8 @@ struct GameFileCodecTests {
         game.isFavorite = true
         game.media = [MediaImage(relativePath: "media/disc.iso", kind: .cdrom)]
         game.launch = LaunchSpec(
-            executable: "KEEN1.EXE", arguments: "/x", preCommands: ["a"], postCommands: ["b"],
+            executable: "KEEN1.EXE", setupExecutable: "SETUP.EXE", arguments: "/x",
+            preCommands: ["a"], postCommands: ["b"],
             exitWhenDone: false, driveCRoot: "GAME",
             folderMounts: [FolderMount(driveLetter: "e", path: "/tmp/extra", bookmark: Data([4, 5]))]
         )
@@ -177,5 +178,24 @@ struct GameFileCodecTests {
         let data = try GameFileCodec.encode(game, extra: [:])
         let decoded = try GameFileCodec.decode(data)
         #expect(decoded.extra.isEmpty)
+    }
+
+    @Test func setupExecutableRoundTripsDefaultsToNilAndIsKnownLaunchKey() throws {
+        var game = Game(title: "Doom", source: .managed)
+        #expect(game.launch.setupExecutable == nil)
+        game.launch.executable = "DOOM.EXE"
+        game.launch.setupExecutable = "SND/SETSOUND.EXE"
+
+        let encoded = try GameFileCodec.encode(game, extra: [:])
+        let decoded = try GameFileCodec.decode(encoded)
+        #expect(decoded.game.launch.setupExecutable == "SND/SETSOUND.EXE")
+        #expect(decoded.extra.isEmpty)
+
+        // Legacy JSON without setupExecutable decodes as nil.
+        let legacyJSON = """
+        {"id":"\(UUID())","title":"Legacy","source":{"type":"managed"},"launch":{"executable":"DOOM.EXE"}}
+        """
+        let legacy = try GameFileCodec.decode(Data(legacyJSON.utf8))
+        #expect(legacy.game.launch.setupExecutable == nil)
     }
 }

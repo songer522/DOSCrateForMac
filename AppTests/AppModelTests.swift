@@ -1008,6 +1008,124 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(!FileManager.default.fileExists(atPath: crateURL.appending(path: "media/DISK1.IMG").path))
     }
 
+    @Test func runSetupFlushesPendingWritesAndLaunchesSetupExecutableWithoutArguments() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(
+            executable: "GAME.EXE",
+            files: ["GAME.EXE", "SETUP.EXE"]
+        ) {
+            $0.launch.arguments = "-warp 2"
+        }
+
+        // Register a pending draft write that sets setupExecutable before runSetup is called.
+        model.setPendingWrite(id, owner: "draft") {
+            guard var g = model.store.record(id)?.game else { return }
+            g.launch.setupExecutable = "SETUP.EXE"
+            try? model.store.save(g)
+        }
+
+        await model.runSetup(id)?.value
+        #expect(model.alert == nil)
+        #expect(model.sessions.running.contains(id))
+        let record = try #require(model.store.record(id))
+        #expect(record.game.launch.setupExecutable == "SETUP.EXE")
+        let conf = try String(contentsOf: record.crateURL.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(conf.contains("SETUP.EXE\n"))
+        #expect(!conf.contains("GAME.EXE"))
+        #expect(!conf.contains("-warp"))
+
+        runner.processes[0].finish(0)
+        await waitUntil { !model.sessions.running.contains(id) }
+
+        // Completing a setup session must not mark the game as played or increment play statistics.
+        let afterSetup = try #require(model.store.record(id)).game.stats
+        #expect(afterSetup.launchCount == 0)
+        #expect(afterSetup.totalPlaySeconds == 0)
+        #expect(afterSetup.lastPlayed == nil)
+    }
+
+    @Test func runSetupWithMissingSetupExecutableRoutesToSetupSpecificChooseProgramRecovery() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(
+            executable: "GAME.EXE",
+            files: ["GAME.EXE", "SETSOUND.EXE"]
+        ) {
+            $0.launch.setupExecutable = "DELETED_SETUP.EXE"
+        }
+
+        await model.runSetup(id)?.value
+        #expect(model.chooseProgram == nil)
+        #expect(model.alert?.fix == .chooseSetupExecutable)
+        #expect(runner.processes.isEmpty)
+
+        model.applyFix(.chooseSetupExecutable, for: id)
+        await waitUntil { model.chooseProgram != nil }
+        let req = try #require(model.chooseProgram)
+        #expect(req.isSetup == true)
+        // Setup ranker places SETSOUND.EXE ahead of GAME.EXE.
+        #expect(req.candidates.first?.relativePath == "SETSOUND.EXE")
+
+        model.confirmProgram("SETSOUND.EXE")
+        await waitUntil { model.sessions.running.contains(id) }
+        let updated = try #require(model.store.record(id))
+        #expect(updated.game.launch.executable == "GAME.EXE")
+        #expect(updated.game.launch.setupExecutable == "SETSOUND.EXE")
+        let conf = try String(contentsOf: updated.crateURL.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(conf.contains("SETSOUND.EXE\n"))
+        #expect(!conf.contains("GAME.EXE"))
+
+        runner.processes[0].finish(0)
+        await waitUntil { !model.sessions.running.contains(id) }
+
+        // Completing a setup session must not mark the game as played or increment play statistics.
+        let afterSetup = try #require(model.store.record(id)).game.stats
+        #expect(afterSetup.launchCount == 0)
+        #expect(afterSetup.totalPlaySeconds == 0)
+        #expect(afterSetup.lastPlayed == nil)
+    }
+
+    @Test func nonDOSPathDoesNotOfferOrApplyUseFolderAsCWhenOtherProgramOutsideFolder() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(
+            executable: "GAME.EXE",
+            files: ["GAME.EXE", "Long Folder/SETUP.EXE"]
+        ) {
+            $0.launch.setupExecutable = "Long Folder/SETUP.EXE"
+        }
+
+        await model.runSetup(id)?.value
+        // Because GAME.EXE is at the root of C:, rebasing C: to "Long Folder" would break Play.
+        #expect(model.alert?.fix == .chooseSetupExecutable)
+
+        // Directly invoking applyFix(.useFolderAsC) must also refuse to rebase when a program is outside the folder.
+        model.applyFix(.useFolderAsC("Long Folder"), for: id)
+        let unchanged = try #require(model.store.record(id)).game.launch
+        #expect(unchanged.driveCRoot == "")
+        #expect(unchanged.executable == "GAME.EXE")
+        #expect(unchanged.setupExecutable == "Long Folder/SETUP.EXE")
+
+        // When both executable and setupExecutable live inside "Long Folder", .useFolderAsC IS offered and rebases both.
+        try FileManager.default.createDirectory(
+            at: model.store.record(id)!.crateURL.appending(path: "files/Long Folder"),
+            withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(
+            atPath: model.store.record(id)!.crateURL.appending(path: "files/Long Folder/GAME.EXE").path,
+            contents: Data("MZ".utf8)
+        )
+        var g = try #require(model.store.record(id)).game
+        g.launch.executable = "Long Folder/GAME.EXE"
+        try model.store.save(g)
+        await model.runSetup(id)?.value
+        #expect(model.alert?.fix == .useFolderAsC("Long Folder"))
+
+        model.applyFix(.useFolderAsC("Long Folder"), for: id)
+        let rebased = try #require(model.store.record(id)).game.launch
+        #expect(rebased.driveCRoot == "Long Folder")
+        #expect(rebased.executable == "GAME.EXE")
+        #expect(rebased.setupExecutable == "SETUP.EXE")
+    }
+
     @Test func addMediaCopiesCueAndBinPairAsCDROMAndHandlesCollisions() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let fm = FileManager.default

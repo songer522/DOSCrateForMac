@@ -87,4 +87,40 @@ struct ExecutableRankerTests {
         try touch(root, ".hidden.exe")
         #expect(try ExecutableRanker.rank(root: root, title: "Q").map(\.relativePath) == ["C.exe", "A.EXE", "B.EXE"])
     }
+
+    @Test func rankSetupIdentifiesSetupStemsPrefersShallowestAndExeOverComOverBat() throws {
+        let root = try makeImportTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try touch(root, "GAME.EXE")
+        try touch(root, "README.EXE")
+        try touch(root, "PKUNZIP.EXE")
+        try touch(root, "CONFIGURE.BAT")
+        try touch(root, "CONFIG.COM")
+        try touch(root, "SOUND.EXE")
+        try touch(root, "SNDSETUP.EXE")
+        try touch(root, "SETSOUND.EXE")
+        try touch(root, "INSTALL.EXE")
+        try touch(root, "SETUP.BAT")
+        try touch(root, "SETUP.COM")
+        try touch(root, "SETUP.EXE")
+        try touch(root, "sub/SETUP.EXE")
+
+        let setupRanked = try ExecutableRanker.rankSetup(root: root)
+        #expect(setupRanked.map(\.relativePath) == [
+            "SETUP.EXE",
+            "INSTALL.EXE",
+            "SETSOUND.EXE",
+            "SNDSETUP.EXE",
+            "SOUND.EXE",
+            "SETUP.COM",
+            "CONFIG.COM",
+            "SETUP.BAT",
+            "CONFIGURE.BAT",
+            "sub/SETUP.EXE",
+        ])
+
+        let candidates = try ExecutableRanker.rank(root: root, title: "Game")
+        #expect(ExecutableRanker.bestSetupExecutable(in: candidates, excluding: "GAME.EXE") == "SETUP.EXE")
+        #expect(ExecutableRanker.bestSetupExecutable(in: candidates, excluding: "setup.exe") == "INSTALL.EXE")
+    }
 }

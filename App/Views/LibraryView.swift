@@ -10,6 +10,14 @@ struct GameContextMenu: View {
     var onEdit: (() -> Void)?
     let onRemove: () -> Void
 
+    static func showsRunSetup(for record: GameRecord, running: Set<UUID>) -> Bool {
+        guard !running.contains(record.id),
+              let setup = record.game.launch.setupExecutable, !setup.isEmpty else {
+            return false
+        }
+        return true
+    }
+
     var body: some View {
         if model.sessions.running.contains(record.id) {
             Button("Stop") { model.stop(record.id) }
@@ -22,6 +30,10 @@ struct GameContextMenu: View {
                 || starting
             Button(starting ? "Starting…" : (importing ? "Importing…" : "Play")) { model.play(record.id) }
                 .disabled(blocked)
+            if let setup = record.game.launch.setupExecutable, !setup.isEmpty {
+                Button("Run Setup") { model.runSetup(record.id) }
+                    .disabled(blocked)
+            }
         }
         Button("Edit") {
             if let onEdit {

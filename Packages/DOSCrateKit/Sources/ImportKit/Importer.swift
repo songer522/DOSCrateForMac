@@ -230,6 +230,12 @@ public struct Importer: Sendable {
         }
         game.origin = ImportOrigin.from(p.source)
         game.launch.executable = executable
+        if game.launch.setupExecutable == nil {
+            game.launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                in: p.candidates,
+                excluding: game.launch.executable
+            )
+        }
         try io.save(game, extra: [:], to: crate)
 
         let base = String(CrateIO.crateName(for: title).dropLast(CrateIO.crateExtension.count + 1))
@@ -265,6 +271,12 @@ public struct Importer: Sendable {
             }
             game.origin = ImportOrigin.from(p.source)
             game.launch.executable = executable
+            if game.launch.setupExecutable == nil {
+                game.launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                    in: p.candidates,
+                    excluding: game.launch.executable
+                )
+            }
             try io.save(game, extra: [:], to: destination)
             return GameRecord(game: game, crateURL: destination)
         } catch {
@@ -296,6 +308,20 @@ public struct Importer: Sendable {
                 try? fm.removeItem(at: destFiles)
             }
             try fm.moveItem(at: tempFiles, to: destFiles)
+            let loaded = io.loadRecord(at: crateURL)
+            if case .ok = loaded.status, loaded.game.launch.setupExecutable == nil {
+                let candidates = !p.candidates.isEmpty
+                    ? p.candidates
+                    : ((try? ExecutableRanker.rank(root: destFiles, title: loaded.game.title)) ?? [])
+                if let setup = ExecutableRanker.bestSetupExecutable(
+                    in: candidates,
+                    excluding: loaded.game.launch.executable
+                ) {
+                    var updatedGame = loaded.game
+                    updatedGame.launch.setupExecutable = setup
+                    try io.save(updatedGame, extra: loaded.extra, to: crateURL)
+                }
+            }
             try? fm.removeItem(at: crateURL.appending(path: CrateIO.importingMarkerFileName, directoryHint: .notDirectory))
             return []
         case .discImage, .floppyImage:
@@ -373,14 +399,14 @@ public struct Importer: Sendable {
             try Self.copyTree(from: newRoot, to: stagedFiles, excluding: work)
             if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles, excluding: work) }
             game.media = []
-            game.launch = Self.updatedLaunch(game.launch, newRoot: newRoot, candidates: p.candidates)
+            game.launch = Self.updatedLaunch(game.launch, newRoot: newRoot, setupRoot: stagedFiles, candidates: p.candidates)
         case .discImage, .floppyImage:
             if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles, excluding: work) }
             let mediaDir = work.appending(path: "media", directoryHint: .isDirectory)
             try fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
             game.media = try Self.stageMedia(for: p, into: mediaDir)
             stagedMedia = mediaDir
-            game.launch = Self.updatedLaunch(game.launch, newRoot: stagedFiles, candidates: p.candidates)
+            game.launch = Self.updatedLaunch(game.launch, newRoot: stagedFiles, setupRoot: stagedFiles, candidates: p.candidates)
         }
         game.source = .managed
 
@@ -414,7 +440,12 @@ public struct Importer: Sendable {
             case .folder, .zip: p.stagingRoot ?? p.source
             case .discImage, .floppyImage: nextFiles
             }
-            merged.launch = Self.updatedLaunch(merged.launch, newRoot: rootForLaunch, candidates: p.candidates)
+            merged.launch = Self.updatedLaunch(
+                merged.launch,
+                newRoot: rootForLaunch,
+                setupRoot: nextFiles,
+                candidates: p.candidates
+            )
             game = merged
         }
 
@@ -510,15 +541,25 @@ public struct Importer: Sendable {
     }
 
     private static func updatedLaunch(
-        _ launch: LaunchSpec, newRoot: URL?, candidates: [ExecutableCandidate]
+        _ launch: LaunchSpec,
+        newRoot: URL?,
+        setupRoot: URL? = nil,
+        candidates: [ExecutableCandidate]
     ) -> LaunchSpec {
         var launch = launch
         guard let newRoot else {
             launch.driveCRoot = ""
             launch.executable = candidates.count == 1 ? candidates[0].relativePath : nil
+            if launch.setupExecutable == nil {
+                launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                    in: candidates,
+                    excluding: launch.executable
+                )
+            }
             return launch
         }
         let fm = FileManager.default
+        let originalDriveCRoot = launch.driveCRoot.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var cRoot = newRoot
         if !launch.driveCRoot.isEmpty {
             let sub = newRoot.appending(path: launch.driveCRoot, directoryHint: .isDirectory)
@@ -529,26 +570,72 @@ public struct Importer: Sendable {
                 launch.driveCRoot = ""
             }
         }
+        var keptExistingExecutable = false
         if let exe = launch.executable, !exe.isEmpty {
             let exeURL = cRoot.appending(path: exe, directoryHint: .notDirectory)
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: exeURL.path, isDirectory: &isDir), !isDir.boolValue {
-                return launch
+                keptExistingExecutable = true
             }
         }
-        guard candidates.count == 1 else {
-            launch.executable = nil
-            return launch
+        if !keptExistingExecutable {
+            if candidates.count == 1 {
+                // Candidates are relative to the whole folder; make the path relative to the kept C: root,
+                // or use the whole folder as C: when the program is outside it.
+                let path = candidates[0].relativePath
+                let prefix = launch.driveCRoot.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
+                if prefix != "/", path.lowercased().hasPrefix(prefix.lowercased()) {
+                    launch.executable = String(path.dropFirst(prefix.count))
+                } else {
+                    launch.driveCRoot = ""
+                    cRoot = newRoot
+                    launch.executable = path
+                }
+            } else {
+                launch.executable = nil
+            }
         }
-        // Candidates are relative to the whole folder; make the path relative to the kept C: root,
-        // or use the whole folder as C: when the program is outside it.
-        let path = candidates[0].relativePath
-        let prefix = launch.driveCRoot.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
-        if prefix != "/", path.lowercased().hasPrefix(prefix.lowercased()) {
-            launch.executable = String(path.dropFirst(prefix.count))
-        } else {
-            launch.driveCRoot = ""
-            launch.executable = path
+        let effectiveSetupRoot = setupRoot ?? newRoot
+        let setupCRoot = launch.driveCRoot.isEmpty
+            ? effectiveSetupRoot
+            : effectiveSetupRoot.appending(path: launch.driveCRoot, directoryHint: .isDirectory)
+        if let setup = launch.setupExecutable, !setup.isEmpty {
+            let resolvedSetup = (!originalDriveCRoot.isEmpty && launch.driveCRoot.isEmpty)
+                ? originalDriveCRoot + "/" + setup
+                : setup
+            let setupURL = setupCRoot.appending(path: resolvedSetup, directoryHint: .notDirectory)
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: setupURL.path, isDirectory: &isDir), !isDir.boolValue,
+               resolvedSetup.caseInsensitiveCompare(launch.executable ?? "") != .orderedSame {
+                launch.setupExecutable = resolvedSetup
+            } else {
+                launch.setupExecutable = nil
+            }
+        }
+        if launch.setupExecutable == nil {
+            let prefix = launch.driveCRoot.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
+            let cRootCandidates: [ExecutableCandidate] = if prefix == "/" {
+                candidates
+            } else {
+                candidates.compactMap { candidate in
+                    guard candidate.relativePath.lowercased().hasPrefix(prefix.lowercased()) else { return nil }
+                    return ExecutableCandidate(
+                        relativePath: String(candidate.relativePath.dropFirst(prefix.count)),
+                        score: candidate.score
+                    )
+                }
+            }
+            launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                in: cRootCandidates,
+                excluding: launch.executable
+            )
+            if launch.setupExecutable == nil, setupRoot != nil,
+               let mergedSetup = try? ExecutableRanker.rankSetup(root: setupCRoot) {
+                launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                    in: mergedSetup,
+                    excluding: launch.executable
+                )
+            }
         }
         return launch
     }

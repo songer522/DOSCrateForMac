@@ -157,6 +157,39 @@ struct Fixture {
         #expect(throws: LaunchError.dosboxMissing) { try StagingLocator.verify(f.dosbox) }
         #expect(StagingLocator.dosboxURL(appBundle: Bundle(path: f.root.path) ?? .main).path.hasSuffix("DOSBox Staging.app/Contents/MacOS/dosbox"))
     }
+
+    @Test func preflightSetupValidatesSetupExecutableAndRejectsMissingOrEscaping() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try f.touch("GAME.EXE")
+        try f.touch("SETUP.EXE")
+
+        var r = f.record(executable: "GAME.EXE")
+        // Setup executable not set throws executableNotSet even when main executable or media exists.
+        #expect(throws: LaunchError.executableNotSet) {
+            try Preflight.check(r, io: f.io, dosbox: f.dosbox, launchSetup: true)
+        }
+
+        r.game.launch.setupExecutable = "SETUP.EXE"
+        let c = try Preflight.check(r, io: f.io, dosbox: f.dosbox, launchSetup: true)
+        #expect(c.lastPathComponent == "files")
+
+        r.game.launch.setupExecutable = "MISSING.EXE"
+        #expect(throws: LaunchError.executableMissing(path: "MISSING.EXE")) {
+            try Preflight.check(r, io: f.io, dosbox: f.dosbox, launchSetup: true)
+        }
+
+        // Symlink escaping C: root is rejected.
+        let outside = f.root.appendingPathComponent("OUTSIDE.EXE")
+        try Data("x".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(
+            at: f.crate.appendingPathComponent("files/ESCAPE.EXE"),
+            withDestinationURL: outside
+        )
+        r.game.launch.setupExecutable = "ESCAPE.EXE"
+        #expect(throws: LaunchError.executableMissing(path: "ESCAPE.EXE")) {
+            try Preflight.check(r, io: f.io, dosbox: f.dosbox, launchSetup: true)
+        }
+    }
 }
 
 @Test(.enabled(if: TestStaging.dosboxURL != nil))
