@@ -86,6 +86,8 @@ final class AppModel {
     @ObservationIgnored private(set) var startupVerify: Task<Void, Never>?
     @ObservationIgnored private(set) var isTerminating = false
     @ObservationIgnored private var startTokens: [UUID: UUID] = [:]
+    /// Games whose active session was launched via `runSetup` rather than `play`, so completion does not update play stats.
+    @ObservationIgnored private var setupSessionIDs: Set<UUID> = []
     /// Debounced editor writes not yet on disk, keyed by game; `play` runs them first.
     @ObservationIgnored private var pendingWrites: [UUID: [String: @MainActor () -> Void]] = [:]
     @ObservationIgnored private var activeRemovalTask: Task<[String], Never>?
@@ -532,6 +534,11 @@ final class AppModel {
         case .ready(let prepared):
             do {
                 try sessions.start(gameID: id, prepared: prepared)
+                if forSetup {
+                    setupSessionIDs.insert(id)
+                } else {
+                    setupSessionIDs.remove(id)
+                }
             } catch {
                 alert = Self.alert(for: error, gameID: id, game: record.game, forSetup: forSetup)
             }
@@ -685,8 +692,9 @@ final class AppModel {
     }
 
     private func sessionEnded(_ result: SessionResult) {
+        let wasSetup = setupSessionIDs.remove(result.gameID) != nil
         if result.unexpected { lastResult[result.gameID] = result } else { lastResult[result.gameID] = nil }
-        guard var game = store.record(result.gameID)?.game else { return }
+        guard !wasSetup, var game = store.record(result.gameID)?.game else { return }
         game.stats.launchCount += 1
         game.stats.totalPlaySeconds += result.duration
         game.stats.lastPlayed = Date()

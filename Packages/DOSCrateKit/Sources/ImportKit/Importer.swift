@@ -399,14 +399,14 @@ public struct Importer: Sendable {
             try Self.copyTree(from: newRoot, to: stagedFiles, excluding: work)
             if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles, excluding: work) }
             game.media = []
-            game.launch = Self.updatedLaunch(game.launch, newRoot: newRoot, candidates: p.candidates)
+            game.launch = Self.updatedLaunch(game.launch, newRoot: newRoot, setupRoot: stagedFiles, candidates: p.candidates)
         case .discImage, .floppyImage:
             if let carrySource { try Self.carryOver(from: carrySource, to: stagedFiles, excluding: work) }
             let mediaDir = work.appending(path: "media", directoryHint: .isDirectory)
             try fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
             game.media = try Self.stageMedia(for: p, into: mediaDir)
             stagedMedia = mediaDir
-            game.launch = Self.updatedLaunch(game.launch, newRoot: stagedFiles, candidates: p.candidates)
+            game.launch = Self.updatedLaunch(game.launch, newRoot: stagedFiles, setupRoot: stagedFiles, candidates: p.candidates)
         }
         game.source = .managed
 
@@ -440,7 +440,12 @@ public struct Importer: Sendable {
             case .folder, .zip: p.stagingRoot ?? p.source
             case .discImage, .floppyImage: nextFiles
             }
-            merged.launch = Self.updatedLaunch(merged.launch, newRoot: rootForLaunch, candidates: p.candidates)
+            merged.launch = Self.updatedLaunch(
+                merged.launch,
+                newRoot: rootForLaunch,
+                setupRoot: nextFiles,
+                candidates: p.candidates
+            )
             game = merged
         }
 
@@ -524,7 +529,10 @@ public struct Importer: Sendable {
     }
 
     private static func updatedLaunch(
-        _ launch: LaunchSpec, newRoot: URL?, candidates: [ExecutableCandidate]
+        _ launch: LaunchSpec,
+        newRoot: URL?,
+        setupRoot: URL? = nil,
+        candidates: [ExecutableCandidate]
     ) -> LaunchSpec {
         var launch = launch
         guard let newRoot else {
@@ -539,6 +547,7 @@ public struct Importer: Sendable {
             return launch
         }
         let fm = FileManager.default
+        let originalDriveCRoot = launch.driveCRoot.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var cRoot = newRoot
         if !launch.driveCRoot.isEmpty {
             let sub = newRoot.appending(path: launch.driveCRoot, directoryHint: .isDirectory)
@@ -574,11 +583,20 @@ public struct Importer: Sendable {
                 launch.executable = nil
             }
         }
+        let effectiveSetupRoot = setupRoot ?? newRoot
+        let setupCRoot = launch.driveCRoot.isEmpty
+            ? effectiveSetupRoot
+            : effectiveSetupRoot.appending(path: launch.driveCRoot, directoryHint: .isDirectory)
         if let setup = launch.setupExecutable, !setup.isEmpty {
-            let setupURL = cRoot.appending(path: setup, directoryHint: .notDirectory)
+            let resolvedSetup = (!originalDriveCRoot.isEmpty && launch.driveCRoot.isEmpty)
+                ? originalDriveCRoot + "/" + setup
+                : setup
+            let setupURL = setupCRoot.appending(path: resolvedSetup, directoryHint: .notDirectory)
             var isDir: ObjCBool = false
-            if !fm.fileExists(atPath: setupURL.path, isDirectory: &isDir) || isDir.boolValue
-                || setup.caseInsensitiveCompare(launch.executable ?? "") == .orderedSame {
+            if fm.fileExists(atPath: setupURL.path, isDirectory: &isDir), !isDir.boolValue,
+               resolvedSetup.caseInsensitiveCompare(launch.executable ?? "") != .orderedSame {
+                launch.setupExecutable = resolvedSetup
+            } else {
                 launch.setupExecutable = nil
             }
         }
@@ -599,6 +617,13 @@ public struct Importer: Sendable {
                 in: cRootCandidates,
                 excluding: launch.executable
             )
+            if launch.setupExecutable == nil, setupRoot != nil,
+               let mergedSetup = try? ExecutableRanker.rankSetup(root: setupCRoot) {
+                launch.setupExecutable = ExecutableRanker.bestSetupExecutable(
+                    in: mergedSetup,
+                    excluding: launch.executable
+                )
+            }
         }
         return launch
     }

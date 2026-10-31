@@ -1036,6 +1036,12 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
 
         runner.processes[0].finish(0)
         await waitUntil { !model.sessions.running.contains(id) }
+
+        // Completing a setup session must not mark the game as played or increment play statistics.
+        let afterSetup = try #require(model.store.record(id)).game.stats
+        #expect(afterSetup.launchCount == 0)
+        #expect(afterSetup.totalPlaySeconds == 0)
+        #expect(afterSetup.lastPlayed == nil)
     }
 
     @Test func runSetupWithMissingSetupExecutableRoutesToSetupSpecificChooseProgramRecovery() async throws {
@@ -1070,6 +1076,12 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
 
         runner.processes[0].finish(0)
         await waitUntil { !model.sessions.running.contains(id) }
+
+        // Completing a setup session must not mark the game as played or increment play statistics.
+        let afterSetup = try #require(model.store.record(id)).game.stats
+        #expect(afterSetup.launchCount == 0)
+        #expect(afterSetup.totalPlaySeconds == 0)
+        #expect(afterSetup.lastPlayed == nil)
     }
 
     @Test func nonDOSPathDoesNotOfferOrApplyUseFolderAsCWhenOtherProgramOutsideFolder() async throws {

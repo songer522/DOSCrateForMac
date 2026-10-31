@@ -777,5 +777,18 @@ struct ImporterTests {
         try io.save(cleared, extra: [:], to: placeholder.crateURL)
         _ = try importer.populateCrate(at: placeholder.crateURL, for: p, mode: .copy)
         #expect(io.loadRecord(at: placeholder.crateURL).game.launch.setupExecutable == "SETUP.EXE")
+
+        // Replacing a managed game with a folder that omits a custom setupExecutable preserves it via carryOver.
+        var customSetup = committed.game
+        customSetup.launch.setupExecutable = "SNDTEST.EXE"
+        try touch(committed.crateURL.appending(path: "files"), "SNDTEST.EXE")
+        try io.save(customSetup, extra: committed.extra, to: committed.crateURL)
+        let patchSrc = tmp.appending(path: "doom_patch", directoryHint: .isDirectory)
+        try touch(patchSrc, "DOOM.EXE")
+        let pPatch = try await importer.prepare(patchSrc)
+        let replaced = try await importer.replace(io.loadRecord(at: committed.crateURL), with: pPatch, mode: .copy)
+        #expect(replaced.game.launch.executable == "DOOM.EXE")
+        #expect(replaced.game.launch.setupExecutable == "SNDTEST.EXE")
+        #expect(exists(replaced.crateURL.appending(path: "files/SNDTEST.EXE")))
     }
 }
