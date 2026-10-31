@@ -26,7 +26,7 @@ public enum LaunchConfigBuilder {
                              controllerMap: URL? = nil, captureDir: URL? = nil) throws(DOSPathError) -> ConfigDocument {
         var doc = ConfigDocument()
         if let captureDir {
-            doc.set("dosbox", "capture_dir", captureDir.path)
+            doc.set("capture", "capture_dir", captureDir.path)
         }
         if let controllerMap {
             doc.set("sdl", "mapperfile", controllerMap.path)

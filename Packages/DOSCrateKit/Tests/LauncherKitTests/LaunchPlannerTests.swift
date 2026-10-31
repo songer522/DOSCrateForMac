@@ -64,7 +64,7 @@ import LibraryKit
         let text = try String(contentsOf: plan.configURL, encoding: .utf8)
         let resolvedExtra = try Preflight.resolveFolderMount(r.game.launch.folderMounts[0])
         #expect(text.contains("[autoexec]"))
-        #expect(text.contains("capture_dir = \(f.io.screenshotsURL(r.crateURL).path)\n"))
+        #expect(text.contains("[capture]\ncapture_dir = \(f.io.screenshotsURL(r.crateURL).path)\n"))
         #expect(text.contains("mount c \"\(c.path)\""))
         #expect(text.contains("mount e \"\(resolvedExtra.path)\""))
         #expect(text.contains("GAME.EXE"))

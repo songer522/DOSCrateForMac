@@ -54,14 +54,14 @@ private func build(preset: Preset?, memoryMB: Int?, defaultPreset: Preset) throw
         global: GlobalConfig(),
         captureDir: captureURL
     )
-    #expect(baseDoc.value("dosbox", "capture_dir") == captureURL.path)
+    #expect(baseDoc.value("capture", "capture_dir") == captureURL.path)
 
     let overridden = try LaunchConfigBuilder.build(
         game: game,
         cDrive: URL(fileURLWithPath: "/tmp/g"),
         media: [],
-        global: GlobalConfig(rawOverrides: "[dosbox]\ncapture_dir = /custom/captures\n"),
+        global: GlobalConfig(rawOverrides: "[capture]\ncapture_dir = /custom/captures\n"),
         captureDir: captureURL
     )
-    #expect(overridden.value("dosbox", "capture_dir") == "/custom/captures")
+    #expect(overridden.value("capture", "capture_dir") == "/custom/captures")
 }
