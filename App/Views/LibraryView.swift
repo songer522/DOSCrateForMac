@@ -196,7 +196,7 @@ struct LibraryView: View {
                         if let record = model.selection.flatMap(model.store.record) {
                             GameDetailView(model: model, record: record).id(record.id)
                         } else if model.selectedIDs.count > 1 {
-                            ContentUnavailableView("\(model.selectedIDs.count) Games Selected", systemImage: "square.stack")
+                            BatchInspectorView(model: model, selectedIDs: model.selectedIDs)
                         } else {
                             ContentUnavailableView("No Game Selected", systemImage: "gamecontroller")
                         }
