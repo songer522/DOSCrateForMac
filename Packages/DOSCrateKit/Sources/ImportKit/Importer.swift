@@ -578,81 +578,6 @@ public struct Importer: Sendable {
         }
     }
 
-    /// A cue sheet: its referenced files, and its text with every `FILE` entry reduced to a bare file name
-    /// (the files are copied flat into `media/`).
-    private struct CueSheet {
-        var files: [URL] = []
-        private var lines: [String] = []
-        private var encoding: String.Encoding = .utf8
-        private var hasBOM = false
-
-        init(_ cue: URL) throws {
-            var data = try Data(contentsOf: cue)
-            if data.starts(with: [0xEF, 0xBB, 0xBF]) {
-                hasBOM = true
-                data = data.dropFirst(3)
-            }
-            let text: String
-            if let utf8 = String(data: data, encoding: .utf8) {
-                text = utf8
-            } else {
-                text = String(data: data, encoding: .isoLatin1) ?? ""
-                encoding = .isoLatin1
-            }
-            let dir = cue.deletingLastPathComponent()
-            // Splitting on "\n" only keeps any "\r" attached to its line, so line endings survive.
-            var found: [URL] = []
-            lines = try text.components(separatedBy: "\n").map { raw in
-                let hasCR = raw.hasSuffix("\r")
-                let line = hasCR ? String(raw.dropLast()) : raw
-                let cr = hasCR ? "\r" : ""
-                let body = line.trimmingCharacters(in: .whitespaces)
-                guard body.uppercased().hasPrefix("FILE ") else { return raw }
-                let indent = line.prefix { $0 == " " || $0 == "\t" }
-                let rest = body.dropFirst(5).drop { $0 == " " }
-                let name: String, suffix: String, quoted: Bool
-                if rest.hasPrefix("\""), let close = rest.dropFirst().firstIndex(of: "\"") {
-                    name = String(rest[rest.index(after: rest.startIndex)..<close])
-                    suffix = String(rest[rest.index(after: close)...])
-                    quoted = true
-                } else {
-                    let parts = rest.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-                    name = parts.first.map(String.init) ?? ""
-                    suffix = parts.count > 1 ? " " + parts[1] : ""
-                    quoted = false
-                }
-                guard !name.isEmpty else { return raw }
-                let normalized = name.replacingOccurrences(of: "\\", with: "/")
-                guard !normalized.hasPrefix("/") else {
-                    throw CocoaError(.fileReadInvalidFileName, userInfo: [NSFilePathErrorKey: name])
-                }
-                var stack: [Substring] = []
-                for component in normalized.split(separator: "/", omittingEmptySubsequences: true) {
-                    if component == "." { continue }
-                    if component == ".." {
-                        guard !stack.isEmpty else {
-                            throw CocoaError(.fileReadInvalidFileName, userInfo: [NSFilePathErrorKey: name])
-                        }
-                        stack.removeLast()
-                    } else {
-                        stack.append(component)
-                    }
-                }
-                guard let lastPart = stack.last else { return raw }
-                let resolved = stack.reduce(dir) { $0.appending(path: String($1), directoryHint: .notDirectory) }
-                found.append(resolved)
-                let flat = String(lastPart)
-                return indent + "FILE " + (quoted ? "\"\(flat)\"" : flat) + suffix + cr
-            }
-            files = found
-        }
-
-        var flattenedData: Data {
-            let body = lines.joined(separator: "\n").data(using: encoding) ?? Data()
-            return hasBOM ? Data([0xEF, 0xBB, 0xBF]) + body : body
-        }
-    }
-
     /// Copies a directory tree, dropping symlinks so a crate never points at host paths.
     private static func copyTree(from source: URL, to destination: URL, excluding excluded: URL? = nil) throws {
         let fm = FileManager.default
@@ -714,5 +639,99 @@ public struct Importer: Sendable {
             .split(whereSeparator: \.isWhitespace)
         let titled = words.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
         return titled.isEmpty ? "Untitled" : titled
+    }
+}
+
+/// A cue sheet: its referenced files, and its text with every `FILE` entry reduced to a bare file name
+/// (the files are copied flat into `media/`).
+public struct CueSheet: Sendable {
+    private enum Line: Sendable {
+        case raw(String)
+        case file(indent: String, resolved: URL, flatName: String, quoted: Bool, suffix: String, cr: String)
+    }
+
+    public var files: [URL] = []
+    private var lines: [Line] = []
+    private var encoding: String.Encoding = .utf8
+    private var hasBOM = false
+
+    public init(_ cue: URL) throws {
+        var data = try Data(contentsOf: cue)
+        if data.starts(with: [0xEF, 0xBB, 0xBF]) {
+            hasBOM = true
+            data = data.dropFirst(3)
+        }
+        let text: String
+        if let utf8 = String(data: data, encoding: .utf8) {
+            text = utf8
+        } else {
+            text = String(data: data, encoding: .isoLatin1) ?? ""
+            encoding = .isoLatin1
+        }
+        let dir = cue.deletingLastPathComponent()
+        // Splitting on "\n" only keeps any "\r" attached to its line, so line endings survive.
+        var found: [URL] = []
+        lines = try text.components(separatedBy: "\n").map { raw in
+            let hasCR = raw.hasSuffix("\r")
+            let line = hasCR ? String(raw.dropLast()) : raw
+            let cr = hasCR ? "\r" : ""
+            let body = line.trimmingCharacters(in: .whitespaces)
+            guard body.uppercased().hasPrefix("FILE ") else { return .raw(raw) }
+            let indent = String(line.prefix { $0 == " " || $0 == "\t" })
+            let rest = body.dropFirst(5).drop { $0 == " " }
+            let name: String, suffix: String, quoted: Bool
+            if rest.hasPrefix("\""), let close = rest.dropFirst().firstIndex(of: "\"") {
+                name = String(rest[rest.index(after: rest.startIndex)..<close])
+                suffix = String(rest[rest.index(after: close)...])
+                quoted = true
+            } else {
+                let parts = rest.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+                name = parts.first.map(String.init) ?? ""
+                suffix = parts.count > 1 ? " " + parts[1] : ""
+                quoted = false
+            }
+            guard !name.isEmpty else { return .raw(raw) }
+            let normalized = name.replacingOccurrences(of: "\\", with: "/")
+            guard !normalized.hasPrefix("/") else {
+                throw CocoaError(.fileReadInvalidFileName, userInfo: [NSFilePathErrorKey: name])
+            }
+            var stack: [Substring] = []
+            for component in normalized.split(separator: "/", omittingEmptySubsequences: true) {
+                if component == "." { continue }
+                if component == ".." {
+                    guard !stack.isEmpty else {
+                        throw CocoaError(.fileReadInvalidFileName, userInfo: [NSFilePathErrorKey: name])
+                    }
+                    stack.removeLast()
+                } else {
+                    stack.append(component)
+                }
+            }
+            guard let lastPart = stack.last else { return .raw(raw) }
+            let resolved = stack.reduce(dir) { $0.appending(path: String($1), directoryHint: .notDirectory) }
+            found.append(resolved)
+            let flat = String(lastPart)
+            return .file(indent: indent, resolved: resolved, flatName: flat, quoted: quoted, suffix: suffix, cr: cr)
+        }
+        files = found
+    }
+
+    public var flattenedData: Data {
+        data()
+    }
+
+    public func data(rewritingFileNames nameMap: [String: String] = [:]) -> Data {
+        let rendered = lines.map { entry -> String in
+            switch entry {
+            case .raw(let raw):
+                return raw
+            case .file(let indent, let resolved, let flatName, let quoted, let suffix, let cr):
+                let targetName = nameMap[resolved.standardizedFileURL.path] ?? flatName
+                let needsQuotes = quoted || targetName.contains(" ")
+                return indent + "FILE " + (needsQuotes ? "\"\(targetName)\"" : targetName) + suffix + cr
+            }
+        }
+        let body = rendered.joined(separator: "\n").data(using: encoding) ?? Data()
+        return hasBOM ? Data([0xEF, 0xBB, 0xBF]) + body : body
     }
 }

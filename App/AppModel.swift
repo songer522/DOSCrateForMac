@@ -324,7 +324,7 @@ final class AppModel {
 
         let mediaDir = initialRecord.crateURL.appending(path: "media", directoryHint: .isDirectory)
         let ext = source.pathExtension.lowercased()
-        let kind: MediaKind = ext == "iso" ? .cdrom : .floppy
+        let kind: MediaKind = (ext == "iso" || ext == "cue") ? .cdrom : .floppy
         if kind == .cdrom {
             var candidateMounts = initialRecord.game.launch.folderMounts
             guard FolderMount.reassignConflictsWithCDROM(&candidateMounts, hasCDROM: true) else {
@@ -336,7 +336,7 @@ final class AppModel {
             }
         }
 
-        let copied: (name: String, fileURL: URL)
+        let copied: (name: String, fileURLs: [URL])
         do {
             if let copyHook {
                 await copyHook()
@@ -349,6 +349,12 @@ final class AppModel {
             return nil
         }
 
+        let removeCopiedFiles = {
+            for url in copied.fileURLs {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+
         flushPendingWrites(for: gameID)
 
         guard !isTerminating,
@@ -356,11 +362,11 @@ final class AppModel {
               !imports.replacingIDs.contains(gameID),
               !imports.importingIDs.contains(gameID),
               let currentRecord = store.record(gameID) else {
-            try? FileManager.default.removeItem(at: copied.fileURL)
+            removeCopiedFiles()
             return nil
         }
         if case .readOnly = currentRecord.status {
-            try? FileManager.default.removeItem(at: copied.fileURL)
+            removeCopiedFiles()
             return nil
         }
 
@@ -373,7 +379,7 @@ final class AppModel {
             &updated.launch.folderMounts,
             hasCDROM: updated.media.contains { $0.kind == .cdrom }
         ) else {
-            try? FileManager.default.removeItem(at: copied.fileURL)
+            removeCopiedFiles()
             alert = AppAlert(
                 title: "Can't add \(source.lastPathComponent)",
                 message: "All DOS drive letters (D:–Y:) are already used by folder mounts. Remove a folder mount to free D: for the CD-ROM."
@@ -384,22 +390,73 @@ final class AppModel {
             try store.save(updated)
             return image
         } catch {
-            try? FileManager.default.removeItem(at: copied.fileURL)
+            removeCopiedFiles()
             alert = AppAlert(title: "Can't add \(source.lastPathComponent)", message: error.localizedDescription)
             return nil
         }
     }
 
-    nonisolated static func copyMediaFile(from source: URL, into mediaDir: URL) throws -> (name: String, fileURL: URL) {
+    nonisolated static func copyMediaFile(from source: URL, into mediaDir: URL) throws -> (name: String, fileURLs: [URL]) {
         let fm = FileManager.default
         try fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+
+        if source.pathExtension.lowercased() == "cue" {
+            let sheet = try CueSheet(source)
+            var createdURLs: [URL] = []
+            var copiedTracks: [(path: String, resourceID: NSObject?, destName: String)] = []
+            var nameMap: [String: String] = [:]
+            do {
+                for track in sheet.files {
+                    let stdPath = track.standardizedFileURL.path
+                    let resourceID = (try? track.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject
+                    if let existing = copiedTracks.first(where: { $0.path == stdPath || (resourceID != nil && $0.resourceID == resourceID) }) {
+                        nameMap[stdPath] = existing.destName
+                        continue
+                    }
+                    var isDir: ObjCBool = false
+                    guard fm.fileExists(atPath: track.path, isDirectory: &isDir), !isDir.boolValue else {
+                        throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: track.path])
+                    }
+                    let tempTrack = mediaDir.appending(path: ".doscrate-tmp-\(UUID().uuidString)", directoryHint: .notDirectory)
+                    try fm.copyItem(at: track, to: tempTrack)
+                    defer { try? fm.removeItem(at: tempTrack) }
+                    let (destTrackName, destTrackURL) = try moveTempFile(at: tempTrack, preferredName: track.lastPathComponent, into: mediaDir)
+                    createdURLs.append(destTrackURL)
+                    copiedTracks.append((stdPath, resourceID, destTrackName))
+                    nameMap[stdPath] = destTrackName
+                }
+
+                let tempCue = mediaDir.appending(path: ".doscrate-tmp-\(UUID().uuidString)", directoryHint: .notDirectory)
+                try sheet.data(rewritingFileNames: nameMap).write(to: tempCue, options: .atomic)
+                defer { try? fm.removeItem(at: tempCue) }
+                let (destCueName, destCueURL) = try moveTempFile(at: tempCue, preferredName: source.lastPathComponent, into: mediaDir)
+                createdURLs.append(destCueURL)
+                return (destCueName, createdURLs)
+            } catch {
+                for url in createdURLs {
+                    try? fm.removeItem(at: url)
+                }
+                throw error
+            }
+        }
+
         let tempURL = mediaDir.appending(path: ".doscrate-tmp-\(UUID().uuidString)", directoryHint: .notDirectory)
         try fm.copyItem(at: source, to: tempURL)
         defer { try? fm.removeItem(at: tempURL) }
+        let (destName, destURL) = try moveTempFile(at: tempURL, preferredName: source.lastPathComponent, into: mediaDir)
+        return (destName, [destURL])
+    }
 
-        let baseName = source.deletingPathExtension().lastPathComponent
-        let ext = source.pathExtension
-        var candidateName = source.lastPathComponent
+    private nonisolated static func moveTempFile(
+        at tempURL: URL,
+        preferredName: String,
+        into mediaDir: URL
+    ) throws -> (name: String, fileURL: URL) {
+        let fm = FileManager.default
+        let nameURL = URL(filePath: preferredName)
+        let baseName = nameURL.deletingPathExtension().lastPathComponent
+        let ext = nameURL.pathExtension
+        var candidateName = preferredName
         var n = 2
         while true {
             let destURL = mediaDir.appending(path: candidateName, directoryHint: .notDirectory)

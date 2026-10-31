@@ -1,4 +1,5 @@
 import AppKit
+import ImportKit
 import LauncherKit
 import LibraryKit
 import SwiftUI
@@ -123,10 +124,21 @@ struct GameDetailView: View {
         previousTask?.cancel()
         let doFlush: @MainActor () -> Void = flushAction ?? {
             model.setPendingWrite(draft.id, owner: "draft", nil)
-            guard let latest = model.store.record(draft.id)?.game else { return }
+            guard let latestRecord = model.store.record(draft.id) else { return }
+            let latest = latestRecord.game
             let game = merged(draft, into: latest)
             if game != latest {
-                try? model.store.save(game)
+                do {
+                    try model.store.save(game)
+                } catch {
+                    model.alert = AppAlert(title: "Can't save \(game.title)", message: error.localizedDescription)
+                    return
+                }
+            }
+            if !removedMedia.isEmpty {
+                trashRemovedMedia(removedMedia, keeping: game.media, in: latestRecord.crateURL) { title, message in
+                    model.alert = AppAlert(title: title, message: message)
+                }
             }
         }
         let task = Task {
@@ -161,11 +173,74 @@ struct GameDetailView: View {
     private func trashRemovedMedia(keeping media: [MediaImage]) {
         let paths = removedMedia
         removedMedia = []
-        for path in paths where !media.contains(where: { $0.relativePath == path }) {
+        Self.trashRemovedMedia(paths, keeping: media, in: record.crateURL) { title, message in
+            showError(title, message)
+        }
+    }
+
+    static func trashRemovedMedia(
+        _ removedPaths: [String],
+        keeping media: [MediaImage],
+        in crateURL: URL,
+        onError: (String, String) -> Void = { _, _ in }
+    ) {
+        let fm = FileManager.default
+        var keptKeys: Set<String> = []
+        var keptResourceIDs: Set<NSObject> = []
+        func recordKept(_ url: URL) {
+            keptKeys.insert(url.standardizedFileURL.path.lowercased())
+            if let id = (try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject {
+                keptResourceIDs.insert(id)
+            }
+        }
+        for item in media {
+            let itemURL = crateURL.appending(path: item.relativePath)
+            recordKept(itemURL)
+            if (item.relativePath as NSString).pathExtension.lowercased() == "cue",
+               let sheet = try? CueSheet(itemURL) {
+                for trackURL in sheet.files {
+                    recordKept(trackURL)
+                }
+            }
+        }
+
+        func isKept(_ url: URL) -> Bool {
+            if keptKeys.contains(url.standardizedFileURL.path.lowercased()) {
+                return true
+            }
+            if let id = (try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) as? NSObject,
+               keptResourceIDs.contains(id) {
+                return true
+            }
+            return false
+        }
+
+        var trashedTrackKeys: Set<String> = []
+        for path in removedPaths where !media.contains(where: { $0.relativePath == path }) {
+            let fileURL = crateURL.appending(path: path)
+            let companionTracks: [URL]
+            if (path as NSString).pathExtension.lowercased() == "cue",
+               let sheet = try? CueSheet(fileURL) {
+                companionTracks = sheet.files
+            } else {
+                companionTracks = []
+            }
+
             do {
-                try FileManager.default.trashItem(at: record.crateURL.appending(path: path), resultingItemURL: nil)
+                try fm.trashItem(at: fileURL, resultingItemURL: nil)
             } catch {
-                showError("Can't move \((path as NSString).lastPathComponent) to the Trash", error.localizedDescription)
+                onError("Can't move \((path as NSString).lastPathComponent) to the Trash", error.localizedDescription)
+            }
+
+            for trackURL in companionTracks {
+                let key = trackURL.standardizedFileURL.path.lowercased()
+                guard !isKept(trackURL), trashedTrackKeys.insert(key).inserted else { continue }
+                guard fm.fileExists(atPath: trackURL.path) else { continue }
+                do {
+                    try fm.trashItem(at: trackURL, resultingItemURL: nil)
+                } catch {
+                    onError("Can't move \(trackURL.lastPathComponent) to the Trash", error.localizedDescription)
+                }
             }
         }
     }
