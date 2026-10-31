@@ -1,3 +1,4 @@
+import AppKit
 import ConfigKit
 import LauncherKit
 import LibraryKit
@@ -58,6 +59,33 @@ struct AdvancedTab: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            ThemedSection("Logs") {
+                let _ = model.sessions.running.contains(record.id)
+                let _ = model.lastResult[record.id]
+                if let logURL = Self.latestLogURL(for: record.crateURL, io: io) {
+                    if retroTheme {
+                        HStack(spacing: 8) {
+                            Button("View Log") { Self.openLog(logURL) }
+                                .buttonStyle(RetroButtonStyle())
+                            Button("Show Log in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([logURL])
+                            }
+                            .buttonStyle(RetroButtonStyle())
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            Button("View Log") { Self.openLog(logURL) }
+                            Button("Show Log in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([logURL])
+                            }
+                        }
+                    }
+                } else {
+                    Text("No log file yet. Launch the game to generate dosbox.log.")
+                        .font(retroTheme ? RetroFont.font() : .caption)
+                        .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
+                }
+            }
         }
         .task {
             let url = io.overrideURL(record.crateURL)
@@ -111,5 +139,35 @@ struct AdvancedTab: View {
         } catch {
             model.alert = AppAlert(title: "Can't save override.conf", message: error.localizedDescription)
         }
+    }
+
+    static func latestLogURL(for crateURL: URL, io: CrateIO = CrateIO()) -> URL? {
+        let logsDir = io.logsURL(crateURL)
+        let fm = FileManager.default
+        let dosboxLog = logsDir.appending(path: "dosbox.log", directoryHint: .notDirectory)
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: dosboxLog.path, isDirectory: &isDir), !isDir.boolValue {
+            return dosboxLog
+        }
+        guard let entries = try? fm.contentsOfDirectory(atPath: logsDir.path) else {
+            return nil
+        }
+        for name in entries.filter({ $0.hasSuffix(".log") }).sorted().reversed() {
+            let candidate = logsDir.appending(path: name, directoryHint: .notDirectory)
+            var candidateIsDir: ObjCBool = false
+            if fm.fileExists(atPath: candidate.path, isDirectory: &candidateIsDir), !candidateIsDir.boolValue {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    static func openLog(_ url: URL) {
+        let workspace = NSWorkspace.shared
+        guard let console = workspace.urlForApplication(withBundleIdentifier: "com.apple.Console") else {
+            workspace.open(url)
+            return
+        }
+        workspace.open([url], withApplicationAt: console, configuration: NSWorkspace.OpenConfiguration())
     }
 }
