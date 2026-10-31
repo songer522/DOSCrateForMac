@@ -180,7 +180,7 @@ struct DOSCrateApp: App {
 
     static func label(_ fix: AppAlert.Fix) -> String {
         switch fix {
-        case .chooseExecutable: "Choose Executable…"
+        case .chooseExecutable, .chooseSetupExecutable: "Choose Executable…"
         case .locateFolder: "Locate Folder…"
         case .useFolderAsC: "Use Folder as C:"
         case .resetCRoot: "Use Whole Folder as C:"

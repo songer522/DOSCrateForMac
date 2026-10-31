@@ -8,6 +8,7 @@ import Observation
 struct AppAlert: Identifiable {
     enum Fix: Equatable {
         case chooseExecutable
+        case chooseSetupExecutable
         /// Point a referenced game at its moved folder. Never offered for managed games.
         case locateFolder
         /// Mount this subpath of the game folder as C: instead.
@@ -40,6 +41,7 @@ struct ChooseProgramRequest: Identifiable, Equatable {
     var gameID: UUID
     var title: String
     var candidates: [ExecutableCandidate]
+    var isSetup: Bool = false
 }
 
 @MainActor @Observable
@@ -492,7 +494,7 @@ final class AppModel {
                 outcome.discard()
                 return
             }
-            self.finishPlay(id: id, token: token, record: record, outcome: outcome)
+            self.finishPlay(id: id, token: token, record: record, outcome: outcome, forSetup: runSetup)
         }
     }
 
@@ -508,7 +510,13 @@ final class AppModel {
         )
     }
 
-    private func finishPlay(id: UUID, token: UUID, record: GameRecord, outcome: PreparedLaunch) {
+    private func finishPlay(
+        id: UUID,
+        token: UUID,
+        record: GameRecord,
+        outcome: PreparedLaunch,
+        forSetup: Bool = false
+    ) {
         // Play is refused while a game is starting, so this is the only attempt for `id`, expired or not.
         startingIDs.remove(id)
         guard !isTerminating, startTokens[id] == token else {
@@ -525,12 +533,17 @@ final class AppModel {
             do {
                 try sessions.start(gameID: id, prepared: prepared)
             } catch {
-                alert = Self.alert(for: error, gameID: id, game: record.game)
+                alert = Self.alert(for: error, gameID: id, game: record.game, forSetup: forSetup)
             }
         case .chooseProgram(let candidates):
-            chooseProgram = ChooseProgramRequest(gameID: record.id, title: record.game.title, candidates: candidates)
+            chooseProgram = ChooseProgramRequest(
+                gameID: record.id,
+                title: record.game.title,
+                candidates: candidates,
+                isSetup: forSetup
+            )
         case .failed(let error as LaunchError):
-            alert = Self.alert(for: error, gameID: id, game: record.game)
+            alert = Self.alert(for: error, gameID: id, game: record.game, forSetup: forSetup)
         case .failed(let error):
             alert = AppAlert(title: "Can't start \(record.game.title)", message: error.localizedDescription)
         }
@@ -541,14 +554,18 @@ final class AppModel {
         guard let request = chooseProgram else { return nil }
         chooseProgram = nil
         guard var game = store.record(request.gameID)?.game else { return nil }
-        game.launch.executable = executable
+        if request.isSetup {
+            game.launch.setupExecutable = executable
+        } else {
+            game.launch.executable = executable
+        }
         do {
             try store.save(game)
         } catch {
             alert = AppAlert(title: "Can't save \(game.title)", message: error.localizedDescription)
             return nil
         }
-        return play(request.gameID)
+        return request.isSetup ? runSetup(request.gameID) : play(request.gameID)
     }
 
     func cancelChooseProgram() {
@@ -556,9 +573,12 @@ final class AppModel {
     }
 
     func chooseAnotherProgram() {
-        guard let id = chooseProgram?.gameID else { return }
+        guard let request = chooseProgram else { return }
         chooseProgram = nil
-        pendingFix = PendingFix(fix: .chooseExecutable, gameID: id)
+        pendingFix = PendingFix(
+            fix: request.isSetup ? .chooseSetupExecutable : .chooseExecutable,
+            gameID: request.gameID
+        )
     }
 
     func stop(_ id: UUID) {
@@ -586,7 +606,10 @@ final class AppModel {
         alert = nil
         switch fix {
         case .chooseExecutable:
-            if let record = store.record(id), presentChooseProgram(for: record) { return }
+            if let record = store.record(id), presentChooseProgram(for: record, forSetup: false) { return }
+            pendingFix = PendingFix(fix: fix, gameID: id)
+        case .chooseSetupExecutable:
+            if let record = store.record(id), presentChooseProgram(for: record, forSetup: true) { return }
             pendingFix = PendingFix(fix: fix, gameID: id)
         case .locateFolder:
             guard let record = store.record(id), case .referenced = record.game.source else { return }
@@ -617,25 +640,39 @@ final class AppModel {
             save(game)
         case .useFolderAsC(let root):
             guard var game = store.record(id)?.game,
-                  Self.isFolderPrefix(root, of: game.launch.executable)
-                      || Self.isFolderPrefix(root, of: game.launch.setupExecutable) else { return }
+                  Self.canUseFolderAsC(root, for: game.launch) else { return }
             let current = game.launch.driveCRoot
             game.launch.driveCRoot = current.isEmpty ? root : current + "/" + root
-            if let exe = game.launch.executable, Self.isFolderPrefix(root, of: exe) {
+            if let exe = game.launch.executable, !exe.isEmpty {
                 game.launch.executable = String(exe.dropFirst(root.count + 1))
             }
-            if let setup = game.launch.setupExecutable, Self.isFolderPrefix(root, of: setup) {
+            if let setup = game.launch.setupExecutable, !setup.isEmpty {
                 game.launch.setupExecutable = String(setup.dropFirst(root.count + 1))
             }
             save(game)
         }
     }
 
-    private func presentChooseProgram(for record: GameRecord) -> Bool {
-        guard let cDrive = try? io.cDriveURL(for: record),
-              let candidates = try? ExecutableRanker.rank(root: cDrive, title: record.game.title),
-              !candidates.isEmpty else { return false }
-        chooseProgram = ChooseProgramRequest(gameID: record.id, title: record.game.title, candidates: candidates)
+    private func presentChooseProgram(for record: GameRecord, forSetup: Bool = false) -> Bool {
+        guard let cDrive = try? io.cDriveURL(for: record) else { return false }
+        let candidates: [ExecutableCandidate]
+        if forSetup {
+            let setupCandidates = (try? ExecutableRanker.rankSetup(root: cDrive)) ?? []
+            if !setupCandidates.isEmpty {
+                candidates = setupCandidates
+            } else {
+                candidates = (try? ExecutableRanker.rank(root: cDrive, title: record.game.title)) ?? []
+            }
+        } else {
+            candidates = (try? ExecutableRanker.rank(root: cDrive, title: record.game.title)) ?? []
+        }
+        guard !candidates.isEmpty else { return false }
+        chooseProgram = ChooseProgramRequest(
+            gameID: record.id,
+            title: record.game.title,
+            candidates: candidates,
+            isSetup: forSetup
+        )
         return true
     }
 
@@ -668,27 +705,48 @@ final class AppModel {
         return executable.hasPrefix(root + "/")
     }
 
+    /// True when at least one configured program is inside `root` and every non-empty configured
+    /// program (`executable` and `setupExecutable`) is inside `root`, so rebasing `driveCRoot` onto
+    /// `root` keeps all configured programs reachable on C:.
+    private static func canUseFolderAsC(_ root: String, for launch: LaunchSpec) -> Bool {
+        let exe = launch.executable.flatMap { $0.isEmpty ? nil : $0 }
+        let setup = launch.setupExecutable.flatMap { $0.isEmpty ? nil : $0 }
+        guard exe != nil || setup != nil else { return false }
+        if let exe, !isFolderPrefix(root, of: exe) { return false }
+        if let setup, !isFolderPrefix(root, of: setup) { return false }
+        return true
+    }
+
     private static func isDirectory(_ url: URL) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
     }
 
-    static func alert(for error: LaunchError, gameID: UUID? = nil, game: Game? = nil) -> AppAlert {
-        var alert = makeAlert(for: error, game: game)
+    static func alert(
+        for error: LaunchError,
+        gameID: UUID? = nil,
+        game: Game? = nil,
+        forSetup: Bool = false
+    ) -> AppAlert {
+        var alert = makeAlert(for: error, game: game, forSetup: forSetup)
         alert.gameID = gameID
         return alert
     }
 
-    private static func makeAlert(for error: LaunchError, game: Game?) -> AppAlert {
-        let executable = game?.launch.executable
+    private static func makeAlert(for error: LaunchError, game: Game?, forSetup: Bool = false) -> AppAlert {
+        let chooseFix: AppAlert.Fix = forSetup ? .chooseSetupExecutable : .chooseExecutable
         switch error {
         case .dosboxMissing:
             return AppAlert(title: "DOSBox Staging is missing or damaged",
                      message: "The bundled DOSBox Staging can't be used. Reinstall DOSCrate to restore it.")
         case .executableNotSet:
-            return AppAlert(title: "No program to run", message: "Choose which file starts this game.", fix: .chooseExecutable)
+            return AppAlert(
+                title: "No program to run",
+                message: forSetup ? "Choose which file runs setup for this game." : "Choose which file starts this game.",
+                fix: chooseFix
+            )
         case .executableMissing(let path):
-            return AppAlert(title: "Program not found", message: "\(path) is no longer in the game folder.", fix: .chooseExecutable)
+            return AppAlert(title: "Program not found", message: "\(path) is no longer in the game folder.", fix: chooseFix)
         case .sourceUnreachable(let path):
             var isReferenced = false
             if case .referenced = game?.source { isReferenced = true }
@@ -710,11 +768,10 @@ final class AppModel {
         case .launchFailed(let detail):
             return AppAlert(title: "DOSBox didn't start", message: detail)
         case .nonDOSPath(let component, let root):
-            guard Self.isFolderPrefix(root, of: executable)
-                    || Self.isFolderPrefix(root, of: game?.launch.setupExecutable) else {
+            guard let launch = game?.launch, Self.canUseFolderAsC(root, for: launch) else {
                 return AppAlert(title: "Name not usable in DOS",
                                 message: "\"\(component)\" isn't a valid DOS name. Rename the file to an 8.3 name, or choose another program.",
-                                fix: .chooseExecutable)
+                                fix: chooseFix)
             }
             return AppAlert(title: "Name not usable in DOS",
                      message: "\"\(component)\" isn't a valid DOS name. Use \"\(root)\" as the C: drive instead.",

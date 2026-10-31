@@ -1126,7 +1126,7 @@ struct ChooseProgramSheet: View {
             if !inRetroPanel {
                 Text(request.title).font(.headline)
             }
-            Text("Choose which program starts this game.")
+            Text(request.isSetup ? "Choose which program runs setup for this game." : "Choose which program starts this game.")
                 .font(inRetroPanel ? RetroFont.font() : .subheadline)
                 .foregroundStyle(inRetroPanel ? RetroPalette.secondaryText : .secondary)
             if inRetroPanel {
@@ -1147,7 +1147,7 @@ struct ChooseProgramSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { model.cancelChooseProgram() }
                     .keyboardShortcut(.cancelAction)
-                Button("Play") {
+                Button(request.isSetup ? "Run Setup" : "Play") {
                     if let selection { model.confirmProgram(selection) }
                 }
                 .keyboardShortcut(.defaultAction)

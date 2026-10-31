@@ -1038,12 +1038,79 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         await waitUntil { !model.sessions.running.contains(id) }
     }
 
-    @Test func runSetupWithMissingSetupExecutableShowsAlertAndDoesNotPresentChooseProgramSheet() async throws {
+    @Test func runSetupWithMissingSetupExecutableRoutesToSetupSpecificChooseProgramRecovery() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
-        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"])
+        let (model, id) = try await makeModel(
+            executable: "GAME.EXE",
+            files: ["GAME.EXE", "SETSOUND.EXE"]
+        ) {
+            $0.launch.setupExecutable = "DELETED_SETUP.EXE"
+        }
+
         await model.runSetup(id)?.value
         #expect(model.chooseProgram == nil)
-        #expect(model.alert?.title == "No program to run")
+        #expect(model.alert?.fix == .chooseSetupExecutable)
         #expect(runner.processes.isEmpty)
+
+        model.applyFix(.chooseSetupExecutable, for: id)
+        await waitUntil { model.chooseProgram != nil }
+        let req = try #require(model.chooseProgram)
+        #expect(req.isSetup == true)
+        // Setup ranker places SETSOUND.EXE ahead of GAME.EXE.
+        #expect(req.candidates.first?.relativePath == "SETSOUND.EXE")
+
+        model.confirmProgram("SETSOUND.EXE")
+        await waitUntil { model.sessions.running.contains(id) }
+        let updated = try #require(model.store.record(id))
+        #expect(updated.game.launch.executable == "GAME.EXE")
+        #expect(updated.game.launch.setupExecutable == "SETSOUND.EXE")
+        let conf = try String(contentsOf: updated.crateURL.appending(path: ".cache/launch.conf"), encoding: .utf8)
+        #expect(conf.contains("SETSOUND.EXE\n"))
+        #expect(!conf.contains("GAME.EXE"))
+
+        runner.processes[0].finish(0)
+        await waitUntil { !model.sessions.running.contains(id) }
+    }
+
+    @Test func nonDOSPathDoesNotOfferOrApplyUseFolderAsCWhenOtherProgramOutsideFolder() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (model, id) = try await makeModel(
+            executable: "GAME.EXE",
+            files: ["GAME.EXE", "Long Folder/SETUP.EXE"]
+        ) {
+            $0.launch.setupExecutable = "Long Folder/SETUP.EXE"
+        }
+
+        await model.runSetup(id)?.value
+        // Because GAME.EXE is at the root of C:, rebasing C: to "Long Folder" would break Play.
+        #expect(model.alert?.fix == .chooseSetupExecutable)
+
+        // Directly invoking applyFix(.useFolderAsC) must also refuse to rebase when a program is outside the folder.
+        model.applyFix(.useFolderAsC("Long Folder"), for: id)
+        let unchanged = try #require(model.store.record(id)).game.launch
+        #expect(unchanged.driveCRoot == "")
+        #expect(unchanged.executable == "GAME.EXE")
+        #expect(unchanged.setupExecutable == "Long Folder/SETUP.EXE")
+
+        // When both executable and setupExecutable live inside "Long Folder", .useFolderAsC IS offered and rebases both.
+        try FileManager.default.createDirectory(
+            at: model.store.record(id)!.crateURL.appending(path: "files/Long Folder"),
+            withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(
+            atPath: model.store.record(id)!.crateURL.appending(path: "files/Long Folder/GAME.EXE").path,
+            contents: Data("MZ".utf8)
+        )
+        var g = try #require(model.store.record(id)).game
+        g.launch.executable = "Long Folder/GAME.EXE"
+        try model.store.save(g)
+        await model.runSetup(id)?.value
+        #expect(model.alert?.fix == .useFolderAsC("Long Folder"))
+
+        model.applyFix(.useFolderAsC("Long Folder"), for: id)
+        let rebased = try #require(model.store.record(id)).game.launch
+        #expect(rebased.driveCRoot == "Long Folder")
+        #expect(rebased.executable == "GAME.EXE")
+        #expect(rebased.setupExecutable == "SETUP.EXE")
     }
 }

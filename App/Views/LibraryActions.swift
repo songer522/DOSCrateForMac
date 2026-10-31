@@ -279,20 +279,26 @@ struct LibraryActions: ViewModifier {
         var game = record.game
         let panel = NSOpenPanel()
         switch pending.fix {
-        case .chooseExecutable:
+        case .chooseExecutable, .chooseSetupExecutable:
+            let forSetup = (pending.fix == .chooseSetupExecutable)
             guard let cDrive = try? CrateIO().cDriveURL(for: record) else { return }
             panel.directoryURL = cDrive
-            panel.prompt = "Use as Program"
+            panel.prompt = forSetup ? "Use as Setup Program" : "Use as Program"
             guard panel.runModal() == .OK, let url = panel.url else { return }
             let root = cDrive.standardizedFileURL.path + "/"
             let chosen = url.standardizedFileURL.path
             guard chosen.hasPrefix(root) else {
                 model.alert = AppAlert(title: "Choose a file inside the game folder",
                                        message: "The program must be in the folder DOSCrate mounts as C:.",
-                                       fix: .chooseExecutable, gameID: game.id)
+                                       fix: pending.fix, gameID: game.id)
                 return
             }
-            game.launch.executable = String(chosen.dropFirst(root.count))
+            let relative = String(chosen.dropFirst(root.count))
+            if forSetup {
+                game.launch.setupExecutable = relative
+            } else {
+                game.launch.executable = relative
+            }
         case .locateFolder, .recreate:
             if pending.fix == .locateFolder {
                 guard case .referenced = record.game.source else { return }
