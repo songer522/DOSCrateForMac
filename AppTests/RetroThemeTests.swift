@@ -187,8 +187,8 @@ struct RetroThemeTests {
 
         let notes = WhatsNewChangelog.bundled
         #expect(WhatsNewView.steppedSelection(in: [], current: nil, by: 1) == nil)
-        #expect(WhatsNewView.steppedSelection(in: notes, current: nil, by: 1) == "1.0.2")
-        #expect(WhatsNewView.steppedSelection(in: notes, current: "1.0.2", by: 1) == "1.0.1")
+        #expect(WhatsNewView.steppedSelection(in: notes, current: nil, by: 1) == notes[0].id)
+        #expect(WhatsNewView.steppedSelection(in: notes, current: notes[0].id, by: 1) == notes[1].id)
         #expect(WhatsNewView.steppedSelection(in: notes, current: "1.0.0", by: 1) == "1.0.0")
         #expect(WhatsNewView.steppedSelection(in: notes, current: "1.0.0", by: -1) == "1.0.1")
 
