@@ -61,14 +61,14 @@ struct LicensesTests {
 
     @Test func whatsNewChangelogParsesBundledVersionsAndRendersHTML() throws {
         let sections = WhatsNewChangelog.bundled
-        #expect(sections.map(\.version) == ["1.0.2", "1.0.1", "1.0.0"])
+        #expect(sections.map(\.version) == ["1.0.3", "1.0.2", "1.0.1", "1.0.0"])
         let latest = try #require(sections.first)
-        #expect(latest.version == "1.0.2")
-        #expect(latest.items.contains { $0.title == "Instant Single-Game Imports" })
-        #expect(latest.items.contains { $0.title.contains("Extra Folder Mounts") })
+        #expect(latest.version == "1.0.3")
+        #expect(latest.items.contains { $0.title.contains("Per-Game Setup") })
+        #expect(latest.items.contains { $0.title.contains("Multi-Game Batch Inspector") })
 
         let html = WhatsNewChangelog.html(for: latest)
-        #expect(html.contains("<h3>What's New in DOSCrate 1.0.2</h3>"))
-        #expect(html.contains("<strong>Instant Single-Game Imports:</strong>"))
+        #expect(html.contains("<h3>What's New in DOSCrate 1.0.3</h3>"))
+        #expect(html.contains("<strong>Multi-Game Batch Inspector:</strong>"))
     }
 }

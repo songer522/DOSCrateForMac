@@ -1,5 +1,13 @@
 # What's New in DOSCrate
 
+## 1.0.3
+
+- **Per-Game Setup & Sound Utility (`SETUP.EXE` / `INSTALL.EXE`)**: Automatically detects setup and sound configuration utilities on import, adds a **Setup program** picker under **Startup**, and provides **Setup** / **Run Setup** actions in the inspector and context menu without affecting play statistics.
+- **`.cue` / `.bin` CD-ROM Image Sets in Drives**: Add `.cue`/`.bin` CD-ROM image sets directly from **Add Disc or Floppy Image…** in the inspector's **Drives** section, with automatic track copying, collision numbering, and companion track cleanup on removal.
+- **Custom Cover & Screenshot Management + In-Game Captures**: Choose or remove cover art from the cover context menu, add or remove custom screenshots in the **Art** strip, and automatically surface screenshots captured during DOSBox Staging gameplay (`[capture] capture_dir`).
+- **Multi-Game Batch Inspector**: Select multiple games in the grid or list to batch-toggle favorites, add or remove tags, edit shared metadata (`Genre`, `Year`, `Developer`, `Publisher`), or apply a machine preset across the selection.
+- **Show Game Files (`C:`) in Finder & On-Demand Logs**: Open a game's mounted `C:` folder directly in Finder from the context menu and view or reveal `dosbox.log` anytime from the **Advanced** tab or context menu.
+
 ## 1.0.2
 
 - **Instant Single-Game Imports**: Single-game imports now add the game to your library immediately and copy game files or disc images in the background with a loading indicator.
