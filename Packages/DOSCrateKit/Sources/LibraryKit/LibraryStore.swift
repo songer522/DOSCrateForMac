@@ -26,6 +26,7 @@ public final class LibraryStore {
     @ObservationIgnored private var isWatching = false
     @ObservationIgnored private var watcher: FolderWatcher?
     @ObservationIgnored private var healthWatcher: FolderWatcher?
+    @ObservationIgnored private var healthWatcherSetup: Task<Void, Never>?
     @ObservationIgnored private var watchedHealthScope: Set<String> = []
     @ObservationIgnored private var debounce: Task<Void, Never>?
     @ObservationIgnored private var healthDebounce: Task<Void, Never>?
@@ -61,12 +62,13 @@ public final class LibraryStore {
         guard !snapshot.isEmpty else { return }
         let started = generation
         let io = self.io
-        let updates = await Task.detached { () -> [UUID: (status: RecordStatus, needsAttention: Bool, source: GameSource)] in
-            var out: [UUID: (status: RecordStatus, needsAttention: Bool, source: GameSource)] = [:]
+        let updates = await Task.detached { () -> [UUID: (status: RecordStatus, needsAttention: Bool, refreshedSource: GameSource?)] in
+            var out: [UUID: (status: RecordStatus, needsAttention: Bool, refreshedSource: GameSource?)] = [:]
             for record in snapshot {
                 if io.isIncompleteImport(record.crateURL) { continue }
                 var probe = record
                 var resolvedFolder: URL?
+                var refreshedSource: GameSource?
                 switch record.status {
                 case .ok, .missingSource:
                     if case .referenced(let path, let bookmark) = record.game.source {
@@ -74,8 +76,9 @@ public final class LibraryStore {
                             resolvedFolder = resolved.url
                             probe.status = .ok
                             if resolved.stale {
-                                probe.game.source = .referenced(path: resolved.url.path, bookmark: resolved.bookmark)
-                                try? io.save(probe.game, extra: probe.extra, to: probe.crateURL)
+                                let updatedSource = GameSource.referenced(path: resolved.url.path, bookmark: resolved.bookmark)
+                                probe.game.source = updatedSource
+                                refreshedSource = updatedSource
                             }
                         } else {
                             probe.status = .missingSource
@@ -91,8 +94,8 @@ public final class LibraryStore {
                 )
                 if probe.status != record.status
                     || attention != record.needsAttention
-                    || probe.game.source != record.game.source {
-                    out[record.id] = (probe.status, attention, probe.game.source)
+                    || refreshedSource != nil {
+                    out[record.id] = (probe.status, attention, refreshedSource)
                 }
             }
             return out
@@ -106,7 +109,12 @@ public final class LibraryStore {
         guard !updates.isEmpty else { return }
         for index in records.indices {
             if let update = updates[records[index].id] {
-                records[index].game.source = update.source
+                if let refreshedSource = update.refreshedSource {
+                    records[index].game.source = refreshedSource
+                    let crate = records[index].crateURL
+                    let extra = io.extraOnDisk(at: crate) ?? records[index].extra
+                    try? io.save(records[index].game, extra: extra, to: crate)
+                }
                 records[index].status = update.status
                 records[index].needsAttention = update.needsAttention
             }
@@ -247,6 +255,8 @@ public final class LibraryStore {
         isWatching = false
         watcher?.stop()
         watcher = nil
+        healthWatcherSetup?.cancel()
+        healthWatcherSetup = nil
         healthWatcher?.stop()
         healthWatcher = nil
         watchedHealthScope = []
@@ -259,12 +269,29 @@ public final class LibraryStore {
     private func rebuildHealthWatcher(force: Bool = false) {
         guard isWatching else { return }
         let library = self.library
-        var watchURLs: [URL] = [library]
-        var seenWatchPaths: Set<String> = [library.standardizedFileURL.path]
-        var referencedRoots: Set<String> = []
+        var rawScope: Set<String> = [library.standardizedFileURL.path]
+        var referencedURLs: [URL] = []
         for record in records {
             if case .referenced(let path, _) = record.game.source {
                 let refURL = URL(filePath: path, directoryHint: .isDirectory)
+                if rawScope.insert(refURL.standardizedFileURL.path).inserted {
+                    referencedURLs.append(refURL)
+                }
+            }
+        }
+        if !force, rawScope == watchedHealthScope, (healthWatcher != nil || healthWatcherSetup != nil) {
+            return
+        }
+        watchedHealthScope = rawScope
+        healthWatcherSetup?.cancel()
+        healthWatcher?.stop()
+        healthWatcher = nil
+        let expectedScope = rawScope
+        healthWatcherSetup = Task.detached { [weak self] in
+            var watchURLs: [URL] = [library]
+            var seenWatchPaths: Set<String> = [library.standardizedFileURL.path]
+            var referencedRoots: Set<String> = []
+            for refURL in referencedURLs {
                 for canonical in Self.canonicalPaths(for: refURL) {
                     referencedRoots.insert(canonical)
                 }
@@ -276,19 +303,23 @@ public final class LibraryStore {
                     }
                 }
             }
-        }
-        let newScope = seenWatchPaths.union(referencedRoots)
-        if !force, newScope == watchedHealthScope, healthWatcher != nil {
-            return
-        }
-        watchedHealthScope = newScope
-        let roots = referencedRoots
-        healthWatcher?.stop()
-        healthWatcher = FolderWatcher(
-            urls: watchURLs,
-            isRelevant: { Self.isHealthRelevantChange($0, library: library, referencedRoots: roots) }
-        ) { [weak self] in
-            Task { @MainActor in self?.scheduleHealthRefresh() }
+            let libraryBases = Self.canonicalPaths(for: library)
+            let roots = referencedRoots
+            guard !Task.isCancelled else { return }
+            let newWatcher = FolderWatcher(
+                urls: watchURLs,
+                isRelevant: { Self.isHealthRelevantChange($0, libraryBases: libraryBases, referencedRoots: roots) }
+            ) { [weak self] in
+                Task { @MainActor in self?.scheduleHealthRefresh() }
+            }
+            await MainActor.run { [weak self] in
+                guard let self, self.isWatching, self.watchedHealthScope == expectedScope, !Task.isCancelled else {
+                    newWatcher.stop()
+                    return
+                }
+                self.healthWatcher = newWatcher
+                self.healthWatcherSetup = nil
+            }
         }
     }
 
@@ -334,7 +365,15 @@ public final class LibraryStore {
         library: URL,
         referencedRoots: Set<String> = []
     ) -> Bool {
-        for base in canonicalPaths(for: library) where path.hasPrefix(base + "/") {
+        isHealthRelevantChange(path, libraryBases: canonicalPaths(for: library), referencedRoots: referencedRoots)
+    }
+
+    nonisolated static func isHealthRelevantChange(
+        _ path: String,
+        libraryBases: [String],
+        referencedRoots: Set<String> = []
+    ) -> Bool {
+        for base in libraryBases where path.hasPrefix(base + "/") {
             let components = path.dropFirst(base.count).split(separator: "/")
             if components.count >= 2,
                components[0].hasSuffix("." + CrateIO.crateExtension),
