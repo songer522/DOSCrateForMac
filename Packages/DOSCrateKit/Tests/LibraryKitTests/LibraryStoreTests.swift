@@ -263,6 +263,82 @@ struct LibraryStoreTests {
         #expect(LibraryStore.isRelevantChange("/Users/x/DOSCrate Library/New.doscrate", library: lib))
         #expect(LibraryStore.isRelevantChange("/Users/x/DOSCrate Library", library: lib))
         #expect(LibraryStore.isRelevantChange("/Users/x/DOSCrate Library/Keen.doscrate/media/files", library: lib))
+
+        let refs: Set<String> = ["/Volumes/Games/DOOM"]
+        #expect(LibraryStore.isHealthRelevantChange("/Users/x/DOSCrate Library/Keen.doscrate/files/KEEN.EXE", library: lib, referencedRoots: refs))
+        #expect(LibraryStore.isHealthRelevantChange("/Volumes/Games/DOOM/DOOM.EXE", library: lib, referencedRoots: refs))
+        #expect(LibraryStore.isHealthRelevantChange("/Volumes/Games/DOOM", library: lib, referencedRoots: refs))
+        #expect(!LibraryStore.isHealthRelevantChange("/Users/x/DOSCrate Library/Keen.doscrate/.cache/logs/a.log", library: lib, referencedRoots: refs))
+        #expect(!LibraryStore.isHealthRelevantChange("/Volumes/Games/Other/OTHER.EXE", library: lib, referencedRoots: refs))
+    }
+
+    @Test func watcherRefreshesHealthWhenManagedOrReferencedFilesChange() async throws {
+        let lib = try makeTempDir()
+        let extSource = lib.deletingLastPathComponent().appending(path: "ext-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer {
+            try? FileManager.default.removeItem(at: lib)
+            try? FileManager.default.removeItem(at: extSource)
+        }
+
+        let managedCrate = try io.makeCrate(title: "Keen", in: lib)
+        let managedFiles = managedCrate.appending(path: "files", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: managedFiles, withIntermediateDirectories: true)
+        let managedExe = managedFiles.appending(path: "KEEN.EXE")
+        try Data("exe".utf8).write(to: managedExe)
+        var managedGame = Game(title: "Keen", source: .managed)
+        managedGame.launch.executable = "KEEN.EXE"
+        try io.save(managedGame, extra: [:], to: managedCrate)
+
+        try FileManager.default.createDirectory(at: extSource, withIntermediateDirectories: true)
+        let refExe = extSource.appending(path: "DOOM.EXE")
+        try Data("exe".utf8).write(to: refExe)
+        let refCrate = try io.makeCrate(title: "Doom", in: lib)
+        var refGame = Game(title: "Doom", source: .referenced(path: extSource.path, bookmark: try CrateIO.makeBookmark(for: extSource)))
+        refGame.launch.executable = "DOOM.EXE"
+        try io.save(refGame, extra: [:], to: refCrate)
+
+        let store = LibraryStore(library: lib)
+        await store.reload()
+        #expect(store.record(managedGame.id)?.needsAttention == false)
+        #expect(store.record(refGame.id)?.needsAttention == false)
+
+        var reloads = 0
+        store.onReload = { reloads += 1 }
+        store.startWatching()
+        defer { store.stopWatching() }
+        try await Task.sleep(for: .milliseconds(500))
+
+        // Deleting a managed game's executable inside `files/` updates needsAttention without a full library reload.
+        try FileManager.default.removeItem(at: managedExe)
+        for _ in 0..<50 where store.record(managedGame.id)?.needsAttention == false {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(store.record(managedGame.id)?.needsAttention == true)
+        #expect(reloads == 0)
+
+        // Restoring the managed executable clears needsAttention.
+        try Data("exe".utf8).write(to: managedExe)
+        for _ in 0..<50 where store.record(managedGame.id)?.needsAttention == true {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(store.record(managedGame.id)?.needsAttention == false)
+        #expect(reloads == 0)
+
+        // Deleting and restoring a referenced game's folder updates status and needsAttention in the background.
+        try FileManager.default.removeItem(at: extSource)
+        for _ in 0..<50 where store.record(refGame.id)?.needsAttention == false {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(store.record(refGame.id)?.status == .missingSource)
+        #expect(store.record(refGame.id)?.needsAttention == true)
+
+        try FileManager.default.createDirectory(at: extSource, withIntermediateDirectories: true)
+        try Data("exe".utf8).write(to: refExe)
+        for _ in 0..<50 where store.record(refGame.id)?.needsAttention == true {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(store.record(refGame.id)?.status == .ok)
+        #expect(store.record(refGame.id)?.needsAttention == false)
     }
 }
 

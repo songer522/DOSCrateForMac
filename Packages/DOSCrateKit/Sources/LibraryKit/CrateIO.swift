@@ -21,16 +21,31 @@ public struct GameRecord: Sendable, Equatable, Identifiable {
     public var game: Game
     public var crateURL: URL
     public var extra: [String: JSONValue]
-    public var status: RecordStatus
+    public var status: RecordStatus {
+        didSet {
+            if status != .ok { needsAttention = true }
+        }
+    }
+    /// Precomputed health flag indicating whether this record has a non-ok status, an unreachable or missing C: folder,
+    /// or a missing/invalid configured executable. Computed when loading or saving records so view rendering and
+    /// query filtering never perform synchronous filesystem or bookmark I/O.
+    public var needsAttention: Bool
 
     /// The game's id; for records that need repair this is a UUID derived from the crate path.
     public var id: UUID { game.id }
 
-    public init(game: Game, crateURL: URL, extra: [String: JSONValue] = [:], status: RecordStatus = .ok) {
+    public init(
+        game: Game,
+        crateURL: URL,
+        extra: [String: JSONValue] = [:],
+        status: RecordStatus = .ok,
+        needsAttention: Bool? = nil
+    ) {
         self.game = game
         self.crateURL = crateURL
         self.extra = extra
         self.status = status
+        self.needsAttention = needsAttention ?? (status != .ok)
     }
 }
 
@@ -151,9 +166,11 @@ public struct CrateIO: Sendable {
         }
 
         var record = GameRecord(game: decoded.game, crateURL: crateURL, extra: decoded.extra, status: .ok)
+        var resolvedReferencedFolder: URL?
         if case .referenced(let path, let bookmark) = decoded.game.source {
             do {
                 let resolved = try Self.resolve(path: path, bookmark: bookmark)
+                resolvedReferencedFolder = resolved.url
                 if resolved.stale {
                     record.game.source = .referenced(path: resolved.url.path, bookmark: resolved.bookmark)
                     try? save(record.game, extra: record.extra, to: crateURL)
@@ -162,6 +179,11 @@ public struct CrateIO: Sendable {
                 record.status = .missingSource
             }
         }
+        record.needsAttention = LibraryQuery.needsAttention(
+            record,
+            io: self,
+            resolvedReferencedFolder: resolvedReferencedFolder
+        )
         return record
     }
 
@@ -242,8 +264,17 @@ public struct CrateIO: Sendable {
     }
 
     public func cDriveURL(for record: GameRecord) throws -> URL {
-        let root = try referencedFolderURL(for: record)
-            ?? record.crateURL.appending(path: "files", directoryHint: .isDirectory)
+        try cDriveURL(for: record, resolvedReferencedFolder: nil)
+    }
+
+    func cDriveURL(for record: GameRecord, resolvedReferencedFolder: URL?) throws -> URL {
+        let root: URL
+        if let resolvedReferencedFolder {
+            root = resolvedReferencedFolder
+        } else {
+            root = try referencedFolderURL(for: record)
+                ?? record.crateURL.appending(path: "files", directoryHint: .isDirectory)
+        }
         let sub = record.game.launch.driveCRoot
         guard !sub.isEmpty else { return root }
         let normalized = sub.replacingOccurrences(of: "\\", with: "/")
@@ -310,13 +341,18 @@ public struct CrateIO: Sendable {
         try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
-    private static func resolve(path: String, bookmark: Data) throws -> (url: URL, stale: Bool, bookmark: Data) {
+    static func resolve(path: String, bookmark: Data) throws -> (url: URL, stale: Bool, bookmark: Data) {
         var stale = false
-        let url = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        if let url = try? URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale),
+           FileManager.default.fileExists(atPath: url.path) {
+            return (url, stale, stale ? try makeBookmark(for: url) : bookmark)
+        }
+        let fallback = URL(filePath: path, directoryHint: .isDirectory)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: fallback.path, isDirectory: &isDir), isDir.boolValue else {
             throw LibraryError.sourceUnreachable(path: path)
         }
-        return (url, stale, stale ? try makeBookmark(for: url) : bookmark)
+        return (fallback, true, try makeBookmark(for: fallback))
     }
 
     private static func derivedID(for crateURL: URL) -> UUID {

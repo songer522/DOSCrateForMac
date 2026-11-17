@@ -246,7 +246,9 @@ public struct Importer: Sendable {
             n += 1
         }
         try fm.moveItem(at: crate, to: destination)
-        return GameRecord(game: game, crateURL: destination)
+        var record = GameRecord(game: game, crateURL: destination)
+        record.needsAttention = LibraryQuery.needsAttention(record, io: io)
+        return record
     }
 
     /// Creates the crate directory in `library` and writes `game.json` immediately so the game can appear in the
@@ -278,7 +280,11 @@ public struct Importer: Sendable {
                 )
             }
             try io.save(game, extra: [:], to: destination)
-            return GameRecord(game: game, crateURL: destination)
+            var record = GameRecord(game: game, crateURL: destination)
+            if mode == .reference {
+                record.needsAttention = LibraryQuery.needsAttention(record, io: io)
+            }
+            return record
         } catch {
             try? fm.removeItem(at: destination)
             throw error
@@ -375,7 +381,9 @@ public struct Importer: Sendable {
             if fm.fileExists(atPath: oldMedia.path) {
                 try? fm.trashItem(at: oldMedia, resultingItemURL: nil)
             }
-            return GameRecord(game: game, crateURL: crate, extra: extra, status: .ok)
+            var record = GameRecord(game: game, crateURL: crate, extra: extra, status: .ok)
+            record.needsAttention = LibraryQuery.needsAttention(record, io: io)
+            return record
         }
 
         let work = try makeWorkDirectory(appropriateFor: crate, fallbackParent: crate.deletingLastPathComponent())
@@ -471,7 +479,9 @@ public struct Importer: Sendable {
 
         if hadOldFiles { try? fm.trashItem(at: oldFilesBackup, resultingItemURL: nil) }
         if hadOldMedia { try? fm.trashItem(at: oldMediaBackup, resultingItemURL: nil) }
-        return GameRecord(game: game, crateURL: crate, extra: latestExtra, status: .ok)
+        var record = GameRecord(game: game, crateURL: crate, extra: latestExtra, status: .ok)
+        record.needsAttention = LibraryQuery.needsAttention(record, io: io)
+        return record
     }
 
     // MARK: Helpers

@@ -124,4 +124,140 @@ struct LibraryQueryTests {
         #expect(allPublishers(in: rs) == ["Koei Co., Ltd.", "Sierra"])
         #expect(allDevelopers(in: rs) == ["Koei", "Legend Entertainment"])
     }
+
+    @Test func needsAttentionChecksStatusCDriveAndExecutable() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "query-attention-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        func makeManagedCrate(_ name: String, createFiles: Bool = true, executable: String? = nil, driveCRoot: String = "", status: RecordStatus = .ok) throws -> GameRecord {
+            let crate = root.appending(path: "\(name).doscrate", directoryHint: .isDirectory)
+            let files = crate.appending(path: "files", directoryHint: .isDirectory)
+            if createFiles {
+                try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+            } else {
+                try FileManager.default.createDirectory(at: crate, withIntermediateDirectories: true)
+            }
+            var g = Game(title: name, source: .managed)
+            g.launch.executable = executable
+            g.launch.driveCRoot = driveCRoot
+            return GameRecord(game: g, crateURL: crate, status: status)
+        }
+
+        // Healthy record with existing executable
+        let healthy = try makeManagedCrate("Healthy", executable: "DOOM.EXE")
+        try Data("exe".utf8).write(to: healthy.crateURL.appending(path: "files/DOOM.EXE"))
+        #expect(!LibraryQuery.needsAttention(healthy))
+        #expect(!healthy.needsAttention)
+
+        // Healthy record with no executable configured
+        let noExe = try makeManagedCrate("NoExe", executable: nil)
+        #expect(!LibraryQuery.needsAttention(noExe))
+
+        // Non-ok statuses need attention even when files exist
+        let repair = try makeManagedCrate("Repair", status: .needsRepair(reason: "broken"))
+        let missingSource = try makeManagedCrate("MissingSource", status: .missingSource)
+        let readOnly = try makeManagedCrate("ReadOnly", status: .readOnly(reason: "newer"))
+        #expect(LibraryQuery.needsAttention(repair))
+        #expect(LibraryQuery.needsAttention(missingSource))
+        #expect(LibraryQuery.needsAttention(readOnly))
+
+        // Missing C: folder (`files/` deleted or missing `driveCRoot` subfolder)
+        let noFiles = try makeManagedCrate("NoFiles", createFiles: false)
+        let missingSubfolder = try makeManagedCrate("MissingSub", driveCRoot: "SUBDIR")
+        #expect(LibraryQuery.needsAttention(noFiles))
+        #expect(LibraryQuery.needsAttention(missingSubfolder))
+
+        // Referenced game whose external folder was removed after bookmark creation
+        let extFolder = root.appending(path: "ExternalGame", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: extFolder, withIntermediateDirectories: true)
+        let bookmark = try CrateIO.makeBookmark(for: extFolder)
+        var refGame = Game(title: "Referenced", source: .referenced(path: extFolder.path, bookmark: bookmark))
+        refGame.launch.executable = nil
+        let refCrate = root.appending(path: "Referenced.doscrate", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: refCrate, withIntermediateDirectories: true)
+        let refRecord = GameRecord(game: refGame, crateURL: refCrate, status: .ok)
+        #expect(!LibraryQuery.needsAttention(refRecord))
+        try FileManager.default.removeItem(at: extFolder)
+        #expect(LibraryQuery.needsAttention(refRecord))
+
+        // Missing executable file, directory as executable, or escaping symlink
+        let missingExe = try makeManagedCrate("MissingExe", executable: "GONE.EXE")
+        #expect(LibraryQuery.needsAttention(missingExe))
+
+        let dirExe = try makeManagedCrate("DirExe", executable: "SUBDIR")
+        try FileManager.default.createDirectory(at: dirExe.crateURL.appending(path: "files/SUBDIR"), withIntermediateDirectories: true)
+        #expect(LibraryQuery.needsAttention(dirExe))
+
+        let escapeExe = try makeManagedCrate("EscapeExe", executable: "OUT.EXE")
+        let outside = root.appending(path: "OUT.EXE")
+        try Data("exe".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(
+            at: escapeExe.crateURL.appending(path: "files/OUT.EXE"),
+            withDestinationURL: outside
+        )
+        #expect(LibraryQuery.needsAttention(escapeExe))
+
+        // Existing executable with non-8.3 DOS path components or backslashes needs attention
+        let nonDOSFolderExe = try makeManagedCrate("NonDOSFolder", executable: "Commander Keen/KEEN1.EXE")
+        let nonDOSFolderURL = nonDOSFolderExe.crateURL.appending(path: "files/Commander Keen", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: nonDOSFolderURL, withIntermediateDirectories: true)
+        try Data("exe".utf8).write(to: nonDOSFolderURL.appending(path: "KEEN1.EXE"))
+        #expect(LibraryQuery.needsAttention(nonDOSFolderExe))
+
+        let nonDOSFileExe = try makeManagedCrate("NonDOSFile", executable: "LONGNAME123.EXE")
+        try Data("exe".utf8).write(to: nonDOSFileExe.crateURL.appending(path: "files/LONGNAME123.EXE"))
+        #expect(LibraryQuery.needsAttention(nonDOSFileExe))
+
+        let backslashExe = try makeManagedCrate("BackslashExe", executable: "SUB\\KEEN1.EXE")
+        let subURL = backslashExe.crateURL.appending(path: "files/SUB", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: subURL, withIntermediateDirectories: true)
+        try Data("exe".utf8).write(to: subURL.appending(path: "KEEN1.EXE"))
+        #expect(LibraryQuery.needsAttention(backslashExe))
+    }
+
+    @Test func filterAndCountIncludeNeedsAttentionAndCollections() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "query-counts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        func makeHealthy(_ title: String, favorite: Bool = false, lastPlayed: Date? = nil, tags: [String] = [], genre: String? = nil) throws -> GameRecord {
+            let crate = root.appending(path: "\(title).doscrate", directoryHint: .isDirectory)
+            let files = crate.appending(path: "files", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+            try Data("exe".utf8).write(to: files.appending(path: "GAME.EXE"))
+            var g = Game(title: title, source: .managed)
+            g.isFavorite = favorite
+            g.stats.lastPlayed = lastPlayed
+            g.tags = tags
+            g.genre = genre
+            g.launch.executable = "GAME.EXE"
+            return GameRecord(game: g, crateURL: crate, status: .ok)
+        }
+
+        let doom = try makeHealthy("DOOM", favorite: true, lastPlayed: now.addingTimeInterval(-3600), tags: ["FPS"], genre: "Shooter")
+        let keen = try makeHealthy("Keen", favorite: false, lastPlayed: nil, tags: ["Platformer"], genre: "Platform")
+        var brokenExe = try makeHealthy("BrokenExe", favorite: false, lastPlayed: nil, tags: ["FPS"], genre: "Shooter")
+        brokenExe.game.launch.executable = "MISSING.EXE"
+        brokenExe.needsAttention = LibraryQuery.needsAttention(brokenExe)
+        let repair = record("NeedsRepair", genre: "Adventure", status: .needsRepair(reason: "corrupt"))
+
+        let records = [doom, keen, brokenExe, repair]
+
+        #expect(titles(LibraryQuery(filter: .needsAttention), records) == ["BrokenExe", "NeedsRepair"])
+        #expect(titles(LibraryQuery(filter: .needsAttention, genre: "Shooter"), records) == ["BrokenExe"])
+        #expect(titles(LibraryQuery(filter: .needsAttention, search: "repair"), records) == ["NeedsRepair"])
+
+        #expect(LibraryQuery.count(for: .all, in: records, now: now) == 4)
+        #expect(LibraryQuery.count(for: .recent, in: records, now: now) == 2) // doom + repair
+        #expect(LibraryQuery.count(for: .favorites, in: records, now: now) == 2) // doom + repair
+        #expect(LibraryQuery.count(for: .needsAttention, in: records, now: now) == 2) // brokenExe + repair
+        #expect(LibraryQuery.count(for: .tag("fps"), in: records, now: now) == 3) // doom + brokenExe + repair
+        #expect(LibraryQuery.count(for: .tag("Platformer"), in: records, now: now) == 2) // keen + repair
+
+        // Filtering and counting read the cached `record.needsAttention` flag without hitting the filesystem.
+        try FileManager.default.removeItem(at: doom.crateURL.appending(path: "files/GAME.EXE"))
+        #expect(LibraryQuery.count(for: .needsAttention, in: records, now: now) == 2)
+        #expect(titles(LibraryQuery(filter: .needsAttention), records) == ["BrokenExe", "NeedsRepair"])
+    }
 }
