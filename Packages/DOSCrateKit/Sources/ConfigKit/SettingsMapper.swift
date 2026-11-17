@@ -31,6 +31,15 @@ public enum SettingsMapper {
                 d.set("sblaster", "oplmode", "opl2")
                 d.set("gus", "gus", "false")
             case .gus: d.set("gus", "gus", "true")
+            case .tandy:
+                d.set("sblaster", "sbtype", "none")
+                d.set("sblaster", "oplmode", "none")
+                d.set("gus", "gus", "false")
+                d.set("speaker", "tandy", "on")
+            case .cms:
+                d.set("sblaster", "sbtype", "gb")
+                d.set("sblaster", "oplmode", "cms")
+                d.set("gus", "gus", "false")
             case .none:
                 d.set("sblaster", "sbtype", "none")
                 d.set("sblaster", "oplmode", "none")
@@ -48,6 +57,7 @@ public enum SettingsMapper {
                 if let p = env.mt32RomDir { d.set("mt32", "romdir", p) }
             }
         }
+        if let v = s.pcSpeaker { d.set("speaker", "pcspeaker", v ? "true" : "false") }
         if let v = s.mouseCapture { d.set("mouse", "mouse_capture", v.rawValue) }
         if let v = s.keyboardLayout { d.set("dos", "keyboard_layout", v) }
         if let v = s.controllerMode { d.set("joystick", "joysticktype", v.joystickType) }

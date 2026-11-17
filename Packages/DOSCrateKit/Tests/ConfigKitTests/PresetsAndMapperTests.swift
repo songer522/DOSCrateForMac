@@ -46,10 +46,28 @@ private let env = ConfigEnvironment(soundfontPath: nil, mt32RomDir: nil)
     #expect(doc(.sb16).value("sblaster", "sbtype") == "sb16")
     #expect(doc(.sbPro).value("sblaster", "sbtype") == "sbpro2")
     #expect(doc(.gus).value("gus", "gus") == "true")
+    let tandy = doc(.tandy)
+    #expect(tandy.value("sblaster", "sbtype") == "none")
+    #expect(tandy.value("sblaster", "oplmode") == "none")
+    #expect(tandy.value("gus", "gus") == "false")
+    #expect(tandy.value("speaker", "tandy") == "on")
+    let cms = doc(.cms)
+    #expect(cms.value("sblaster", "sbtype") == "gb")
+    #expect(cms.value("sblaster", "oplmode") == "cms")
+    #expect(cms.value("gus", "gus") == "false")
     let none = doc(.none)
     #expect(none.value("sblaster", "sbtype") == "none")
     #expect(none.value("sblaster", "oplmode") == "none")
     #expect(none.value("gus", "gus") == "false")
+}
+
+@Test func pcSpeakerMapping() {
+    let onDoc = SettingsMapper.document(GameSettings(pcSpeaker: true), env: env)
+    #expect(onDoc.value("speaker", "pcspeaker") == "true")
+    let offDoc = SettingsMapper.document(GameSettings(pcSpeaker: false), env: env)
+    #expect(offDoc.value("speaker", "pcspeaker") == "false")
+    let nilDoc = SettingsMapper.document(GameSettings(pcSpeaker: nil), env: env)
+    #expect(nilDoc.value("speaker", "pcspeaker") == nil)
 }
 
 @Test func soundBlasterOverridesInheritedAudio() {
