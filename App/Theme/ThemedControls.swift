@@ -491,6 +491,7 @@ struct ThemedLabeledRow<Content: View>: View {
 struct RetroModalContainer<Content: View>: View {
     let title: String
     let width: CGFloat
+    let autofocusContainer: Bool
     var onCancel: (() -> Void)?
     var onDefaultAction: (() -> Void)?
     private let content: Content
@@ -499,12 +500,14 @@ struct RetroModalContainer<Content: View>: View {
     init(
         title: String,
         width: CGFloat,
+        autofocusContainer: Bool = true,
         onCancel: (() -> Void)? = nil,
         onDefaultAction: (() -> Void)? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.width = width
+        self.autofocusContainer = autofocusContainer
         self.onCancel = onCancel
         self.onDefaultAction = onDefaultAction
         self.content = content()
@@ -516,7 +519,9 @@ struct RetroModalContainer<Content: View>: View {
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    isFocused = true
+                    if autofocusContainer {
+                        isFocused = true
+                    }
                 }
             RetroPanel(title: title) {
                 content
@@ -526,10 +531,11 @@ struct RetroModalContainer<Content: View>: View {
             .padding(16)
         }
         .focusSection()
-        .focusable()
+        .focusable(autofocusContainer)
         .focusEffectDisabled()
         .focused($isFocused)
         .onAppear {
+            guard autofocusContainer else { return }
             isFocused = true
             DispatchQueue.main.async {
                 isFocused = true

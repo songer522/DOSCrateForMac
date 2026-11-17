@@ -270,6 +270,7 @@ struct RetroThemeTests {
         let renameHosting = NSHostingView(rootView: renameView)
         renameHosting.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
         renameHosting.layoutSubtreeIfNeeded()
+        #expect(containsTextField(withStringValue: "Role-Playing", in: renameHosting))
 
         CollectionTags.rename("RPG", to: "Role-Playing", in: model)
         #expect(store.record(game.id)?.game.tags == ["Role-Playing", "Classics"])
@@ -359,5 +360,12 @@ struct RetroThemeTests {
             return true
         }
         return view.subviews.contains(where: containsScrollView)
+    }
+
+    private func containsTextField(withStringValue value: String, in view: NSView) -> Bool {
+        if let textField = view as? NSTextField, textField.isEditable, textField.stringValue == value {
+            return true
+        }
+        return view.subviews.contains { containsTextField(withStringValue: value, in: $0) }
     }
 }

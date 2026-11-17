@@ -130,6 +130,7 @@ struct RetroLibraryView: View {
     @State private var renamingCollection: String?
     @State private var newCollectionName = ""
     @State private var removingCollection: String?
+    @FocusState private var renameFieldFocused: Bool
 
     init(
         model: AppModel,
@@ -254,6 +255,7 @@ struct RetroLibraryView: View {
                 RetroModalContainer(
                     title: "Rename Collection",
                     width: 380,
+                    autofocusContainer: false,
                     onCancel: { renamingCollection = nil },
                     onDefaultAction: canRename ? {
                         CollectionTags.rename(old, to: newCollectionName, in: model)
@@ -269,6 +271,18 @@ struct RetroLibraryView: View {
                             .padding(.vertical, 4)
                             .background(RetroPalette.bevelLight)
                             .retroBevel(.sunken)
+                            .focused($renameFieldFocused)
+                            .onAppear {
+                                renameFieldFocused = true
+                                DispatchQueue.main.async {
+                                    renameFieldFocused = true
+                                }
+                            }
+                            .onSubmit {
+                                guard canRename else { return }
+                                CollectionTags.rename(old, to: newCollectionName, in: model)
+                                renamingCollection = nil
+                            }
                         HStack(spacing: 8) {
                             Spacer()
                             Button("Cancel") {
