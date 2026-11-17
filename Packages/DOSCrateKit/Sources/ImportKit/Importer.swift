@@ -513,11 +513,31 @@ public struct Importer: Sendable {
             }
         }
 
+        let gameFile = crateURL.appending(path: "game.json", directoryHint: .notDirectory)
+        let hasGameFile = fm.fileExists(atPath: gameFile.path)
+        var updated = game
+        if hasGameFile {
+            let loaded = io.loadRecord(at: crateURL)
+            if loaded.id == game.id {
+                switch loaded.status {
+                case .ok, .missingSource:
+                    updated = loaded.game
+                case .needsRepair, .readOnly:
+                    break
+                }
+            }
+        }
+        updated.source = .managed
+        let latestExtra = io.extraOnDisk(at: crateURL) ?? [:]
+
         do {
             try fm.moveItem(at: stagingURL, to: destFiles)
+            if hasGameFile {
+                try io.save(updated, extra: latestExtra, to: crateURL)
+            }
         } catch {
+            try? fm.removeItem(at: destFiles)
             if movedOldFilesToBackup, fm.fileExists(atPath: backupFiles.path) {
-                try? fm.removeItem(at: destFiles)
                 try? fm.moveItem(at: backupFiles, to: destFiles)
             }
             throw error
@@ -526,8 +546,6 @@ public struct Importer: Sendable {
             try? fm.removeItem(at: backupFiles)
         }
 
-        var updated = game
-        updated.source = .managed
         return updated
     }
 

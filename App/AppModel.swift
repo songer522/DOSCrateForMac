@@ -341,13 +341,12 @@ final class AppModel {
                 let consolidated = try await Task.detached {
                     try importer.consolidateReferencedGame(in: crateURL, game: gameSnapshot)
                 }.value
-                guard !self.isTerminating,
-                      !self.pendingRemovalIDs.contains(id),
-                      self.store.library == library else { return }
+                guard !self.pendingRemovalIDs.contains(id) else { return }
                 self.flushPendingWrites(for: id)
-                guard var latest = self.store.record(id)?.game else { return }
-                latest.source = consolidated.source
-                try self.store.save(latest)
+                if self.store.library == library, var latest = self.store.record(id)?.game {
+                    latest.source = consolidated.source
+                    try self.store.save(latest)
+                }
             } catch let LibraryError.sourceUnreachable(path) {
                 self.alert = AppAlert(
                     title: "Can't copy files for \(record.game.title)",

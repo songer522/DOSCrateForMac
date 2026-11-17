@@ -1391,6 +1391,71 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(model.store.record(id)?.game.source == .managed)
     }
 
+    @Test func copyFilesIntoLibraryPersistsManagedSourceDuringTerminationAndLibrarySwitch() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let externalDir = root.appending(path: "ExternalTerm", directoryHint: .isDirectory)
+        try fm.createDirectory(at: externalDir, withIntermediateDirectories: true)
+        try Data("exe".utf8).write(to: externalDir.appending(path: "KEEN1.EXE"))
+        let bookmark = try CrateIO.makeBookmark(for: externalDir)
+
+        let (model, id) = try await makeModel(executable: "KEEN1.EXE") { game in
+            game.source = .referenced(path: externalDir.path, bookmark: bookmark)
+        }
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+        let filesDir = crateURL.appending(path: "files", directoryHint: .isDirectory)
+        if fm.fileExists(atPath: filesDir.path) {
+            try fm.removeItem(at: filesDir)
+        }
+
+        // 1. Termination while copyFilesIntoLibrary is in flight still persists source == .managed on disk.
+        let gate1 = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        model.imports.singlePopulateHook = { _ in
+            gate1.withLock { $0.entered = true }
+            while !gate1.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        let task1 = try #require(model.copyFilesIntoLibrary(id))
+        await waitUntil { gate1.withLock { $0.entered } }
+        model.beginTermination()
+        gate1.withLock { $0.released = true }
+        await model.imports.waitForActiveImports()
+        await task1.value
+        model.imports.singlePopulateHook = nil
+
+        #expect(io.loadRecord(at: crateURL).game.source == .managed)
+        #expect(model.store.record(id)?.game.source == .managed)
+
+        // 2. Switching libraries while copyFilesIntoLibrary is in flight still persists source == .managed to the original crate.
+        let (model2, id2) = try await makeModel(executable: "KEEN1.EXE") { game in
+            game.source = .referenced(path: externalDir.path, bookmark: bookmark)
+        }
+        let crateURL2 = try #require(model2.store.record(id2)?.crateURL)
+        let filesDir2 = crateURL2.appending(path: "files", directoryHint: .isDirectory)
+        if fm.fileExists(atPath: filesDir2.path) {
+            try fm.removeItem(at: filesDir2)
+        }
+
+        let gate2 = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        model2.imports.singlePopulateHook = { _ in
+            gate2.withLock { $0.entered = true }
+            while !gate2.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        let task2 = try #require(model2.copyFilesIntoLibrary(id2))
+        await waitUntil { gate2.withLock { $0.entered } }
+        let otherLib = root.appending(path: "OtherLibrary", directoryHint: .isDirectory)
+        await model2.chooseLibrary(otherLib, create: true)?.value
+        gate2.withLock { $0.released = true }
+        await task2.value
+        model2.imports.singlePopulateHook = nil
+
+        #expect(io.loadRecord(at: crateURL2).game.source == .managed)
+        #expect(fm.fileExists(atPath: crateURL2.appending(path: "files/KEEN1.EXE").path))
+    }
+
     @Test func copyFilesIntoLibraryShowsAlertAndCleansUpWhenReferencedFolderIsMissing() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let fm = FileManager.default
