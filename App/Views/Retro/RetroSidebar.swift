@@ -84,6 +84,12 @@ struct RetroSidebar: View {
         } message: {
             Text("The games stay in your library.")
         }
+        .task(id: model.query.filter) {
+            await model.store.refreshAttention()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.store.refreshAttention() }
+        }
     }
 
     private func filterRow(_ title: String, symbol: String, filter: SidebarFilter, count: Int) -> some View {

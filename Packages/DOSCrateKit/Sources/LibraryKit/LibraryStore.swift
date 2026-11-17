@@ -18,11 +18,17 @@ public final class LibraryStore {
     @ObservationIgnored private var watcherSuppressions = 0
     /// Set when a watcher event arrives (or a pending reload is dropped) while suppressed.
     @ObservationIgnored private var missedWatcherEvent = false
+    /// Set when a health-watcher event arrives while suppressed.
+    @ObservationIgnored private var missedHealthEvent = false
 
     @ObservationIgnored private let io: CrateIO
     @ObservationIgnored private let scan: @Sendable (URL) async -> [GameRecord]
+    @ObservationIgnored private var isWatching = false
     @ObservationIgnored private var watcher: FolderWatcher?
+    @ObservationIgnored private var healthWatcher: FolderWatcher?
+    @ObservationIgnored private var watchedHealthScope: Set<String> = []
     @ObservationIgnored private var debounce: Task<Void, Never>?
+    @ObservationIgnored private var healthDebounce: Task<Void, Never>?
     /// Bumped by every reload and every local change, so a scan that started earlier can't overwrite newer state.
     @ObservationIgnored private var generation = 0
 
@@ -44,7 +50,68 @@ public final class LibraryStore {
         let scanned = await scan(library)
         guard started == generation else { return }
         records = scanned
+        rebuildHealthWatcher()
         afterReload?()
+    }
+
+    /// Recomputes filesystem and launch-path health for every loaded record off the main actor
+    /// without rescanning the library index, publishing any changed `status` or `needsAttention` values.
+    public func refreshAttention() async {
+        let snapshot = records
+        guard !snapshot.isEmpty else { return }
+        let started = generation
+        let io = self.io
+        let updates = await Task.detached { () -> [UUID: (status: RecordStatus, needsAttention: Bool, source: GameSource)] in
+            var out: [UUID: (status: RecordStatus, needsAttention: Bool, source: GameSource)] = [:]
+            for record in snapshot {
+                if io.isIncompleteImport(record.crateURL) { continue }
+                var probe = record
+                var resolvedFolder: URL?
+                switch record.status {
+                case .ok, .missingSource:
+                    if case .referenced(let path, let bookmark) = record.game.source {
+                        if let resolved = try? CrateIO.resolve(path: path, bookmark: bookmark) {
+                            resolvedFolder = resolved.url
+                            probe.status = .ok
+                            if resolved.stale {
+                                probe.game.source = .referenced(path: resolved.url.path, bookmark: resolved.bookmark)
+                                try? io.save(probe.game, extra: probe.extra, to: probe.crateURL)
+                            }
+                        } else {
+                            probe.status = .missingSource
+                        }
+                    }
+                case .needsRepair, .readOnly:
+                    break
+                }
+                let attention = LibraryQuery.needsAttention(
+                    probe,
+                    io: io,
+                    resolvedReferencedFolder: resolvedFolder
+                )
+                if probe.status != record.status
+                    || attention != record.needsAttention
+                    || probe.game.source != record.game.source {
+                    out[record.id] = (probe.status, attention, probe.game.source)
+                }
+            }
+            return out
+        }.value
+        guard started == generation else {
+            if !isWatcherSuppressed {
+                scheduleHealthRefresh()
+            }
+            return
+        }
+        guard !updates.isEmpty else { return }
+        for index in records.indices {
+            if let update = updates[records[index].id] {
+                records[index].game.source = update.source
+                records[index].status = update.status
+                records[index].needsAttention = update.needsAttention
+            }
+        }
+        rebuildHealthWatcher()
     }
 
     public func record(_ id: UUID) -> GameRecord? {
@@ -64,6 +131,7 @@ public final class LibraryStore {
             let order = $0.game.title.localizedStandardCompare($1.game.title)
             return order == .orderedSame ? $0.crateURL.path < $1.crateURL.path : order == .orderedAscending
         }
+        rebuildHealthWatcher()
         afterReload?()
     }
 
@@ -71,6 +139,7 @@ public final class LibraryStore {
     public func discard(_ id: UUID) {
         generation += 1
         records.removeAll { $0.id == id }
+        rebuildHealthWatcher()
     }
 
     /// Writes the game into its crate, keeping any unknown keys currently on disk.
@@ -88,6 +157,7 @@ public final class LibraryStore {
         records[index].extra = extra
         records[index].status = loaded.status
         records[index].needsAttention = loaded.needsAttention
+        rebuildHealthWatcher()
     }
 
     /// Removes a game by moving its crate to the Trash; nothing is ever deleted outright. With `trashFiles`,
@@ -101,6 +171,7 @@ public final class LibraryStore {
         }
         try fm.trashItem(at: record.crateURL, resultingItemURL: nil)
         records.removeAll { $0.id == id }
+        rebuildHealthWatcher()
     }
 
     /// Removes several games, trashing off the main actor in small chunks so the library shrinks as it goes.
@@ -150,6 +221,7 @@ public final class LibraryStore {
                 }.value
                 generation += 1
                 records.removeAll { removed.contains($0.id) }
+                rebuildHealthWatcher()
                 failures += chunkFailures
                 done += processed
                 onProgress?(done, targets.count)
@@ -163,28 +235,88 @@ public final class LibraryStore {
 
     public func startWatching() {
         stopWatching()
+        isWatching = true
         let library = self.library
         watcher = FolderWatcher(url: library, isRelevant: { Self.isRelevantChange($0, library: library) }) { [weak self] in
             Task { @MainActor in self?.scheduleReload() }
         }
+        rebuildHealthWatcher(force: true)
     }
 
     public func stopWatching() {
+        isWatching = false
         watcher?.stop()
         watcher = nil
+        healthWatcher?.stop()
+        healthWatcher = nil
+        watchedHealthScope = []
         debounce?.cancel()
         debounce = nil
+        healthDebounce?.cancel()
+        healthDebounce = nil
+    }
+
+    private func rebuildHealthWatcher(force: Bool = false) {
+        guard isWatching else { return }
+        let library = self.library
+        var watchURLs: [URL] = [library]
+        var seenWatchPaths: Set<String> = [library.standardizedFileURL.path]
+        var referencedRoots: Set<String> = []
+        for record in records {
+            if case .referenced(let path, _) = record.game.source {
+                let refURL = URL(filePath: path, directoryHint: .isDirectory)
+                for canonical in Self.canonicalPaths(for: refURL) {
+                    referencedRoots.insert(canonical)
+                }
+                let parentURL = refURL.deletingLastPathComponent()
+                for candidate in [parentURL, refURL] where candidate.path != "/" {
+                    let std = candidate.standardizedFileURL.path
+                    if seenWatchPaths.insert(std).inserted {
+                        watchURLs.append(candidate)
+                    }
+                }
+            }
+        }
+        let newScope = seenWatchPaths.union(referencedRoots)
+        if !force, newScope == watchedHealthScope, healthWatcher != nil {
+            return
+        }
+        watchedHealthScope = newScope
+        let roots = referencedRoots
+        healthWatcher?.stop()
+        healthWatcher = FolderWatcher(
+            urls: watchURLs,
+            isRelevant: { Self.isHealthRelevantChange($0, library: library, referencedRoots: roots) }
+        ) { [weak self] in
+            Task { @MainActor in self?.scheduleHealthRefresh() }
+        }
+    }
+
+    nonisolated static func canonicalPaths(for url: URL) -> [String] {
+        let std = url.standardizedFileURL.path
+        var out = [std]
+        if let real = realpath(url.path, nil) {
+            let resolved = String(cString: real)
+            free(real)
+            if !out.contains(resolved) { out.append(resolved) }
+        } else {
+            let parent = url.deletingLastPathComponent()
+            if let realParent = realpath(parent.path, nil) {
+                let resolvedParent = String(cString: realParent)
+                free(realParent)
+                let joined = resolvedParent.hasSuffix("/")
+                    ? resolvedParent + url.lastPathComponent
+                    : resolvedParent + "/" + url.lastPathComponent
+                if !out.contains(joined) { out.append(joined) }
+            }
+        }
+        return out
     }
 
     /// False for changes inside a crate's `.cache/` (logs, launch.conf) or `files/` (game saves), which
     /// never change the library index.
     nonisolated static func isRelevantChange(_ path: String, library: URL) -> Bool {
-        var bases = [library.standardizedFileURL.path]
-        if let real = realpath(library.path, nil) {
-            bases.append(String(cString: real))
-            free(real)
-        }
-        for base in bases where path.hasPrefix(base + "/") {
+        for base in canonicalPaths(for: library) where path.hasPrefix(base + "/") {
             let components = path.dropFirst(base.count).split(separator: "/")
             if components.count >= 2, components[0].hasSuffix("." + CrateIO.crateExtension),
                components[1] == ".cache" || components[1] == "files" {
@@ -195,6 +327,29 @@ public final class LibraryStore {
         return true
     }
 
+    /// True for changes inside a crate's `files/` directory or a referenced game's external folder,
+    /// which can change launch-path or source health without requiring a full library rescan.
+    nonisolated static func isHealthRelevantChange(
+        _ path: String,
+        library: URL,
+        referencedRoots: Set<String> = []
+    ) -> Bool {
+        for base in canonicalPaths(for: library) where path.hasPrefix(base + "/") {
+            let components = path.dropFirst(base.count).split(separator: "/")
+            if components.count >= 2,
+               components[0].hasSuffix("." + CrateIO.crateExtension),
+               components[1] == "files" {
+                return true
+            }
+        }
+        for refRoot in referencedRoots {
+            if path == refRoot || path.hasPrefix(refRoot + "/") {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Ignores watcher events until a matching `resumeWatcher()`. Calls nest, so overlapping
     /// operations (an import and a removal) each keep the watcher off until the last one ends.
     public func suppressWatcher() {
@@ -202,15 +357,24 @@ public final class LibraryStore {
         if debounce != nil { missedWatcherEvent = true }
         debounce?.cancel()
         debounce = nil
+        if healthDebounce != nil { missedHealthEvent = true }
+        healthDebounce?.cancel()
+        healthDebounce = nil
     }
 
     /// Ends one `suppressWatcher()`. When the last one ends, a reload is scheduled if any change
     /// was ignored meanwhile, so Finder edits made during a batch still show up.
     public func resumeWatcher() {
         watcherSuppressions = max(0, watcherSuppressions - 1)
-        if watcherSuppressions == 0, missedWatcherEvent {
-            missedWatcherEvent = false
-            scheduleReload()
+        if watcherSuppressions == 0 {
+            if missedWatcherEvent {
+                missedWatcherEvent = false
+                missedHealthEvent = false
+                scheduleReload()
+            } else if missedHealthEvent {
+                missedHealthEvent = false
+                scheduleHealthRefresh()
+            }
         }
     }
 
@@ -224,6 +388,19 @@ public final class LibraryStore {
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled, let self, !self.isWatcherSuppressed else { return }
             await self.reload()
+        }
+    }
+
+    private func scheduleHealthRefresh() {
+        guard !isWatcherSuppressed else {
+            missedHealthEvent = true
+            return
+        }
+        healthDebounce?.cancel()
+        healthDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled, let self, !self.isWatcherSuppressed else { return }
+            await self.refreshAttention()
         }
     }
 }

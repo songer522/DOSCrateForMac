@@ -120,5 +120,11 @@ struct SidebarView: View {
         } message: {
             Text("The games stay in your library.")
         }
+        .task(id: model.query.filter) {
+            await model.store.refreshAttention()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.store.refreshAttention() }
+        }
     }
 }

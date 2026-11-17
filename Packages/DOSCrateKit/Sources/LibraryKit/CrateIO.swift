@@ -341,13 +341,18 @@ public struct CrateIO: Sendable {
         try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
-    private static func resolve(path: String, bookmark: Data) throws -> (url: URL, stale: Bool, bookmark: Data) {
+    static func resolve(path: String, bookmark: Data) throws -> (url: URL, stale: Bool, bookmark: Data) {
         var stale = false
-        let url = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        if let url = try? URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale),
+           FileManager.default.fileExists(atPath: url.path) {
+            return (url, stale, stale ? try makeBookmark(for: url) : bookmark)
+        }
+        let fallback = URL(filePath: path, directoryHint: .isDirectory)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: fallback.path, isDirectory: &isDir), isDir.boolValue else {
             throw LibraryError.sourceUnreachable(path: path)
         }
-        return (url, stale, stale ? try makeBookmark(for: url) : bookmark)
+        return (fallback, true, try makeBookmark(for: fallback))
     }
 
     private static func derivedID(for crateURL: URL) -> UUID {
