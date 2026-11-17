@@ -32,6 +32,8 @@ public final class LibraryStore {
     @ObservationIgnored private var healthDebounce: Task<Void, Never>?
     /// Bumped by every reload and every local change, so a scan that started earlier can't overwrite newer state.
     @ObservationIgnored private var generation = 0
+    /// Bumped by every `refreshAttention()` call so an earlier overlapping health scan can never overwrite a newer one.
+    @ObservationIgnored private var healthGeneration = 0
 
     public convenience init(library: URL, io: CrateIO = .init()) {
         self.init(library: library, io: io, scan: { await io.scan(library: $0) })
@@ -60,46 +62,55 @@ public final class LibraryStore {
     public func refreshAttention() async {
         let snapshot = records
         guard !snapshot.isEmpty else { return }
+        healthGeneration += 1
         let started = generation
+        let startedHealth = healthGeneration
         let io = self.io
-        let updates = await Task.detached { () -> [UUID: (status: RecordStatus, needsAttention: Bool, refreshedSource: GameSource?)] in
-            var out: [UUID: (status: RecordStatus, needsAttention: Bool, refreshedSource: GameSource?)] = [:]
-            for record in snapshot {
-                if io.isIncompleteImport(record.crateURL) { continue }
-                var probe = record
-                var resolvedFolder: URL?
-                var refreshedSource: GameSource?
-                switch record.status {
-                case .ok, .missingSource:
-                    if case .referenced(let path, let bookmark) = record.game.source {
-                        if let resolved = try? CrateIO.resolve(path: path, bookmark: bookmark) {
-                            resolvedFolder = resolved.url
-                            probe.status = .ok
-                            if resolved.stale {
-                                let updatedSource = GameSource.referenced(path: resolved.url.path, bookmark: resolved.bookmark)
-                                probe.game.source = updatedSource
-                                refreshedSource = updatedSource
+        let cancelled = OSAllocatedUnfairLock(initialState: Task.isCancelled)
+        let updates = await withTaskCancellationHandler {
+            await Task.detached { () -> [UUID: (status: RecordStatus, needsAttention: Bool, refreshedSource: GameSource?)] in
+                var out: [UUID: (status: RecordStatus, needsAttention: Bool, refreshedSource: GameSource?)] = [:]
+                for record in snapshot {
+                    if cancelled.withLock({ $0 }) { return [:] }
+                    if io.isIncompleteImport(record.crateURL) { continue }
+                    var probe = record
+                    var resolvedFolder: URL?
+                    var refreshedSource: GameSource?
+                    switch record.status {
+                    case .ok, .missingSource:
+                        if case .referenced(let path, let bookmark) = record.game.source {
+                            if let resolved = try? CrateIO.resolve(path: path, bookmark: bookmark) {
+                                resolvedFolder = resolved.url
+                                probe.status = .ok
+                                if resolved.stale {
+                                    let updatedSource = GameSource.referenced(path: resolved.url.path, bookmark: resolved.bookmark)
+                                    probe.game.source = updatedSource
+                                    refreshedSource = updatedSource
+                                }
+                            } else {
+                                probe.status = .missingSource
                             }
-                        } else {
-                            probe.status = .missingSource
                         }
+                    case .needsRepair, .readOnly:
+                        break
                     }
-                case .needsRepair, .readOnly:
-                    break
+                    let attention = LibraryQuery.needsAttention(
+                        probe,
+                        io: io,
+                        resolvedReferencedFolder: resolvedFolder
+                    )
+                    if probe.status != record.status
+                        || attention != record.needsAttention
+                        || refreshedSource != nil {
+                        out[record.id] = (probe.status, attention, refreshedSource)
+                    }
                 }
-                let attention = LibraryQuery.needsAttention(
-                    probe,
-                    io: io,
-                    resolvedReferencedFolder: resolvedFolder
-                )
-                if probe.status != record.status
-                    || attention != record.needsAttention
-                    || refreshedSource != nil {
-                    out[record.id] = (probe.status, attention, refreshedSource)
-                }
-            }
-            return out
-        }.value
+                return out
+            }.value
+        } onCancel: {
+            cancelled.withLock { $0 = true }
+        }
+        guard !Task.isCancelled, startedHealth == healthGeneration else { return }
         guard started == generation else {
             if !isWatcherSuppressed {
                 scheduleHealthRefresh()
