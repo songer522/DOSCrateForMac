@@ -197,6 +197,23 @@ struct LibraryQueryTests {
             withDestinationURL: outside
         )
         #expect(LibraryQuery.needsAttention(escapeExe))
+
+        // Existing executable with non-8.3 DOS path components or backslashes needs attention
+        let nonDOSFolderExe = try makeManagedCrate("NonDOSFolder", executable: "Commander Keen/KEEN1.EXE")
+        let nonDOSFolderURL = nonDOSFolderExe.crateURL.appending(path: "files/Commander Keen", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: nonDOSFolderURL, withIntermediateDirectories: true)
+        try Data("exe".utf8).write(to: nonDOSFolderURL.appending(path: "KEEN1.EXE"))
+        #expect(LibraryQuery.needsAttention(nonDOSFolderExe))
+
+        let nonDOSFileExe = try makeManagedCrate("NonDOSFile", executable: "LONGNAME123.EXE")
+        try Data("exe".utf8).write(to: nonDOSFileExe.crateURL.appending(path: "files/LONGNAME123.EXE"))
+        #expect(LibraryQuery.needsAttention(nonDOSFileExe))
+
+        let backslashExe = try makeManagedCrate("BackslashExe", executable: "SUB\\KEEN1.EXE")
+        let subURL = backslashExe.crateURL.appending(path: "files/SUB", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: subURL, withIntermediateDirectories: true)
+        try Data("exe".utf8).write(to: subURL.appending(path: "KEEN1.EXE"))
+        #expect(LibraryQuery.needsAttention(backslashExe))
     }
 
     @Test func filterAndCountIncludeNeedsAttentionAndCollections() throws {

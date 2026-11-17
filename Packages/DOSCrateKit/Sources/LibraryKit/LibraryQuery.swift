@@ -87,8 +87,10 @@ public struct LibraryQuery: Sendable, Equatable {
             return true
         }
         if let exe = record.game.launch.executable, !exe.isEmpty {
-            let normalizedExe = exe.replacingOccurrences(of: "\\", with: "/")
-            let exeURL = cDrive.appending(path: normalizedExe, directoryHint: .notDirectory)
+            guard isValidDOSRelativePath(exe) else {
+                return true
+            }
+            let exeURL = cDrive.appending(path: exe, directoryHint: .notDirectory)
             let cDriveRoot = cDrive.resolvingSymlinksInPath().standardizedFileURL.path
             let cDrivePrefix = cDriveRoot.hasSuffix("/") ? cDriveRoot : cDriveRoot + "/"
             let resolvedExe = exeURL.resolvingSymlinksInPath().standardizedFileURL.path
@@ -100,6 +102,25 @@ public struct LibraryQuery: Sendable, Equatable {
             }
         }
         return false
+    }
+
+    private static let dosAllowedChars = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&'()-@^_`{}~")
+
+    private static func isValid83(_ name: Substring) -> Bool {
+        let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count <= 2, let base = parts.first else { return false }
+        guard (1...8).contains(base.count), base.allSatisfy(dosAllowedChars.contains) else { return false }
+        if parts.count == 2 {
+            let ext = parts[1]
+            guard (1...3).contains(ext.count), ext.allSatisfy(dosAllowedChars.contains) else { return false }
+        }
+        return true
+    }
+
+    private static func isValidDOSRelativePath(_ relative: String) -> Bool {
+        let components = relative.split(separator: "/")
+        guard !components.isEmpty else { return false }
+        return components.allSatisfy(isValid83)
     }
 
     /// Returns the number of records in `records` matching `filter`.
