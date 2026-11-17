@@ -21,19 +21,31 @@ public struct GameRecord: Sendable, Equatable, Identifiable {
     public var game: Game
     public var crateURL: URL
     public var extra: [String: JSONValue]
-    public var status: RecordStatus
+    public var status: RecordStatus {
+        didSet {
+            if status != .ok { needsAttention = true }
+        }
+    }
+    /// Precomputed health flag indicating whether this record has a non-ok status, an unreachable or missing C: folder,
+    /// or a missing/invalid configured executable. Computed when loading or saving records so view rendering and
+    /// query filtering never perform synchronous filesystem or bookmark I/O.
+    public var needsAttention: Bool
 
     /// The game's id; for records that need repair this is a UUID derived from the crate path.
     public var id: UUID { game.id }
 
-    /// Whether this record has a status issue, missing C: folder, or missing executable.
-    public var needsAttention: Bool { LibraryQuery.needsAttention(self) }
-
-    public init(game: Game, crateURL: URL, extra: [String: JSONValue] = [:], status: RecordStatus = .ok) {
+    public init(
+        game: Game,
+        crateURL: URL,
+        extra: [String: JSONValue] = [:],
+        status: RecordStatus = .ok,
+        needsAttention: Bool? = nil
+    ) {
         self.game = game
         self.crateURL = crateURL
         self.extra = extra
         self.status = status
+        self.needsAttention = needsAttention ?? (status != .ok)
     }
 }
 
@@ -154,9 +166,11 @@ public struct CrateIO: Sendable {
         }
 
         var record = GameRecord(game: decoded.game, crateURL: crateURL, extra: decoded.extra, status: .ok)
+        var resolvedReferencedFolder: URL?
         if case .referenced(let path, let bookmark) = decoded.game.source {
             do {
                 let resolved = try Self.resolve(path: path, bookmark: bookmark)
+                resolvedReferencedFolder = resolved.url
                 if resolved.stale {
                     record.game.source = .referenced(path: resolved.url.path, bookmark: resolved.bookmark)
                     try? save(record.game, extra: record.extra, to: crateURL)
@@ -165,6 +179,11 @@ public struct CrateIO: Sendable {
                 record.status = .missingSource
             }
         }
+        record.needsAttention = LibraryQuery.needsAttention(
+            record,
+            io: self,
+            resolvedReferencedFolder: resolvedReferencedFolder
+        )
         return record
     }
 
@@ -245,8 +264,17 @@ public struct CrateIO: Sendable {
     }
 
     public func cDriveURL(for record: GameRecord) throws -> URL {
-        let root = try referencedFolderURL(for: record)
-            ?? record.crateURL.appending(path: "files", directoryHint: .isDirectory)
+        try cDriveURL(for: record, resolvedReferencedFolder: nil)
+    }
+
+    func cDriveURL(for record: GameRecord, resolvedReferencedFolder: URL?) throws -> URL {
+        let root: URL
+        if let resolvedReferencedFolder {
+            root = resolvedReferencedFolder
+        } else {
+            root = try referencedFolderURL(for: record)
+                ?? record.crateURL.appending(path: "files", directoryHint: .isDirectory)
+        }
         let sub = record.game.launch.driveCRoot
         guard !sub.isEmpty else { return root }
         let normalized = sub.replacingOccurrences(of: "\\", with: "/")

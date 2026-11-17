@@ -201,7 +201,7 @@ struct RetroLibraryTests {
         #expect(!RetroStatusBar.showsRemovalCancel(for: model))
     }
 
-    @Test func sidebarAndRetroSidebarRenderCountsAndNeedsAttention() throws {
+    @Test func sidebarAndRetroSidebarRenderCountsAndNeedsAttention() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "retrolib-sidebar-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -225,27 +225,26 @@ struct RetroLibraryTests {
         #expect(RetroSidebar.showsNeedsAttention(attentionCount: 2, filter: .all))
         #expect(RetroSidebar.showsNeedsAttention(attentionCount: 0, filter: .needsAttention))
 
+        let io = CrateIO()
         let healthyCrate = root.appending(path: "Keen.doscrate", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: healthyCrate.appending(path: "files"), withIntermediateDirectories: true)
         var healthyGame = Game(title: "Keen", source: .managed)
         healthyGame.isFavorite = true
         healthyGame.tags = ["Action"]
-        let healthyRecord = GameRecord(game: healthyGame, crateURL: healthyCrate, status: .ok)
-        store.upsert(healthyRecord)
+        try io.save(healthyGame, extra: [:], to: healthyCrate)
+        await store.reload()
 
         #expect(LibraryQuery.count(for: .needsAttention, in: store.records) == 0)
         #expect(LibraryQuery.count(for: .all, in: store.records) == 1)
         #expect(LibraryQuery.count(for: .favorites, in: store.records) == 1)
         #expect(LibraryQuery.count(for: .tag("Action"), in: store.records) == 1)
 
+        let brokenCrate = root.appending(path: "Broken.doscrate", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: brokenCrate.appending(path: "files"), withIntermediateDirectories: true)
         var brokenGame = Game(title: "Broken", source: .managed)
         brokenGame.launch.executable = "MISSING.EXE"
-        let brokenRecord = GameRecord(
-            game: brokenGame,
-            crateURL: root.appending(path: "Broken.doscrate", directoryHint: .isDirectory),
-            status: .ok
-        )
-        store.upsert(brokenRecord)
+        try io.save(brokenGame, extra: [:], to: brokenCrate)
+        await store.reload()
 
         #expect(LibraryQuery.count(for: .needsAttention, in: store.records) == 1)
 
@@ -259,14 +258,20 @@ struct RetroLibraryTests {
         retroSidebar.layoutSubtreeIfNeeded()
 
         // Revealing a healthy record while on .needsAttention clears the filter to .all
-        model.revealAndSelect(healthyRecord.id)
+        model.revealAndSelect(healthyGame.id)
         #expect(model.query.filter == .all)
-        #expect(model.selection == healthyRecord.id)
+        #expect(model.selection == healthyGame.id)
 
         // Revealing a record that needs attention keeps .needsAttention selected
         model.query.filter = .needsAttention
-        model.revealAndSelect(brokenRecord.id)
+        model.revealAndSelect(brokenGame.id)
         #expect(model.query.filter == .needsAttention)
-        #expect(model.selection == brokenRecord.id)
+        #expect(model.selection == brokenGame.id)
+
+        // Fixing brokenGame's executable via store.save refreshes cached needsAttention
+        try Data("exe".utf8).write(to: brokenCrate.appending(path: "files/FIXED.EXE"))
+        brokenGame.launch.executable = "FIXED.EXE"
+        try store.save(brokenGame)
+        #expect(LibraryQuery.count(for: .needsAttention, in: store.records) == 0)
     }
 }

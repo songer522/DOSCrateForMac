@@ -73,13 +73,20 @@ public struct LibraryQuery: Sendable, Equatable {
         return visible.sorted { precedes($0, $1) }
     }
 
-    /// Returns true when `record` has a non-ok status, an unreachable or missing C: folder, or a missing/invalid configured executable.
+    /// Evaluates filesystem and launch-path health for `record`, returning true when `record` has a non-ok status,
+    /// an unreachable or missing C: folder, or a missing/invalid configured executable.
+    /// Call this when loading or saving records; UI rendering and `LibraryQuery` filtering read the cached
+    /// `record.needsAttention` property instead so rendering never performs blocking filesystem I/O.
     public static func needsAttention(_ record: GameRecord, io: CrateIO = CrateIO()) -> Bool {
+        needsAttention(record, io: io, resolvedReferencedFolder: nil)
+    }
+
+    static func needsAttention(_ record: GameRecord, io: CrateIO, resolvedReferencedFolder: URL?) -> Bool {
         if record.status != .ok {
             return true
         }
         let fm = FileManager.default
-        guard let cDrive = try? io.cDriveURL(for: record) else {
+        guard let cDrive = try? io.cDriveURL(for: record, resolvedReferencedFolder: resolvedReferencedFolder) else {
             return true
         }
         var isDir: ObjCBool = false
@@ -143,7 +150,7 @@ public struct LibraryQuery: Sendable, Equatable {
             guard let played = game.stats.lastPlayed else { return false }
             return now.timeIntervalSince(played) <= Self.recentWindow
         case .favorites: return game.isFavorite
-        case .needsAttention: return Self.needsAttention(record)
+        case .needsAttention: return record.needsAttention || record.status != .ok
         case .tag(let tag):
             guard let targetTag = trimmedNonEmpty(tag) else { return false }
             return game.tags.contains { raw in

@@ -239,6 +239,7 @@ struct LibraryQueryTests {
         let keen = try makeHealthy("Keen", favorite: false, lastPlayed: nil, tags: ["Platformer"], genre: "Platform")
         var brokenExe = try makeHealthy("BrokenExe", favorite: false, lastPlayed: nil, tags: ["FPS"], genre: "Shooter")
         brokenExe.game.launch.executable = "MISSING.EXE"
+        brokenExe.needsAttention = LibraryQuery.needsAttention(brokenExe)
         let repair = record("NeedsRepair", genre: "Adventure", status: .needsRepair(reason: "corrupt"))
 
         let records = [doom, keen, brokenExe, repair]
@@ -253,5 +254,10 @@ struct LibraryQueryTests {
         #expect(LibraryQuery.count(for: .needsAttention, in: records, now: now) == 2) // brokenExe + repair
         #expect(LibraryQuery.count(for: .tag("fps"), in: records, now: now) == 3) // doom + brokenExe + repair
         #expect(LibraryQuery.count(for: .tag("Platformer"), in: records, now: now) == 2) // keen + repair
+
+        // Filtering and counting read the cached `record.needsAttention` flag without hitting the filesystem.
+        try FileManager.default.removeItem(at: doom.crateURL.appending(path: "files/GAME.EXE"))
+        #expect(LibraryQuery.count(for: .needsAttention, in: records, now: now) == 2)
+        #expect(titles(LibraryQuery(filter: .needsAttention), records) == ["BrokenExe", "NeedsRepair"])
     }
 }

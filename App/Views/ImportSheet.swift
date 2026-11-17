@@ -427,31 +427,37 @@ final class ImportQueue {
                 }
                 do {
                     await hook?(prepared.source)
-                    let mediaImages = try await Task.detached {
-                        try importer.populateCrate(at: crateURL, for: prepared, mode: effectiveMode)
-                    }.value
-                    if !mediaImages.isEmpty {
-                        let onDisk = CrateIO().loadRecord(at: crateURL)
-                        if case .ok = onDisk.status, onDisk.game.media != mediaImages {
+                    let (mediaImages, populatedRecord) = try await Task.detached {
+                        let images = try importer.populateCrate(at: crateURL, for: prepared, mode: effectiveMode)
+                        var onDisk = CrateIO().loadRecord(at: crateURL)
+                        if !images.isEmpty, case .ok = onDisk.status, onDisk.game.media != images {
                             var persisted = onDisk.game
-                            persisted.media = mediaImages
+                            persisted.media = images
                             try? CrateIO().save(persisted, extra: onDisk.extra, to: crateURL)
+                            onDisk = CrateIO().loadRecord(at: crateURL)
                         }
-                    }
+                        return (images, onDisk)
+                    }.value
                     guard let model, model.store.library == library else { return }
-                    if var latest = model.store.record(gameID)?.game {
+                    if var currentRecord = model.store.record(gameID) {
+                        var latest = currentRecord.game
                         var didUpdate = false
                         if !mediaImages.isEmpty, latest.media != mediaImages {
                             latest.media = mediaImages
                             didUpdate = true
                         }
                         if latest.launch.setupExecutable == nil,
-                           let setup = CrateIO().loadRecord(at: crateURL).game.launch.setupExecutable {
+                           let setup = populatedRecord.game.launch.setupExecutable {
                             latest.launch.setupExecutable = setup
                             didUpdate = true
                         }
                         if didUpdate {
                             try? model.store.save(latest)
+                        } else if currentRecord.needsAttention != populatedRecord.needsAttention
+                            || currentRecord.status != populatedRecord.status {
+                            currentRecord.status = populatedRecord.status
+                            currentRecord.needsAttention = populatedRecord.needsAttention
+                            model.store.upsert(currentRecord)
                         }
                     }
                     self?.importingIDs.remove(gameID)

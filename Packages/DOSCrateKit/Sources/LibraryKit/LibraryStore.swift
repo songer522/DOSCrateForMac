@@ -83,9 +83,11 @@ public final class LibraryStore {
         let crate = records[index].crateURL
         let extra = io.extraOnDisk(at: crate) ?? records[index].extra
         try io.save(game, extra: extra, to: crate)
+        let loaded = io.loadRecord(at: crate)
         records[index].game = game
         records[index].extra = extra
-        records[index].status = io.loadRecord(at: crate).status
+        records[index].status = loaded.status
+        records[index].needsAttention = loaded.needsAttention
     }
 
     /// Removes a game by moving its crate to the Trash; nothing is ever deleted outright. With `trashFiles`,
