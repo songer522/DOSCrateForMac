@@ -9,12 +9,25 @@ public enum RecordStatus: Sendable, Equatable {
     case readOnly(reason: String)
 }
 
-public enum LibraryError: Error, Equatable {
+public enum LibraryError: Error, Equatable, LocalizedError {
     case sourceUnreachable(path: String)
     case invalidDriveCRoot(path: String)
     case crateExists
     /// The record is read-only; saving it would lose data written by a newer DOSCrate.
     case readOnly
+
+    public var errorDescription: String? {
+        switch self {
+        case .sourceUnreachable(let path):
+            "DOSCrate can't reach \(path)."
+        case .invalidDriveCRoot(let path):
+            "\"\(path)\" isn't a valid C: folder path."
+        case .crateExists:
+            "A game crate already exists at that location."
+        case .readOnly:
+            "This game is read-only and can't be modified."
+        }
+    }
 }
 
 public struct GameRecord: Sendable, Equatable, Identifiable {
@@ -255,12 +268,30 @@ public struct CrateIO: Sendable {
 
     /// The folder a referenced game points at, resolved from its bookmark; nil for a managed game.
     public func referencedFolderURL(for record: GameRecord) throws -> URL? {
-        guard case .referenced(let path, let bookmark) = record.game.source else { return nil }
-        do {
-            return try Self.resolve(path: path, bookmark: bookmark).url
-        } catch {
+        guard case .referenced = record.game.source else { return nil }
+        return try resolveReferencedSource(of: record.game)
+    }
+
+    /// Resolves the external folder for a referenced game, verifying that it exists and is a directory.
+    public func resolveReferencedSource(of game: Game) throws -> URL {
+        guard case .referenced(let path, let bookmark) = game.source else {
+            throw LibraryError.sourceUnreachable(path: "")
+        }
+        let url: URL
+        if bookmark.isEmpty {
+            url = URL(fileURLWithPath: path, isDirectory: true)
+        } else {
+            do {
+                url = try Self.resolve(path: path, bookmark: bookmark).url
+            } catch {
+                throw LibraryError.sourceUnreachable(path: path)
+            }
+        }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
             throw LibraryError.sourceUnreachable(path: path)
         }
+        return url
     }
 
     public func cDriveURL(for record: GameRecord) throws -> URL {

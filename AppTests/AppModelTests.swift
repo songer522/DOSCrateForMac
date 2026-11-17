@@ -1347,4 +1347,171 @@ func waitUntil(_ cond: @MainActor () -> Bool) async {
         #expect(!fm.fileExists(atPath: mediaDir.appending(path: "LOCAL.BIN").path))
         #expect(fm.fileExists(atPath: externalBin.path))
     }
+
+    @Test func copyFilesIntoLibraryConsolidatesReferencedGameAndPreservesConcurrentEdits() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let externalDir = root.appending(path: "ExternalKeen", directoryHint: .isDirectory)
+        try fm.createDirectory(at: externalDir.appending(path: "DATA"), withIntermediateDirectories: true)
+        try Data("exe".utf8).write(to: externalDir.appending(path: "KEEN1.EXE"))
+        try Data("lvl".utf8).write(to: externalDir.appending(path: "DATA/LEVEL1.DAT"))
+        let bookmark = try CrateIO.makeBookmark(for: externalDir)
+
+        let (model, id) = try await makeModel(executable: "KEEN1.EXE") { game in
+            game.source = .referenced(path: externalDir.path, bookmark: bookmark)
+        }
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+        let filesDir = crateURL.appending(path: "files", directoryHint: .isDirectory)
+        if fm.fileExists(atPath: filesDir.path) {
+            try fm.removeItem(at: filesDir)
+        }
+
+        let initialRecord = try #require(model.store.record(id))
+        #expect(AdvancedTab.canCopyFilesIntoLibrary(for: initialRecord, model: model))
+
+        var draft = initialRecord.game
+        draft.notes = "Edited before copy"
+        _ = GameDetailView.scheduleDraftSave(draft: draft, in: model)
+
+        let task = try #require(model.copyFilesIntoLibrary(id))
+        await task.value
+
+        #expect(model.alert == nil)
+        let updatedRecord = try #require(model.store.record(id))
+        #expect(updatedRecord.game.source == .managed)
+        #expect(updatedRecord.game.notes == "Edited before copy")
+        #expect(!AdvancedTab.canCopyFilesIntoLibrary(for: updatedRecord, model: model))
+        #expect(try String(contentsOf: crateURL.appending(path: "files/KEEN1.EXE"), encoding: .utf8) == "exe")
+        #expect(try String(contentsOf: crateURL.appending(path: "files/DATA/LEVEL1.DAT"), encoding: .utf8) == "lvl")
+        // External source folder remains intact.
+        #expect(try String(contentsOf: externalDir.appending(path: "KEEN1.EXE"), encoding: .utf8) == "exe")
+        #expect(try String(contentsOf: externalDir.appending(path: "DATA/LEVEL1.DAT"), encoding: .utf8) == "lvl")
+
+        await model.store.reload()
+        #expect(model.store.record(id)?.game.source == .managed)
+    }
+
+    @Test func copyFilesIntoLibraryPersistsManagedSourceDuringTerminationAndLibrarySwitch() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let externalDir = root.appending(path: "ExternalTerm", directoryHint: .isDirectory)
+        try fm.createDirectory(at: externalDir, withIntermediateDirectories: true)
+        try Data("exe".utf8).write(to: externalDir.appending(path: "KEEN1.EXE"))
+        let bookmark = try CrateIO.makeBookmark(for: externalDir)
+
+        let (model, id) = try await makeModel(executable: "KEEN1.EXE") { game in
+            game.source = .referenced(path: externalDir.path, bookmark: bookmark)
+        }
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+        let filesDir = crateURL.appending(path: "files", directoryHint: .isDirectory)
+        if fm.fileExists(atPath: filesDir.path) {
+            try fm.removeItem(at: filesDir)
+        }
+
+        // 1. Termination while copyFilesIntoLibrary is in flight still persists source == .managed on disk.
+        let gate1 = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        model.imports.singlePopulateHook = { _ in
+            gate1.withLock { $0.entered = true }
+            while !gate1.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        let task1 = try #require(model.copyFilesIntoLibrary(id))
+        await waitUntil { gate1.withLock { $0.entered } }
+        model.beginTermination()
+        gate1.withLock { $0.released = true }
+        await model.imports.waitForActiveImports()
+        await task1.value
+        model.imports.singlePopulateHook = nil
+
+        #expect(io.loadRecord(at: crateURL).game.source == .managed)
+        #expect(model.store.record(id)?.game.source == .managed)
+
+        // 2. Switching libraries while copyFilesIntoLibrary is in flight still persists source == .managed to the original crate.
+        let (model2, id2) = try await makeModel(executable: "KEEN1.EXE") { game in
+            game.source = .referenced(path: externalDir.path, bookmark: bookmark)
+        }
+        let crateURL2 = try #require(model2.store.record(id2)?.crateURL)
+        let filesDir2 = crateURL2.appending(path: "files", directoryHint: .isDirectory)
+        if fm.fileExists(atPath: filesDir2.path) {
+            try fm.removeItem(at: filesDir2)
+        }
+
+        let gate2 = OSAllocatedUnfairLock(initialState: (entered: false, released: false))
+        model2.imports.singlePopulateHook = { _ in
+            gate2.withLock { $0.entered = true }
+            while !gate2.withLock({ $0.released }) {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        let task2 = try #require(model2.copyFilesIntoLibrary(id2))
+        await waitUntil { gate2.withLock { $0.entered } }
+        let otherLib = root.appending(path: "OtherLibrary", directoryHint: .isDirectory)
+        await model2.chooseLibrary(otherLib, create: true)?.value
+        gate2.withLock { $0.released = true }
+        await task2.value
+        model2.imports.singlePopulateHook = nil
+
+        #expect(io.loadRecord(at: crateURL2).game.source == .managed)
+        #expect(fm.fileExists(atPath: crateURL2.appending(path: "files/KEEN1.EXE").path))
+    }
+
+    @Test func copyFilesIntoLibraryShowsAlertAndCleansUpWhenReferencedFolderIsMissing() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let externalDir = root.appending(path: "MissingExternal", directoryHint: .isDirectory)
+        try fm.createDirectory(at: externalDir, withIntermediateDirectories: true)
+        try Data("exe".utf8).write(to: externalDir.appending(path: "DOOM.EXE"))
+        let bookmark = try CrateIO.makeBookmark(for: externalDir)
+
+        let (model, id) = try await makeModel(executable: "DOOM.EXE") { game in
+            game.source = .referenced(path: externalDir.path, bookmark: bookmark)
+        }
+        let crateURL = try #require(model.store.record(id)?.crateURL)
+        let filesDir = crateURL.appending(path: "files", directoryHint: .isDirectory)
+        if fm.fileExists(atPath: filesDir.path) {
+            try fm.removeItem(at: filesDir)
+        }
+
+        // Remove the external folder after loading so consolidation fails on disk.
+        try fm.removeItem(at: externalDir)
+        await model.copyFilesIntoLibrary(id)?.value
+
+        let alert = try #require(model.alert)
+        #expect(alert.fix == .locateFolder)
+        #expect(alert.gameID == id)
+        if case .referenced = model.store.record(id)?.game.source {} else {
+            Issue.record("Expected game to remain referenced after failed consolidation")
+        }
+        let crateEntries = try fm.contentsOfDirectory(atPath: crateURL.path)
+        #expect(crateEntries.allSatisfy { !$0.hasPrefix("files.staging-") })
+        #expect(!fm.fileExists(atPath: filesDir.path))
+    }
+
+    @Test func resetPlayStatsClearsStatsAndPersistsToDisk() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let playedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let (model, id) = try await makeModel(executable: "GAME.EXE", files: ["GAME.EXE"]) { game in
+            game.stats = PlayStats(totalPlaySeconds: 1850, lastPlayed: playedAt, launchCount: 7)
+        }
+
+        let before = try #require(model.store.record(id))
+        #expect(before.game.stats.launchCount == 7)
+        #expect(before.game.stats.totalPlaySeconds == 1850)
+        #expect(before.game.stats.lastPlayed == playedAt)
+        #expect(AdvancedTab.canResetPlayStats(for: before, model: model))
+
+        model.resetPlayStats(id)
+
+        let after = try #require(model.store.record(id))
+        #expect(after.game.stats == PlayStats())
+        #expect(after.game.stats.launchCount == 0)
+        #expect(after.game.stats.totalPlaySeconds == 0)
+        #expect(after.game.stats.lastPlayed == nil)
+        #expect(!AdvancedTab.canResetPlayStats(for: after, model: model))
+
+        await model.store.reload()
+        let onDisk = try #require(model.store.record(id))
+        #expect(onDisk.game.stats == PlayStats())
+    }
 }

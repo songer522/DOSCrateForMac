@@ -86,6 +86,31 @@ struct AdvancedTab: View {
                         .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
                 }
             }
+            if case .referenced(let path, _) = record.game.source {
+                ThemedSection("Game Files") {
+                    Text("Referenced at \(path)")
+                        .font(retroTheme ? RetroFont.font() : .caption)
+                        .foregroundStyle(retroTheme ? RetroPalette.secondaryText : .secondary)
+                    if retroTheme {
+                        Button("Copy Files into Library") { model.copyFilesIntoLibrary(record.id) }
+                            .buttonStyle(RetroButtonStyle())
+                            .disabled(!Self.canCopyFilesIntoLibrary(for: record, model: model))
+                    } else {
+                        Button("Copy Files into Library") { model.copyFilesIntoLibrary(record.id) }
+                            .disabled(!Self.canCopyFilesIntoLibrary(for: record, model: model))
+                    }
+                }
+            }
+            ThemedSection("Play Statistics") {
+                if retroTheme {
+                    Button("Reset Play Statistics") { model.resetPlayStats(record.id) }
+                        .buttonStyle(RetroButtonStyle())
+                        .disabled(!Self.canResetPlayStats(for: record, model: model))
+                } else {
+                    Button("Reset Play Statistics") { model.resetPlayStats(record.id) }
+                        .disabled(!Self.canResetPlayStats(for: record, model: model))
+                }
+            }
         }
         .task {
             let url = io.overrideURL(record.crateURL)
@@ -169,5 +194,27 @@ struct AdvancedTab: View {
             return
         }
         workspace.open([url], withApplicationAt: console, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    static func canCopyFilesIntoLibrary(for record: GameRecord, model: AppModel) -> Bool {
+        guard case .referenced = record.game.source,
+              record.status == .ok,
+              !model.sessions.running.contains(record.id),
+              !model.startingIDs.contains(record.id),
+              !model.imports.importingIDs.contains(record.id),
+              !model.imports.replacingIDs.contains(record.id),
+              !model.pendingRemovalIDs.contains(record.id)
+        else { return false }
+        return true
+    }
+
+    static func canResetPlayStats(for record: GameRecord, model: AppModel) -> Bool {
+        if case .readOnly = record.status { return false }
+        guard record.game.stats != PlayStats(),
+              !model.imports.importingIDs.contains(record.id),
+              !model.imports.replacingIDs.contains(record.id),
+              !model.pendingRemovalIDs.contains(record.id)
+        else { return false }
+        return true
     }
 }
