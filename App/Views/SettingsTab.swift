@@ -152,6 +152,7 @@ struct SoundSection: View {
         ThemedSection("Sound") {
             OptionalPicker("Sound card", selection: $settings.soundCard, options: SoundCard.allCases, label: \.displayName)
             OptionalPicker("MIDI", selection: $settings.midi, options: MIDIMode.allCases, label: \.displayName)
+            OptionalPicker("PC speaker", selection: $settings.pcSpeaker, options: [true, false]) { $0 ? "On" : "Off" }
         }
     }
 }

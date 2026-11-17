@@ -16,8 +16,14 @@ public final class FolderWatcher: @unchecked Sendable {
     private var stream: FSEventStreamRef?
     private var box: Unmanaged<Box>?
 
-    public init(url: URL, isRelevant: @escaping @Sendable (String) -> Bool = { _ in true },
+    public convenience init(url: URL, isRelevant: @escaping @Sendable (String) -> Bool = { _ in true },
+                            onChange: @escaping @Sendable () -> Void) {
+        self.init(urls: [url], isRelevant: isRelevant, onChange: onChange)
+    }
+
+    public init(urls: [URL], isRelevant: @escaping @Sendable (String) -> Bool = { _ in true },
                 onChange: @escaping @Sendable () -> Void) {
+        guard !urls.isEmpty else { return }
         let box = Unmanaged.passRetained(Box(isRelevant, onChange))
         self.box = box
         var context = FSEventStreamContext(version: 0, info: box.toOpaque(), retain: nil, release: nil, copyDescription: nil)
@@ -29,7 +35,7 @@ public final class FolderWatcher: @unchecked Sendable {
         }
         let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes)
         guard let stream = FSEventStreamCreate(
-            nil, callback, &context, [url.path] as CFArray,
+            nil, callback, &context, urls.map(\.path) as CFArray,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.1, flags)
         else { return }
         self.stream = stream

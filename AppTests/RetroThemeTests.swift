@@ -216,6 +216,82 @@ struct RetroThemeTests {
         #expect(!DOSCrateApp.isShowingRetroAlert(theme: .standard, alert: alert))
         #expect(!DOSCrateApp.isShowingRetroAlert(theme: .dos, alert: nil))
         #expect(DOSCrateApp.isShowingRetroAlert(theme: .dos, alert: alert))
+
+        #expect(!RetroLibraryView.isShowingModal(artErrorMessage: nil, renamingCollection: nil, removingCollection: nil))
+        #expect(RetroLibraryView.isShowingModal(artErrorMessage: "Error", renamingCollection: nil, removingCollection: nil))
+        #expect(RetroLibraryView.isShowingModal(artErrorMessage: nil, renamingCollection: "RPG", removingCollection: nil))
+        #expect(RetroLibraryView.isShowingModal(artErrorMessage: nil, renamingCollection: nil, removingCollection: "RPG"))
+        #expect(RetroLibraryView.removeCollectionMessage(for: "RPG") == "Remove the \"RPG\" collection? The games stay in your library.")
+    }
+
+    @Test func retroCollectionModalsRenderAndMutateCollections() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "retro-collections-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let io = CrateIO()
+        let crate = try io.makeCrate(title: "Ultima VII", in: root)
+        var game = Game(title: "Ultima VII", source: .managed)
+        game.tags = ["RPG", "Classics"]
+        try io.save(game, extra: [:], to: crate)
+
+        let defaults = UserDefaults(suiteName: "doscrate-retro-collections-\(UUID().uuidString)")!
+        let prefs = Preferences(defaults: defaults)
+        prefs.appTheme = .dos
+        let store = LibraryStore(library: root)
+        await store.reload()
+        let model = AppModel(
+            prefs: prefs,
+            store: store,
+            sessions: SessionManager(runner: FakeRunner()),
+            importer: Importer(),
+            dosbox: root.appending(path: "dosbox"),
+            verifyDosbox: { _ in }
+        )
+        model.query.filter = .tag("RPG")
+
+        let commands = LibraryCommands(
+            model: model,
+            records: store.records,
+            removing: .constant(nil),
+            removingMany: .constant(nil)
+        )
+
+        let renameView = RetroLibraryView(
+            model: model,
+            records: store.records,
+            commands: commands,
+            showsGrid: .constant(true),
+            showsInspector: .constant(false),
+            choosingImport: .constant(false),
+            initialRenamingCollection: "RPG",
+            initialNewCollectionName: "Role-Playing"
+        )
+        let renameHosting = NSHostingView(rootView: renameView)
+        renameHosting.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        renameHosting.layoutSubtreeIfNeeded()
+        #expect(containsTextField(withStringValue: "Role-Playing", in: renameHosting))
+
+        CollectionTags.rename("RPG", to: "Role-Playing", in: model)
+        #expect(store.record(game.id)?.game.tags == ["Role-Playing", "Classics"])
+        #expect(model.query.filter == .tag("Role-Playing"))
+
+        let removeView = RetroLibraryView(
+            model: model,
+            records: store.records,
+            commands: commands,
+            showsGrid: .constant(true),
+            showsInspector: .constant(false),
+            choosingImport: .constant(false),
+            initialRemovingCollection: "Role-Playing"
+        )
+        let removeHosting = NSHostingView(rootView: removeView)
+        removeHosting.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        removeHosting.layoutSubtreeIfNeeded()
+
+        CollectionTags.remove("Role-Playing", in: model)
+        #expect(store.record(game.id)?.game.tags == ["Classics"])
+        #expect(model.query.filter == .all)
     }
 
     @Test func retroAlertContextTracksTopmostSheetAndScrollsLongMessages() throws {
@@ -284,5 +360,12 @@ struct RetroThemeTests {
             return true
         }
         return view.subviews.contains(where: containsScrollView)
+    }
+
+    private func containsTextField(withStringValue value: String, in view: NSView) -> Bool {
+        if let textField = view as? NSTextField, textField.isEditable, textField.stringValue == value {
+            return true
+        }
+        return view.subviews.contains { containsTextField(withStringValue: value, in: $0) }
     }
 }

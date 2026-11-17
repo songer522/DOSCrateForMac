@@ -245,6 +245,8 @@ struct AppCommands: Commands {
     let model: AppModel
     let updater: SPUUpdater
     let updatesEnabled: Bool
+    @AppStorage("libraryShowsGrid") private var showsGrid = true
+    @AppStorage("libraryShowsInspector") private var showsInspector = true
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
@@ -259,11 +261,185 @@ struct AppCommands: Commands {
             Button("Check for Updates…") { updater.checkForUpdates() }
                 .disabled(!updatesEnabled)
         }
+        CommandGroup(after: .newItem) {
+            Button("Import…") {
+                Self.triggerImport(model)
+            }
+            .keyboardShortcut("i", modifiers: .command)
+            .disabled(!Self.canImport(model))
+        }
+        CommandGroup(after: .toolbar) {
+            Button {
+                showsGrid = true
+            } label: {
+                if showsGrid { Label("as Grid", systemImage: "checkmark") } else { Text("as Grid") }
+            }
+            .keyboardShortcut("1", modifiers: .command)
+            Button {
+                showsGrid = false
+            } label: {
+                if !showsGrid { Label("as List", systemImage: "checkmark") } else { Text("as List") }
+            }
+            .keyboardShortcut("2", modifiers: .command)
+            Divider()
+            Button(Self.detailsButtonTitle(showsInspector: showsInspector)) {
+                showsInspector.toggle()
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            Divider()
+            Menu("Sort By") {
+                sortButton("Title", .title)
+                sortButton("Year", .year)
+                sortButton("Last Played", .lastPlayed)
+                sortButton("Play Time", .playTime)
+            }
+        }
+        CommandMenu("Game") {
+            Button("Play") {
+                if let id = model.selection { model.play(id) }
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(!Self.canPlay(model))
+            Button("Run Setup") {
+                if let id = model.selection { model.runSetup(id) }
+            }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
+            .disabled(!Self.canRunSetup(model))
+            Button("Stop") {
+                if let id = model.selection { model.stop(id) }
+            }
+            .keyboardShortcut(".", modifiers: .command)
+            .disabled(!Self.canStop(model))
+            Divider()
+            Button(Self.favoriteButtonTitle(for: model)) {
+                Self.toggleFavorite(model)
+            }
+            .keyboardShortcut("l", modifiers: .command)
+            .disabled(!Self.canEdit(model))
+            Button("Find Metadata…") {
+                Self.findMetadata(model)
+            }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
+            .disabled(!Self.canEdit(model))
+            Divider()
+            Button("Show in Finder") {
+                if let record = Self.selectedRecord(for: model) {
+                    NSWorkspace.shared.activateFileViewerSelecting([record.crateURL])
+                }
+            }
+            .disabled(!Self.canShowInFinder(model))
+            Button("Show Game Files (C:) in Finder") {
+                if let url = Self.selectedCDriveURL(for: model) {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .disabled(!Self.canShowCDriveInFinder(model))
+        }
         CommandMenu("Library") {
             Button("Find Missing Metadata") {
                 model.metadata.findMissingMetadata()
             }
             .disabled(model.store.records.isEmpty || model.metadata.isFindingMissing)
         }
+    }
+
+    private func sortButton(_ title: String, _ key: SortKey) -> some View {
+        Button {
+            model.query.sort = key
+        } label: {
+            if model.query.sort == key { Label(title, systemImage: "checkmark") } else { Text(title) }
+        }
+    }
+
+    @MainActor
+    static func selectedRecord(for model: AppModel) -> GameRecord? {
+        model.selection.flatMap(model.store.record)
+    }
+
+    @MainActor
+    static func canImport(_ model: AppModel) -> Bool {
+        !model.needsLibrarySetup
+    }
+
+    @MainActor
+    static func triggerImport(_ model: AppModel) {
+        guard canImport(model) else { return }
+        model.isChoosingImport = true
+    }
+
+    static func detailsButtonTitle(showsInspector: Bool) -> String {
+        showsInspector ? "Hide Details" : "Show Details"
+    }
+
+    @MainActor
+    static func canPlay(_ model: AppModel) -> Bool {
+        guard let record = selectedRecord(for: model) else { return false }
+        let id = record.id
+        return !model.sessions.running.contains(id)
+            && !model.startingIDs.contains(id)
+            && !model.imports.importingIDs.contains(id)
+            && !model.imports.replacingIDs.contains(id)
+            && !model.pendingRemovalIDs.contains(id)
+    }
+
+    @MainActor
+    static func canRunSetup(_ model: AppModel) -> Bool {
+        guard canPlay(model),
+              let setup = selectedRecord(for: model)?.game.launch.setupExecutable,
+              !setup.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    @MainActor
+    static func canStop(_ model: AppModel) -> Bool {
+        guard let id = model.selection else { return false }
+        return model.sessions.running.contains(id)
+    }
+
+    @MainActor
+    static func canEdit(_ model: AppModel) -> Bool {
+        guard let record = selectedRecord(for: model) else { return false }
+        return BatchInspectorView.isWritable(record, in: model)
+    }
+
+    @MainActor
+    static func favoriteButtonTitle(for model: AppModel) -> String {
+        selectedRecord(for: model)?.game.isFavorite == true ? "Remove from Favorites" : "Add to Favorites"
+    }
+
+    @MainActor
+    static func toggleFavorite(_ model: AppModel) {
+        guard canEdit(model), let record = selectedRecord(for: model) else { return }
+        var game = record.game
+        game.isFavorite.toggle()
+        do {
+            try model.store.save(game)
+        } catch {
+            model.alert = AppAlert(title: "Can't save \(game.title)", message: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    static func findMetadata(_ model: AppModel) {
+        guard canEdit(model), let id = model.selection else { return }
+        model.findMetadataFor = id
+    }
+
+    @MainActor
+    static func canShowInFinder(_ model: AppModel) -> Bool {
+        selectedRecord(for: model) != nil
+    }
+
+    @MainActor
+    static func selectedCDriveURL(for model: AppModel, io: CrateIO = CrateIO()) -> URL? {
+        guard let record = selectedRecord(for: model) else { return nil }
+        return GameContextMenu.cDriveFolderURL(for: record, io: io)
+    }
+
+    @MainActor
+    static func canShowCDriveInFinder(_ model: AppModel, io: CrateIO = CrateIO()) -> Bool {
+        selectedCDriveURL(for: model, io: io) != nil
     }
 }

@@ -101,7 +101,6 @@ struct LibraryView: View {
     @AppStorage("libraryShowsInspector") private var showsInspector = true
     @State private var removing: UUID?
     @State private var removingMany: Set<UUID>?
-    @State private var choosingImport = false
 
     private var records: [GameRecord] {
         model.query.apply(to: model.store.records, now: Date())
@@ -134,13 +133,13 @@ struct LibraryView: View {
                     commands: commands,
                     showsGrid: $showsGrid,
                     showsInspector: $showsInspector,
-                    choosingImport: $choosingImport
+                    choosingImport: $model.isChoosingImport
                 )
             }
         }
         .background(RetroWindowChrome(isRetro: model.prefs.appTheme == .dos))
         .modifier(LibraryActions(model: model, records: records, removing: $removing,
-                                 removingMany: $removingMany, choosingImport: $choosingImport))
+                                 removingMany: $removingMany, choosingImport: $model.isChoosingImport))
     }
 
     private var standardLayout: some View {
@@ -305,7 +304,7 @@ struct LibraryView: View {
             Button("Details", systemImage: "sidebar.trailing") { showsInspector.toggle() }
         }
         ToolbarItem {
-            Button("Import", systemImage: "plus") { choosingImport = true }
+            Button("Import", systemImage: "plus") { model.isChoosingImport = true }
         }
         ToolbarItem {
             SettingsLink {

@@ -4,6 +4,7 @@ public enum SidebarFilter: Hashable, Sendable {
     case all
     case recent
     case favorites
+    case needsAttention
     case tag(String)
 }
 
@@ -72,6 +73,75 @@ public struct LibraryQuery: Sendable, Equatable {
         return visible.sorted { precedes($0, $1) }
     }
 
+    /// Evaluates filesystem and launch-path health for `record`, returning true when `record` has a non-ok status,
+    /// an unreachable or missing C: folder, or a missing/invalid configured executable.
+    /// Call this when loading or saving records; UI rendering and `LibraryQuery` filtering read the cached
+    /// `record.needsAttention` property instead so rendering never performs blocking filesystem I/O.
+    public static func needsAttention(_ record: GameRecord, io: CrateIO = CrateIO()) -> Bool {
+        needsAttention(record, io: io, resolvedReferencedFolder: nil)
+    }
+
+    static func needsAttention(_ record: GameRecord, io: CrateIO, resolvedReferencedFolder: URL?) -> Bool {
+        if record.status != .ok {
+            return true
+        }
+        let fm = FileManager.default
+        guard let cDrive = try? io.cDriveURL(for: record, resolvedReferencedFolder: resolvedReferencedFolder) else {
+            return true
+        }
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: cDrive.path, isDirectory: &isDir), isDir.boolValue else {
+            return true
+        }
+        if let exe = record.game.launch.executable, !exe.isEmpty {
+            guard isValidDOSRelativePath(exe) else {
+                return true
+            }
+            let exeURL = cDrive.appending(path: exe, directoryHint: .notDirectory)
+            let cDriveRoot = cDrive.resolvingSymlinksInPath().standardizedFileURL.path
+            let cDrivePrefix = cDriveRoot.hasSuffix("/") ? cDriveRoot : cDriveRoot + "/"
+            let resolvedExe = exeURL.resolvingSymlinksInPath().standardizedFileURL.path
+            var isExeDir: ObjCBool = false
+            guard resolvedExe.hasPrefix(cDrivePrefix),
+                  fm.fileExists(atPath: exeURL.path, isDirectory: &isExeDir),
+                  !isExeDir.boolValue else {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static let dosAllowedChars = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&'()-@^_`{}~")
+
+    private static func isValid83(_ name: Substring) -> Bool {
+        let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count <= 2, let base = parts.first else { return false }
+        guard (1...8).contains(base.count), base.allSatisfy(dosAllowedChars.contains) else { return false }
+        if parts.count == 2 {
+            let ext = parts[1]
+            guard (1...3).contains(ext.count), ext.allSatisfy(dosAllowedChars.contains) else { return false }
+        }
+        return true
+    }
+
+    private static func isValidDOSRelativePath(_ relative: String) -> Bool {
+        let components = relative.split(separator: "/")
+        guard !components.isEmpty else { return false }
+        return components.allSatisfy(isValid83)
+    }
+
+    /// Returns the number of records in `records` matching `filter`.
+    public static func count(for filter: SidebarFilter, in records: [GameRecord], now: Date = Date()) -> Int {
+        let query = LibraryQuery(filter: filter)
+        return records.reduce(into: 0) { total, record in
+            if case .needsRepair = record.status {
+                total += 1
+            } else if query.matchesFilter(record, now: now) {
+                total += 1
+            }
+        }
+    }
+
     private func matchesFilter(_ record: GameRecord, now: Date) -> Bool {
         let game = record.game
         switch filter {
@@ -80,6 +150,7 @@ public struct LibraryQuery: Sendable, Equatable {
             guard let played = game.stats.lastPlayed else { return false }
             return now.timeIntervalSince(played) <= Self.recentWindow
         case .favorites: return game.isFavorite
+        case .needsAttention: return record.needsAttention || record.status != .ok
         case .tag(let tag):
             guard let targetTag = trimmedNonEmpty(tag) else { return false }
             return game.tags.contains { raw in

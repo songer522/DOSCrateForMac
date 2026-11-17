@@ -22,7 +22,7 @@ struct GameFileCodecTests {
         game.settings = GameSettings(
             preset: .pc486, cycles: .fixed(25000), core: .dynamic, memoryMB: 16, machine: .svga_s3,
             shader: "crt-auto", aspect: .squarePixels, fullscreen: true, soundCard: .sb16,
-            midi: .mt32, mouseCapture: .seamless, keyboardLayout: "us",
+            midi: .mt32, pcSpeaker: true, mouseCapture: .seamless, keyboardLayout: "us",
             controllerMode: .twoAxis,
             controllerBindings: ControllerBindings(a: .space, leftTrigger: .z, rightTrigger: .x, start: .unbound))
         game.stats = PlayStats(totalPlaySeconds: 123.5, lastPlayed: Date(timeIntervalSince1970: 1_700_000_000), launchCount: 4)
@@ -197,5 +197,32 @@ struct GameFileCodecTests {
         """
         let legacy = try GameFileCodec.decode(Data(legacyJSON.utf8))
         #expect(legacy.game.launch.setupExecutable == nil)
+    }
+
+    @Test func tandyCmsAndPcSpeakerRoundTripAndDefaultToNil() throws {
+        #expect(SoundCard.tandy.displayName == "Tandy 3-Voice")
+        #expect(SoundCard.cms.displayName == "Game Blaster (CMS)")
+        #expect(SoundCard.allCases == [.sb16, .sbPro, .adlib, .gus, .tandy, .cms, .none])
+
+        var tandyGame = Game(title: "King's Quest", source: .managed)
+        #expect(tandyGame.settings.pcSpeaker == nil)
+        tandyGame.settings.soundCard = .tandy
+        tandyGame.settings.pcSpeaker = false
+
+        let encodedTandy = try GameFileCodec.encode(tandyGame, extra: [:])
+        let decodedTandy = try GameFileCodec.decode(encodedTandy)
+        #expect(decodedTandy.game.settings.soundCard == .tandy)
+        #expect(decodedTandy.game.settings.pcSpeaker == false)
+        #expect(decodedTandy.extra.isEmpty)
+
+        var cmsGame = Game(title: "Secret of Monkey Island", source: .managed)
+        cmsGame.settings.soundCard = .cms
+        cmsGame.settings.pcSpeaker = true
+
+        let encodedCms = try GameFileCodec.encode(cmsGame, extra: [:])
+        let decodedCms = try GameFileCodec.decode(encodedCms)
+        #expect(decodedCms.game.settings.soundCard == .cms)
+        #expect(decodedCms.game.settings.pcSpeaker == true)
+        #expect(decodedCms.extra.isEmpty)
     }
 }
