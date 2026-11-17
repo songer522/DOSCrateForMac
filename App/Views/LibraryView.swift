@@ -65,6 +65,14 @@ struct GameContextMenu: View {
         if case .needsRepair = record.status {
             Button("Recreate Game Info…") { model.applyFix(.recreate, for: record.id) }
         }
+        if case .referenced = record.game.source {
+            Button("Copy Files into Library") { model.copyFilesIntoLibrary(record.id) }
+                .disabled(!AdvancedTab.canCopyFilesIntoLibrary(for: record, model: model))
+        }
+        if record.game.stats != PlayStats() {
+            Button("Reset Play Statistics") { model.resetPlayStats(record.id) }
+                .disabled(!AdvancedTab.canResetPlayStats(for: record, model: model))
+        }
         Button("Find Metadata…") { model.findMetadataFor = record.id }
             .disabled({
                 if case .readOnly = record.status { return true }

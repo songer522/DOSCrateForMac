@@ -281,7 +281,102 @@ final class AppModel {
     /// Running, starting, or still copying files during an import: a start or copy still in progress
     /// may write into the crate, so it can't be removed yet.
     func isActive(_ id: UUID) -> Bool {
-        sessions.running.contains(id) || startingIDs.contains(id) || imports.importingIDs.contains(id)
+        sessions.running.contains(id)
+            || startingIDs.contains(id)
+            || imports.importingIDs.contains(id)
+            || imports.replacingIDs.contains(id)
+    }
+
+    /// Copies a referenced game's external files into its crate (`<crate>/files`) off the main thread,
+    /// switches `game.source` to `.managed`, and persists the updated `game.json`.
+    @discardableResult
+    func copyFilesIntoLibrary(_ id: UUID) -> Task<Void, Never>? {
+        guard !isTerminating,
+              !sessions.running.contains(id),
+              !startingIDs.contains(id),
+              !imports.importingIDs.contains(id),
+              !imports.replacingIDs.contains(id),
+              !pendingRemovalIDs.contains(id),
+              let initialRecord = store.record(id),
+              case .referenced(let initialPath, _) = initialRecord.game.source
+        else { return nil }
+        if case .missingSource = initialRecord.status {
+            alert = AppAlert(
+                title: "Can't copy files for \(initialRecord.game.title)",
+                message: "DOSCrate can't reach \(initialPath).",
+                fix: .locateFolder,
+                gameID: id
+            )
+            return nil
+        }
+        guard initialRecord.status == .ok else { return nil }
+
+        flushPendingWrites(for: id)
+
+        guard !isTerminating,
+              !sessions.running.contains(id),
+              !startingIDs.contains(id),
+              !imports.importingIDs.contains(id),
+              !imports.replacingIDs.contains(id),
+              !pendingRemovalIDs.contains(id),
+              let record = store.record(id),
+              record.status == .ok,
+              case .referenced = record.game.source
+        else { return nil }
+
+        let importer = self.importer
+        let crateURL = record.crateURL
+        let gameSnapshot = record.game
+        let library = store.library
+        let hook = imports.singlePopulateHook
+
+        return imports.trackExternalImport(for: id) { [weak self] in
+            guard let self else { return }
+            self.store.suppressWatcher()
+            defer { self.store.resumeWatcher() }
+            do {
+                if let hook {
+                    await hook(crateURL)
+                }
+                let consolidated = try await Task.detached {
+                    try importer.consolidateReferencedGame(in: crateURL, game: gameSnapshot)
+                }.value
+                guard !self.isTerminating,
+                      !self.pendingRemovalIDs.contains(id),
+                      self.store.library == library else { return }
+                self.flushPendingWrites(for: id)
+                guard var latest = self.store.record(id)?.game else { return }
+                latest.source = consolidated.source
+                try self.store.save(latest)
+            } catch let LibraryError.sourceUnreachable(path) {
+                self.alert = AppAlert(
+                    title: "Can't copy files for \(record.game.title)",
+                    message: "DOSCrate can't reach \(path).",
+                    fix: .locateFolder,
+                    gameID: id
+                )
+            } catch {
+                self.alert = AppAlert(
+                    title: "Can't copy files for \(record.game.title)",
+                    message: error.localizedDescription,
+                    gameID: id
+                )
+            }
+        }
+    }
+
+    /// Resets the game's play statistics (`launchCount`, `totalPlaySeconds`, and `lastPlayed`) to `PlayStats()`
+    /// and saves the updated game to `game.json`.
+    func resetPlayStats(_ id: UUID) {
+        guard !isTerminating,
+              !pendingRemovalIDs.contains(id),
+              !imports.replacingIDs.contains(id),
+              !imports.importingIDs.contains(id)
+        else { return }
+        flushPendingWrites(for: id)
+        guard var game = store.record(id)?.game else { return }
+        game.stats = PlayStats()
+        save(game)
     }
 
     // MARK: Launching

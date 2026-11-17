@@ -791,4 +791,60 @@ struct ImporterTests {
         #expect(replaced.game.launch.setupExecutable == "SNDTEST.EXE")
         #expect(exists(replaced.crateURL.appending(path: "files/SNDTEST.EXE")))
     }
+
+    @Test func consolidateReferencedGameCopiesFilesSwitchesToManagedAndLeavesExternalIntact() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        let ext = tmp.appending(path: "external_keen", directoryHint: .isDirectory)
+        try touch(ext, "KEEN1.EXE")
+        try touch(ext, "DATA/EGALATCH.CK1")
+
+        let prepared = try await importer.prepare(ext)
+        let rec = try await importer.commit(prepared, mode: .reference, title: "Keen", executable: "KEEN1.EXE", into: lib)
+        guard case .referenced = rec.game.source else { Issue.record("expected referenced"); return }
+
+        let consolidated = try importer.consolidateReferencedGame(in: rec.crateURL, game: rec.game)
+        #expect(consolidated.source == .managed)
+        #expect(exists(rec.crateURL.appending(path: "files/KEEN1.EXE")))
+        #expect(exists(rec.crateURL.appending(path: "files/DATA/EGALATCH.CK1")))
+        #expect(exists(ext.appending(path: "KEEN1.EXE")))
+        #expect(exists(ext.appending(path: "DATA/EGALATCH.CK1")))
+        let crateEntries = try FileManager.default.contentsOfDirectory(atPath: rec.crateURL.path)
+        #expect(crateEntries.allSatisfy { !$0.hasPrefix("files.staging-") })
+    }
+
+    @Test func consolidateReferencedGameFailsCleanlyWithoutStagingFilesWhenSourceMissingOrUnreadable() async throws {
+        let tmp = try makeImportTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let lib = tmp.appending(path: "lib", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+
+        let ext = tmp.appending(path: "external_doom", directoryHint: .isDirectory)
+        try touch(ext, "DOOM.EXE")
+        let prepared = try await importer.prepare(ext)
+        let rec = try await importer.commit(prepared, mode: .reference, title: "Doom", executable: "DOOM.EXE", into: lib)
+
+        // Unreadable file partway through copy cleans up staging directory.
+        let secret = ext.appending(path: "SECRET.WAD")
+        try Data("wad".utf8).write(to: secret)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: secret.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: secret.path) }
+        #expect(throws: (any Error).self) {
+            _ = try importer.consolidateReferencedGame(in: rec.crateURL, game: rec.game)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: secret.path)
+        let afterPartialFailure = try FileManager.default.contentsOfDirectory(atPath: rec.crateURL.path)
+        #expect(afterPartialFailure.allSatisfy { !$0.hasPrefix("files.staging-") })
+        #expect(!exists(rec.crateURL.appending(path: "files")))
+
+        // Missing referenced folder throws sourceUnreachable and leaves no staging or files directory.
+        try FileManager.default.removeItem(at: ext)
+        #expect(throws: LibraryError.sourceUnreachable(path: ext.path)) {
+            _ = try importer.consolidateReferencedGame(in: rec.crateURL, game: rec.game)
+        }
+        let afterMissing = try FileManager.default.contentsOfDirectory(atPath: rec.crateURL.path)
+        #expect(afterMissing.allSatisfy { !$0.hasPrefix("files.staging-") })
+        #expect(!exists(rec.crateURL.appending(path: "files")))
+    }
 }

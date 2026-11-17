@@ -474,6 +474,63 @@ public struct Importer: Sendable {
         return GameRecord(game: game, crateURL: crate, extra: latestExtra, status: .ok)
     }
 
+    /// Copies a referenced game's external source folder into `crateURL/files` via a staging directory inside
+    /// `crateURL` and returns an updated `Game` with `source = .managed`. The external folder is left untouched.
+    public func consolidateReferencedGame(in crateURL: URL, game: Game) throws -> Game {
+        guard case .referenced(let path, _) = game.source else {
+            throw LibraryError.sourceUnreachable(path: "")
+        }
+        let sourceURL = try io.resolveReferencedSource(of: game)
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: sourceURL.path, isDirectory: &isDir), isDir.boolValue else {
+            throw LibraryError.sourceUnreachable(path: path)
+        }
+        let canonicalCrate = crateURL.resolvingSymlinksInPath().standardizedFileURL.path
+        let canonicalSource = sourceURL.resolvingSymlinksInPath().standardizedFileURL.path
+        let cratePrefix = canonicalCrate.hasSuffix("/") ? canonicalCrate : canonicalCrate + "/"
+        guard canonicalSource != canonicalCrate, !canonicalSource.hasPrefix(cratePrefix) else {
+            throw LibraryError.sourceUnreachable(path: path)
+        }
+
+        let stagingURL = crateURL.appending(path: "files.staging-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try fm.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: stagingURL) }
+
+        try Self.copyTree(from: sourceURL, to: stagingURL, excluding: crateURL)
+
+        let destFiles = crateURL.appending(path: "files", directoryHint: .isDirectory)
+        let backupFiles = crateURL.appending(path: ".files-old-\(UUID().uuidString)", directoryHint: .isDirectory)
+        var movedOldFilesToBackup = false
+        if fm.fileExists(atPath: destFiles.path) {
+            let existingEntries = (try? fm.contentsOfDirectory(atPath: destFiles.path)) ?? []
+            if existingEntries.isEmpty {
+                try fm.removeItem(at: destFiles)
+            } else {
+                try Self.carryOver(from: destFiles, to: stagingURL, excluding: crateURL)
+                try fm.moveItem(at: destFiles, to: backupFiles)
+                movedOldFilesToBackup = true
+            }
+        }
+
+        do {
+            try fm.moveItem(at: stagingURL, to: destFiles)
+        } catch {
+            if movedOldFilesToBackup, fm.fileExists(atPath: backupFiles.path) {
+                try? fm.removeItem(at: destFiles)
+                try? fm.moveItem(at: backupFiles, to: destFiles)
+            }
+            throw error
+        }
+        if movedOldFilesToBackup {
+            try? fm.removeItem(at: backupFiles)
+        }
+
+        var updated = game
+        updated.source = .managed
+        return updated
+    }
+
     // MARK: Helpers
 
     private func makeWorkDirectory(appropriateFor url: URL, fallbackParent: URL) throws -> URL {

@@ -485,6 +485,26 @@ final class ImportQueue {
         }
     }
 
+    /// Marks `gameID` as busy while `operation` runs in a tracked task that `waitForActiveImports` waits on.
+    @discardableResult
+    func trackExternalImport(
+        for gameID: UUID,
+        operation: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never> {
+        replacingIDs.insert(gameID)
+        importingIDs.insert(gameID)
+        let task = Task { @MainActor [weak self] in
+            defer {
+                self?.replacingIDs.remove(gameID)
+                self?.importingIDs.remove(gameID)
+                self?.singleImportTasks[gameID] = nil
+            }
+            await operation()
+        }
+        singleImportTasks[gameID] = task
+        return task
+    }
+
     private static func mergingConcurrentEdits(
         from current: Game,
         baseline: Game,

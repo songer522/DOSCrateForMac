@@ -274,7 +274,7 @@ struct GameDetailView: View {
     /// Whether a stored game that differs from the draft should replace it. Differences the save itself
     /// causes (a trimmed title) must not, or they would undo what the user is typing.
     static func shouldAdopt(stored: Game, over draft: Game) -> Bool {
-        draft != stored && merged(draft, into: stored) != stored
+        draft != stored && merged(draft, into: draft) != stored
     }
 
     /// The editable fields of `draft` laid over the stored game, so play stats, favorite and source are never overwritten.
