@@ -127,6 +127,45 @@ struct RetroLibraryView: View {
     @Binding var showsInspector: Bool
     @Binding var choosingImport: Bool
     var onClose: () -> Void = { NSApplication.shared.terminate(nil) }
+    @State private var renamingCollection: String?
+    @State private var newCollectionName = ""
+    @State private var removingCollection: String?
+
+    init(
+        model: AppModel,
+        records: [GameRecord],
+        commands: LibraryCommands,
+        showsGrid: Binding<Bool>,
+        showsInspector: Binding<Bool>,
+        choosingImport: Binding<Bool>,
+        onClose: @escaping () -> Void = { NSApplication.shared.terminate(nil) },
+        initialRenamingCollection: String? = nil,
+        initialNewCollectionName: String = "",
+        initialRemovingCollection: String? = nil
+    ) {
+        self.model = model
+        self.records = records
+        self.commands = commands
+        self._showsGrid = showsGrid
+        self._showsInspector = showsInspector
+        self._choosingImport = choosingImport
+        self.onClose = onClose
+        self._renamingCollection = State(initialValue: initialRenamingCollection)
+        self._newCollectionName = State(initialValue: initialNewCollectionName)
+        self._removingCollection = State(initialValue: initialRemovingCollection)
+    }
+
+    static func isShowingModal(
+        artErrorMessage: String?,
+        renamingCollection: String?,
+        removingCollection: String?
+    ) -> Bool {
+        artErrorMessage != nil || renamingCollection != nil || removingCollection != nil
+    }
+
+    static func removeCollectionMessage(for tag: String) -> String {
+        "Remove the \"\(tag)\" collection? The games stay in your library."
+    }
 
     static func playTarget(
         selected: Set<UUID>,
@@ -159,11 +198,21 @@ struct RetroLibraryView: View {
     }
 
     var body: some View {
+        let showingModal = Self.isShowingModal(
+            artErrorMessage: model.metadata.artErrorMessage,
+            renamingCollection: renamingCollection,
+            removingCollection: removingCollection
+        )
         VStack(spacing: 0) {
             windowTitleBar
             buttonBar
             HStack(spacing: 0) {
-                RetroSidebar(model: model)
+                RetroSidebar(
+                    model: model,
+                    renaming: $renamingCollection,
+                    newName: $newCollectionName,
+                    removing: $removingCollection
+                )
                     .frame(width: 180)
                 desktop
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -175,7 +224,7 @@ struct RetroLibraryView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             RetroStatusBar(model: model)
         }
-        .disabled(model.metadata.artErrorMessage != nil)
+        .disabled(showingModal)
         .background(RetroPalette.desktop)
         .ignoresSafeArea(.container, edges: .top)
         .toolbar(.hidden, for: .windowToolbar)
@@ -195,6 +244,69 @@ struct RetroLibraryView: View {
                                 model.metadata.artErrorMessage = nil
                             }
                             .buttonStyle(RetroButtonStyle(kind: .text))
+                            .keyboardShortcut(.defaultAction)
+                        }
+                    }
+                    .padding(14)
+                }
+            } else if let old = renamingCollection {
+                let canRename = !newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                RetroModalContainer(
+                    title: "Rename Collection",
+                    width: 380,
+                    onCancel: { renamingCollection = nil },
+                    onDefaultAction: canRename ? {
+                        CollectionTags.rename(old, to: newCollectionName, in: model)
+                        renamingCollection = nil
+                    } : nil
+                ) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        TextField("Name", text: $newCollectionName)
+                            .textFieldStyle(.plain)
+                            .font(RetroFont.font())
+                            .foregroundStyle(RetroPalette.shadow)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(RetroPalette.bevelLight)
+                            .retroBevel(.sunken)
+                        HStack(spacing: 8) {
+                            Spacer()
+                            Button("Cancel") {
+                                renamingCollection = nil
+                            }
+                            .keyboardShortcut(.cancelAction)
+                            Button("Rename") {
+                                CollectionTags.rename(old, to: newCollectionName, in: model)
+                                renamingCollection = nil
+                            }
+                            .disabled(!canRename)
+                            .keyboardShortcut(.defaultAction)
+                        }
+                    }
+                    .padding(14)
+                }
+            } else if let tag = removingCollection {
+                RetroModalContainer(
+                    title: "Remove this collection?",
+                    width: 420,
+                    onCancel: { removingCollection = nil },
+                    onDefaultAction: {
+                        CollectionTags.remove(tag, in: model)
+                        removingCollection = nil
+                    }
+                ) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        RetroScrollableMessage(text: Self.removeCollectionMessage(for: tag))
+                        HStack(spacing: 8) {
+                            Spacer()
+                            Button("Cancel") {
+                                removingCollection = nil
+                            }
+                            .keyboardShortcut(.cancelAction)
+                            Button("Remove Collection") {
+                                CollectionTags.remove(tag, in: model)
+                                removingCollection = nil
+                            }
                             .keyboardShortcut(.defaultAction)
                         }
                     }
