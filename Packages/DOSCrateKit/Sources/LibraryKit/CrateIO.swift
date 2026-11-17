@@ -26,6 +26,9 @@ public struct GameRecord: Sendable, Equatable, Identifiable {
     /// The game's id; for records that need repair this is a UUID derived from the crate path.
     public var id: UUID { game.id }
 
+    /// Whether this record has a status issue, missing C: folder, or missing executable.
+    public var needsAttention: Bool { LibraryQuery.needsAttention(self) }
+
     public init(game: Game, crateURL: URL, extra: [String: JSONValue] = [:], status: RecordStatus = .ok) {
         self.game = game
         self.crateURL = crateURL

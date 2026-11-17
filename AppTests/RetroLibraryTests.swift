@@ -200,4 +200,73 @@ struct RetroLibraryTests {
         #expect(!LibraryView.showsRemovalCancel(for: model))
         #expect(!RetroStatusBar.showsRemovalCancel(for: model))
     }
+
+    @Test func sidebarAndRetroSidebarRenderCountsAndNeedsAttention() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "retrolib-sidebar-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let defaults = UserDefaults(suiteName: "doscrate-retro-sidebar-\(UUID().uuidString)")!
+        let prefs = Preferences(defaults: defaults)
+        let store = LibraryStore(library: root)
+        let model = AppModel(
+            prefs: prefs,
+            store: store,
+            sessions: SessionManager(runner: FakeRunner()),
+            importer: Importer(),
+            dosbox: root.appending(path: "dosbox"),
+            verifyDosbox: { _ in }
+        )
+
+        #expect(!SidebarView.showsNeedsAttention(attentionCount: 0, filter: .all))
+        #expect(SidebarView.showsNeedsAttention(attentionCount: 1, filter: .all))
+        #expect(SidebarView.showsNeedsAttention(attentionCount: 0, filter: .needsAttention))
+        #expect(!RetroSidebar.showsNeedsAttention(attentionCount: 0, filter: .all))
+        #expect(RetroSidebar.showsNeedsAttention(attentionCount: 2, filter: .all))
+        #expect(RetroSidebar.showsNeedsAttention(attentionCount: 0, filter: .needsAttention))
+
+        let healthyCrate = root.appending(path: "Keen.doscrate", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: healthyCrate.appending(path: "files"), withIntermediateDirectories: true)
+        var healthyGame = Game(title: "Keen", source: .managed)
+        healthyGame.isFavorite = true
+        healthyGame.tags = ["Action"]
+        let healthyRecord = GameRecord(game: healthyGame, crateURL: healthyCrate, status: .ok)
+        store.upsert(healthyRecord)
+
+        #expect(LibraryQuery.count(for: .needsAttention, in: store.records) == 0)
+        #expect(LibraryQuery.count(for: .all, in: store.records) == 1)
+        #expect(LibraryQuery.count(for: .favorites, in: store.records) == 1)
+        #expect(LibraryQuery.count(for: .tag("Action"), in: store.records) == 1)
+
+        var brokenGame = Game(title: "Broken", source: .managed)
+        brokenGame.launch.executable = "MISSING.EXE"
+        let brokenRecord = GameRecord(
+            game: brokenGame,
+            crateURL: root.appending(path: "Broken.doscrate", directoryHint: .isDirectory),
+            status: .ok
+        )
+        store.upsert(brokenRecord)
+
+        #expect(LibraryQuery.count(for: .needsAttention, in: store.records) == 1)
+
+        model.query.filter = .needsAttention
+        let standardSidebar = NSHostingView(rootView: SidebarView(model: model))
+        standardSidebar.frame = NSRect(x: 0, y: 0, width: 220, height: 400)
+        standardSidebar.layoutSubtreeIfNeeded()
+
+        let retroSidebar = NSHostingView(rootView: RetroSidebar(model: model))
+        retroSidebar.frame = NSRect(x: 0, y: 0, width: 220, height: 400)
+        retroSidebar.layoutSubtreeIfNeeded()
+
+        // Revealing a healthy record while on .needsAttention clears the filter to .all
+        model.revealAndSelect(healthyRecord.id)
+        #expect(model.query.filter == .all)
+        #expect(model.selection == healthyRecord.id)
+
+        // Revealing a record that needs attention keeps .needsAttention selected
+        model.query.filter = .needsAttention
+        model.revealAndSelect(brokenRecord.id)
+        #expect(model.query.filter == .needsAttention)
+        #expect(model.selection == brokenRecord.id)
+    }
 }

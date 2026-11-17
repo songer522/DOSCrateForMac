@@ -69,18 +69,37 @@ struct SidebarView: View {
     @State private var newName = ""
     @State private var removing: String?
 
+    static func showsNeedsAttention(attentionCount: Int, filter: SidebarFilter) -> Bool {
+        attentionCount > 0 || filter == .needsAttention
+    }
+
     var body: some View {
+        let records = model.store.records
+        let attentionCount = LibraryQuery.count(for: .needsAttention, in: records)
         List(selection: $model.query.filter) {
             Section("Library") {
-                Label("All Games", systemImage: "square.grid.2x2").tag(SidebarFilter.all)
-                Label("Recently Played", systemImage: "clock").tag(SidebarFilter.recent)
-                Label("Favorites", systemImage: "star").tag(SidebarFilter.favorites)
+                Label("All Games", systemImage: "square.grid.2x2")
+                    .tag(SidebarFilter.all)
+                    .badge(LibraryQuery.count(for: .all, in: records))
+                Label("Recently Played", systemImage: "clock")
+                    .tag(SidebarFilter.recent)
+                    .badge(LibraryQuery.count(for: .recent, in: records))
+                Label("Favorites", systemImage: "star")
+                    .tag(SidebarFilter.favorites)
+                    .badge(LibraryQuery.count(for: .favorites, in: records))
+                if Self.showsNeedsAttention(attentionCount: attentionCount, filter: model.query.filter) {
+                    Label("Needs Attention", systemImage: "exclamationmark.triangle")
+                        .tag(SidebarFilter.needsAttention)
+                        .badge(attentionCount)
+                }
             }
-            let tags = allTags(in: model.store.records)
+            let tags = allTags(in: records)
             if !tags.isEmpty {
                 Section("Collections") {
                     ForEach(tags, id: \.self) { tag in
-                        Label(tag, systemImage: "folder").tag(SidebarFilter.tag(tag))
+                        Label(tag, systemImage: "folder")
+                            .tag(SidebarFilter.tag(tag))
+                            .badge(LibraryQuery.count(for: .tag(tag), in: records))
                             .contextMenu {
                                 Button("Rename…") { newName = tag; renaming = tag }
                                 Button("Remove Collection", role: .destructive) { removing = tag }

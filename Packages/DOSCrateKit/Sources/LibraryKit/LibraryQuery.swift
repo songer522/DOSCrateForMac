@@ -4,6 +4,7 @@ public enum SidebarFilter: Hashable, Sendable {
     case all
     case recent
     case favorites
+    case needsAttention
     case tag(String)
 }
 
@@ -72,6 +73,47 @@ public struct LibraryQuery: Sendable, Equatable {
         return visible.sorted { precedes($0, $1) }
     }
 
+    /// Returns true when `record` has a non-ok status, an unreachable or missing C: folder, or a missing/invalid configured executable.
+    public static func needsAttention(_ record: GameRecord, io: CrateIO = CrateIO()) -> Bool {
+        if record.status != .ok {
+            return true
+        }
+        let fm = FileManager.default
+        guard let cDrive = try? io.cDriveURL(for: record) else {
+            return true
+        }
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: cDrive.path, isDirectory: &isDir), isDir.boolValue else {
+            return true
+        }
+        if let exe = record.game.launch.executable, !exe.isEmpty {
+            let normalizedExe = exe.replacingOccurrences(of: "\\", with: "/")
+            let exeURL = cDrive.appending(path: normalizedExe, directoryHint: .notDirectory)
+            let cDriveRoot = cDrive.resolvingSymlinksInPath().standardizedFileURL.path
+            let cDrivePrefix = cDriveRoot.hasSuffix("/") ? cDriveRoot : cDriveRoot + "/"
+            let resolvedExe = exeURL.resolvingSymlinksInPath().standardizedFileURL.path
+            var isExeDir: ObjCBool = false
+            guard resolvedExe.hasPrefix(cDrivePrefix),
+                  fm.fileExists(atPath: exeURL.path, isDirectory: &isExeDir),
+                  !isExeDir.boolValue else {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Returns the number of records in `records` matching `filter`.
+    public static func count(for filter: SidebarFilter, in records: [GameRecord], now: Date = Date()) -> Int {
+        let query = LibraryQuery(filter: filter)
+        return records.reduce(into: 0) { total, record in
+            if case .needsRepair = record.status {
+                total += 1
+            } else if query.matchesFilter(record, now: now) {
+                total += 1
+            }
+        }
+    }
+
     private func matchesFilter(_ record: GameRecord, now: Date) -> Bool {
         let game = record.game
         switch filter {
@@ -80,6 +122,7 @@ public struct LibraryQuery: Sendable, Equatable {
             guard let played = game.stats.lastPlayed else { return false }
             return now.timeIntervalSince(played) <= Self.recentWindow
         case .favorites: return game.isFavorite
+        case .needsAttention: return Self.needsAttention(record)
         case .tag(let tag):
             guard let targetTag = trimmedNonEmpty(tag) else { return false }
             return game.tags.contains { raw in
