@@ -50,10 +50,15 @@ public final class LibraryStore {
         onReload?()
         generation += 1
         let started = generation
+        let startedHealth = healthGeneration
         let scanned = await scan(library)
         guard started == generation else { return }
+        generation += 1
         records = scanned
         rebuildHealthWatcher()
+        if startedHealth != healthGeneration, !isWatcherSuppressed {
+            scheduleHealthRefresh()
+        }
         afterReload?()
     }
 
