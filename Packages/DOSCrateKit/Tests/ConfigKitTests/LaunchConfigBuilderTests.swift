@@ -65,3 +65,28 @@ private func build(preset: Preset?, memoryMB: Int?, defaultPreset: Preset) throw
     )
     #expect(overridden.value("capture", "capture_dir") == "/custom/captures")
 }
+
+@Test func perGameSoundCardClearsGlobalTandyAudio() throws {
+    var game = Game(title: "T", source: .managed)
+    game.launch = LaunchSpec(executable: "A.EXE")
+    let global = GlobalConfig(overrides: GameSettings(soundCard: .tandy))
+
+    let inherited = try LaunchConfigBuilder.build(
+        game: game,
+        cDrive: URL(fileURLWithPath: "/tmp/g"),
+        media: [],
+        global: global
+    )
+    #expect(inherited.value("speaker", "tandy") == "on")
+
+    for card in [SoundCard.none, .sb16, .sbPro, .adlib, .gus, .cms] {
+        game.settings = GameSettings(soundCard: card)
+        let doc = try LaunchConfigBuilder.build(
+            game: game,
+            cDrive: URL(fileURLWithPath: "/tmp/g"),
+            media: [],
+            global: global
+        )
+        #expect(doc.value("speaker", "tandy") == "off")
+    }
+}

@@ -91,13 +91,15 @@ public enum Aspect: String, Sendable, Equatable, Codable, CaseIterable {
 }
 
 public enum SoundCard: String, Sendable, Equatable, Codable, CaseIterable {
-    case sb16, sbPro, adlib, gus, none
+    case sb16, sbPro, adlib, gus, tandy, cms, none
     public var displayName: String {
         switch self {
         case .sb16: "Sound Blaster 16"
         case .sbPro: "Sound Blaster Pro"
         case .adlib: "AdLib"
         case .gus: "Gravis UltraSound"
+        case .tandy: "Tandy 3-Voice"
+        case .cms: "Game Blaster (CMS)"
         case .none: "None"
         }
     }
@@ -411,6 +413,7 @@ public struct GameSettings: Sendable, Equatable, Codable {
     public var fullscreen: Bool?
     public var soundCard: SoundCard?
     public var midi: MIDIMode?
+    public var pcSpeaker: Bool?
     public var mouseCapture: MouseCapture?
     public var keyboardLayout: String?
     public var controllerMode: ControllerMode?
@@ -420,18 +423,18 @@ public struct GameSettings: Sendable, Equatable, Codable {
         preset: Preset? = nil, cycles: Cycles? = nil, core: CPUCore? = nil,
         memoryMB: Int? = nil, machine: Machine? = nil, shader: String? = nil,
         aspect: Aspect? = nil, fullscreen: Bool? = nil, soundCard: SoundCard? = nil,
-        midi: MIDIMode? = nil, mouseCapture: MouseCapture? = nil, keyboardLayout: String? = nil,
+        midi: MIDIMode? = nil, pcSpeaker: Bool? = nil, mouseCapture: MouseCapture? = nil, keyboardLayout: String? = nil,
         controllerMode: ControllerMode? = nil, controllerBindings: ControllerBindings? = nil
     ) {
         self.preset = preset; self.cycles = cycles; self.core = core
         self.memoryMB = memoryMB; self.machine = machine; self.shader = shader
         self.aspect = aspect; self.fullscreen = fullscreen; self.soundCard = soundCard
-        self.midi = midi; self.mouseCapture = mouseCapture; self.keyboardLayout = keyboardLayout
+        self.midi = midi; self.pcSpeaker = pcSpeaker; self.mouseCapture = mouseCapture; self.keyboardLayout = keyboardLayout
         self.controllerMode = controllerMode; self.controllerBindings = controllerBindings?.nonEmpty
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
-        case preset, cycles, core, memoryMB, machine, shader, aspect, fullscreen, soundCard, midi, mouseCapture, keyboardLayout
+        case preset, cycles, core, memoryMB, machine, shader, aspect, fullscreen, soundCard, midi, pcSpeaker, mouseCapture, keyboardLayout
         case controllerMode, controllerBindings
     }
 
@@ -450,6 +453,7 @@ public struct GameSettings: Sendable, Equatable, Codable {
         fullscreen = try c.decodeIfPresent(Bool.self, forKey: .fullscreen)
         soundCard = try c.decodeEnumIfPresent(SoundCard.self, forKey: .soundCard, lenient: lenient)
         midi = try c.decodeEnumIfPresent(MIDIMode.self, forKey: .midi, lenient: lenient)
+        pcSpeaker = try c.decodeIfPresent(Bool.self, forKey: .pcSpeaker)
         mouseCapture = try c.decodeEnumIfPresent(MouseCapture.self, forKey: .mouseCapture, lenient: lenient)
         keyboardLayout = try c.decodeIfPresent(String.self, forKey: .keyboardLayout)
         controllerMode = try c.decodeEnumIfPresent(ControllerMode.self, forKey: .controllerMode, lenient: lenient)
