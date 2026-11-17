@@ -19,18 +19,22 @@ public enum SettingsMapper {
         if let v = s.shader { d.set("render", "shader", v) }
         if let v = s.aspect { d.set("render", "aspect", v.rawValue) }
         if let v = s.fullscreen { d.set("sdl", "fullscreen", v ? "true" : "false") }
-        // Each card sets every audio key it implies, so a preset or global config can't leave FM or GUS off/on.
+        // Each card sets every audio key it implies, so a preset or global config can't leave FM, GUS, or Tandy off/on.
         if let card = s.soundCard {
             switch card {
             case .sb16, .sbPro:
                 d.set("sblaster", "sbtype", card == .sb16 ? "sb16" : "sbpro2")
                 d.set("sblaster", "oplmode", "auto")
                 d.set("gus", "gus", "false")
+                d.set("speaker", "tandy", "off")
             case .adlib:
                 d.set("sblaster", "sbtype", "none")
                 d.set("sblaster", "oplmode", "opl2")
                 d.set("gus", "gus", "false")
-            case .gus: d.set("gus", "gus", "true")
+                d.set("speaker", "tandy", "off")
+            case .gus:
+                d.set("gus", "gus", "true")
+                d.set("speaker", "tandy", "off")
             case .tandy:
                 d.set("sblaster", "sbtype", "none")
                 d.set("sblaster", "oplmode", "none")
@@ -40,10 +44,12 @@ public enum SettingsMapper {
                 d.set("sblaster", "sbtype", "gb")
                 d.set("sblaster", "oplmode", "cms")
                 d.set("gus", "gus", "false")
+                d.set("speaker", "tandy", "off")
             case .none:
                 d.set("sblaster", "sbtype", "none")
                 d.set("sblaster", "oplmode", "none")
                 d.set("gus", "gus", "false")
+                d.set("speaker", "tandy", "off")
             }
         }
         if let midi = s.midi {
@@ -57,7 +63,7 @@ public enum SettingsMapper {
                 if let p = env.mt32RomDir { d.set("mt32", "romdir", p) }
             }
         }
-        if let v = s.pcSpeaker { d.set("speaker", "pcspeaker", v ? "true" : "false") }
+        if let v = s.pcSpeaker { d.set("speaker", "pcspeaker", v ? "impulse" : "off") }
         if let v = s.mouseCapture { d.set("mouse", "mouse_capture", v.rawValue) }
         if let v = s.keyboardLayout { d.set("dos", "keyboard_layout", v) }
         if let v = s.controllerMode { d.set("joystick", "joysticktype", v.joystickType) }
