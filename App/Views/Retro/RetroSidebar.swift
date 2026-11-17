@@ -3,9 +3,21 @@ import SwiftUI
 
 struct RetroSidebar: View {
     @Bindable var model: AppModel
-    @State private var renaming: String?
-    @State private var newName = ""
-    @State private var removing: String?
+    @Binding var renaming: String?
+    @Binding var newName: String
+    @Binding var removing: String?
+
+    init(
+        model: AppModel,
+        renaming: Binding<String?> = .constant(nil),
+        newName: Binding<String> = .constant(""),
+        removing: Binding<String?> = .constant(nil)
+    ) {
+        self.model = model
+        self._renaming = renaming
+        self._newName = newName
+        self._removing = removing
+    }
 
     var body: some View {
         RetroPanel(title: "Library") {
@@ -37,18 +49,6 @@ struct RetroSidebar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: .infinity)
-        }
-        .alert("Rename Collection", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Name", text: $newName)
-            Button("Rename") { if let old = renaming { CollectionTags.rename(old, to: newName, in: model) }; renaming = nil }
-            Button("Cancel", role: .cancel) { renaming = nil }
-        }
-        .confirmationDialog("Remove this collection?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-                            titleVisibility: .visible) {
-            Button("Remove Collection", role: .destructive) { if let tag = removing { CollectionTags.remove(tag, in: model) }; removing = nil }
-            Button("Cancel", role: .cancel) { removing = nil }
-        } message: {
-            Text("The games stay in your library.")
         }
     }
 
